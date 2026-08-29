@@ -16,7 +16,7 @@
   bin_range_filtered.csv                    ROI 越界报告（含 filter）
   bin_range_summary_filtered.csv            filter × split 分组汇总（测试集 B 与训练集 A 范围差异）
 计时追加 output/qc/logs/features_filtered_timing.csv；异常写入 qc_report.csv（阶段 features）。
-断点续跑：已完成 影像号+读者 自动跳过（features_wavelet.csv 为准）。
+断点续跑：仅当 completion_manifest.csv 标记 COMPLETE，且 Wavelet、LoG、诊断和范围表均已有该 影像号+读者 时自动跳过。
 
 用法:
   python scripts/extract_features_filters.py --norm muscle --f 0.25 [--ids ...] [--limit N] [--workers 2] [--force]
@@ -30,6 +30,7 @@ import math
 import multiprocessing
 import os
 import time
+from typing import Dict, Iterable, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -37,6 +38,14 @@ import SimpleITK as sitk
 import radiomics
 import yaml
 from radiomics import featureextractor, imageoperations
+
+from extract_features import (
+    completed_keys, finalize_output, prepare_run_frame,
+)
+from workflow_utils import (
+    atomic_write_csv, file_sha256, git_commit, merge_rows, read_csv_or_empty,
+    update_stage_metadata, utc_now,
+)
 
 radiomics.setVerbosity(logging.ERROR)
 
@@ -56,6 +65,45 @@ FEATURE_CLASSES = ["firstorder", "glcm", "glrlm", "glszm", "gldm", "ngtdm"]
 META_COLS = ["影像号", "读者", "split", "normalization", "f"]
 RANGE_COLS = ["影像号", "读者", "split", "filter", "n_roi", "n_below", "n_above",
               "frac_below", "frac_above", "roi_min", "roi_max"]
+KEY_COLS = ["影像号", "读者"]
+COMPLETION_COLS = ["影像号", "读者", "wavelet_ok", "log_ok",
+                   "diagnostics_ok", "range_ok", "status", "failure_code"]
+
+
+def _empty_like(frame: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
+    return frame.iloc[0:0].copy() if len(frame.columns) else pd.DataFrame(columns=list(columns))
+
+
+def completion_keys(frame: pd.DataFrame) -> Set[Tuple[str, ...]]:
+    required = set(KEY_COLS + [
+        "wavelet_ok", "log_ok", "diagnostics_ok", "range_ok", "status"])
+    if frame.empty or not required.issubset(frame.columns):
+        return set()
+    complete = frame.loc[
+        (frame["status"].astype(str) == "COMPLETE")
+        & (frame["wavelet_ok"].astype(str) == "1")
+        & (frame["log_ok"].astype(str) == "1")
+        & (frame["diagnostics_ok"].astype(str) == "1")
+        & (frame["range_ok"].astype(str) == "1")]
+    return set(tuple(str(value) for value in row)
+               for row in complete[KEY_COLS].itertuples(index=False, name=None))
+
+
+def write_filtered_metadata(path: str, norm: str, f_value: float) -> None:
+    import radiomics as _radiomics
+
+    payload = {
+        "stage": "filtered",
+        "created_at": utc_now(),
+        "git_commit": git_commit(ROOT),
+        "pyradiomics_version": getattr(_radiomics, "__version__", "unknown"),
+        "radiomics_params_sha256": file_sha256(PARAMS_YAML),
+        "sigma_a_sha256": file_sha256(SIGMA_JSON),
+        "normalization": norm,
+        "f": f_value,
+        "log_sigmas": LOG_SIGMAS,
+    }
+    update_stage_metadata(path, "filtered", payload)
 
 
 def extractor_params(bin_width: float) -> dict:
@@ -181,22 +229,44 @@ def main() -> None:
     range_csv = os.path.join(outdir, "bin_range_filtered.csv")
     sum_csv = os.path.join(outdir, "bin_range_summary_filtered.csv")
     grid_csv = os.path.join(outdir, "grid_params.csv")
+    completion_csv = os.path.join(outdir, "completion_manifest.csv")
 
-    pd.DataFrame([{"filter": k, "binWidth": round(g[2], 6), "n_bins_A_reference": g[3],
-                   "grid_min": round(g[0], 6),
-                   "grid_max": round(g[1], 6), "clip_to_A_range": False}
-                  for k, g in sorted(grids.items())]).to_csv(
-        grid_csv, index=False, encoding="utf-8-sig")
+    atomic_write_csv(pd.DataFrame([
+        {"filter": k, "binWidth": round(g[2], 6), "n_bins_A_reference": g[3],
+         "grid_min": round(g[0], 6), "grid_max": round(g[1], 6),
+         "clip_to_A_range": False}
+        for k, g in sorted(grids.items())]), grid_csv)
 
-    done: set[tuple] = set()
-    if not args.force and os.path.exists(wav_csv):
-        try:
-            old = pd.read_csv(wav_csv, dtype=str)
-            done = set(zip(old["影像号"], old["读者"]))
-        except Exception:  # noqa: BLE001
-            done = set()
+    target_keys = set((task[0], task[1]) for task in tasks)
+    full_reset = bool(args.force and not args.ids and args.limit is None)
+    base_frames = {
+        "wavelet": prepare_run_frame(
+            wav_csv, KEY_COLS, target_keys, args.force, full_reset),
+        "log": prepare_run_frame(
+            log_csv, KEY_COLS, target_keys, args.force, full_reset),
+        "diagnostics": prepare_run_frame(
+            diag_csv, KEY_COLS, target_keys, args.force, full_reset),
+        "ranges": prepare_run_frame(
+            range_csv, KEY_COLS, target_keys, args.force, full_reset),
+    }
+    completion_base = prepare_run_frame(
+        completion_csv, KEY_COLS, target_keys, args.force, full_reset)
+    output_done = completed_keys(base_frames.values())
+    done = set() if args.force else completion_keys(completion_base) & output_done
     todo = [t for t in tasks if (t[0], t[1]) not in done]
     print(f"任务 {len(tasks)}（待处理 {len(todo)}，已完成 {len(tasks) - len(todo)}）")
+
+    tmp_paths = {
+        "wavelet": wav_csv + ".tmp",
+        "log": log_csv + ".tmp",
+        "diagnostics": diag_csv + ".tmp",
+        "ranges": range_csv + ".tmp",
+    }
+    for path in tmp_paths.values():
+        if os.path.exists(path):
+            os.remove(path)
+    if full_reset and os.path.exists(sum_csv):
+        os.remove(sum_csv)
 
     wav_rows: list[dict] = []
     log_rows: list[dict] = []
@@ -204,6 +274,7 @@ def main() -> None:
     range_rows: list[dict] = []
     t_rows: list[dict] = []
     qc_rows: list[dict] = []
+    completion_rows: list[dict] = []
     wav_cols: list[str] = []
     log_cols: list[str] = []
     diag_cols: list[str] = []
@@ -211,22 +282,26 @@ def main() -> None:
     def flush() -> None:
         if wav_rows:
             pd.DataFrame(wav_rows)[META_COLS + wav_cols].to_csv(
-                wav_csv, mode="a", header=not os.path.exists(wav_csv),
+                tmp_paths["wavelet"], mode="a",
+                header=not os.path.exists(tmp_paths["wavelet"]),
                 index=False, encoding="utf-8-sig")
             wav_rows.clear()
         if log_rows:
             pd.DataFrame(log_rows)[META_COLS + log_cols].to_csv(
-                log_csv, mode="a", header=not os.path.exists(log_csv),
+                tmp_paths["log"], mode="a",
+                header=not os.path.exists(tmp_paths["log"]),
                 index=False, encoding="utf-8-sig")
             log_rows.clear()
         if diag_rows:
             pd.DataFrame(diag_rows)[["影像号", "读者", "filter"] + diag_cols].to_csv(
-                diag_csv, mode="a", header=not os.path.exists(diag_csv),
+                tmp_paths["diagnostics"], mode="a",
+                header=not os.path.exists(tmp_paths["diagnostics"]),
                 index=False, encoding="utf-8-sig")
             diag_rows.clear()
         if range_rows:
             pd.DataFrame(range_rows)[RANGE_COLS].to_csv(
-                range_csv, mode="a", header=not os.path.exists(range_csv),
+                tmp_paths["ranges"], mode="a",
+                header=not os.path.exists(tmp_paths["ranges"]),
                 index=False, encoding="utf-8-sig")
             range_rows.clear()
 
@@ -240,6 +315,11 @@ def main() -> None:
                 qc_rows.append({"影像号": res["pid"], "阶段": "features", "级别": "ERROR",
                                 "代码": "EXTRACT_FAIL",
                                 "说明": f"{args.norm} f={args.f} {res['reader']}: {res['error']}"})
+                completion_rows.append({
+                    "影像号": res["pid"], "读者": res["reader"],
+                    "wavelet_ok": "0", "log_ok": "0",
+                    "diagnostics_ok": "0", "range_ok": "0",
+                    "status": "FAILED", "failure_code": "EXTRACT_FAIL"})
                 continue
             n_ok += 1
             pid = res["pid"]
@@ -271,14 +351,41 @@ def main() -> None:
                                    "roi_min": rmin, "roi_max": rmax})
             t_rows.append({"影像号": pid, "读者": res["reader"], "normalization": args.norm,
                            "f": args.f, "seconds": round(res["seconds"], 3)})
+            completion_rows.append({
+                "影像号": pid, "读者": res["reader"],
+                "wavelet_ok": "1", "log_ok": "1", "diagnostics_ok": "1",
+                "range_ok": "1", "status": "COMPLETE", "failure_code": ""})
             if len(wav_rows) >= 50:
                 flush()
     flush()
 
+    changed = bool(args.force or completion_rows
+                   or any(os.path.exists(path) for path in tmp_paths.values()))
+    for name, path in (("wavelet", wav_csv), ("log", log_csv),
+                       ("diagnostics", diag_csv), ("ranges", range_csv)):
+        finalize_output(path, base_frames[name], tmp_paths[name], KEY_COLS, changed)
+
+    completion_new = pd.DataFrame(completion_rows, columns=COMPLETION_COLS)
+    completion_merged = merge_rows(
+        completion_base, completion_new, KEY_COLS)
+    if changed or not completion_new.empty:
+        atomic_write_csv(completion_merged, completion_csv, COMPLETION_COLS)
+
     if t_rows:
         tdf = pd.DataFrame(t_rows)
-        tdf.to_csv(TIMING_CSV, mode="a", header=not os.path.exists(TIMING_CSV),
-                   index=False, encoding="utf-8-sig")
+    else:
+        tdf = pd.DataFrame()
+    timing_key_cols = ["影像号", "读者", "normalization", "f"]
+    timing_keys = set(
+        (pid, reader, args.norm, str(args.f)) for pid, reader in target_keys)
+    if args.force:
+        base_timing = prepare_run_frame(
+            TIMING_CSV, timing_key_cols, timing_keys, True, full_reset)
+        atomic_write_csv(merge_rows(base_timing, tdf, timing_key_cols), TIMING_CSV)
+    elif not tdf.empty:
+        atomic_write_csv(
+            merge_rows(read_csv_or_empty(TIMING_CSV), tdf, timing_key_cols),
+            TIMING_CSV)
     if qc_rows:
         seen: set[tuple] = set()
         rows = []
@@ -309,6 +416,9 @@ def main() -> None:
             agg.to_csv(sum_csv, index=False, encoding="utf-8-sig")
             print("\n===== ROI 越界汇总（filter × split）=====")
             print(agg.to_string(index=False))
+
+    write_filtered_metadata(
+        os.path.join(outdir, "feature_run_metadata.json"), args.norm, args.f)
 
     print(f"\n完成: 成功 {n_ok}，失败 {n_err}，耗时 {time.perf_counter() - t0:.1f}s，"
           f"平均 {((time.perf_counter() - t0) / n_ok if n_ok else 0):.2f}s/例")

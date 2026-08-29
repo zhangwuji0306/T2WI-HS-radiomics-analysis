@@ -1,21 +1,18 @@
-"""校验预处理输出：间距/网格、掩膜有效性、标准化统计与 R2 对齐结果。
-
-标准化模式由图像统计自推断（z-score 图像肿瘤 ROI 均值≈0、标准差≈1 为构造性特征；
-muscle 模式肿瘤 ROI 均值≈肿瘤/肌肉信号比，无固定目标），不依赖共享指标 CSV。
-
-用法: python scripts/verify_preprocess.py --ids ID1,ID2,... [--prep-dir 输出目录]
-"""
+"""显式验证预处理输出是否符合指定的 normalization pipeline。"""
 from __future__ import annotations
 
 import argparse
 import os
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 import SimpleITK as sitk
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = [1.0, 1.0, 2.0]
 EPS = 1e-6
+METRICS = os.path.join(ROOT, "output", "qc", "logs", "preprocess_metrics.csv")
 
 
 def geom(img: sitk.Image) -> dict:
@@ -23,72 +20,162 @@ def geom(img: sitk.Image) -> dict:
             "origin": list(img.GetOrigin()), "direction": list(img.GetDirection())}
 
 
-def infer_mode(mu: float, sd: float) -> str:
-    return "zscore" if (abs(mu) < 1e-3 and abs(sd - 1.0) < 1e-2) else "muscle"
+def geometry_matches(left: sitk.Image, right: sitk.Image, tol: float = EPS) -> bool:
+    a, b = geom(left), geom(right)
+    if a["size"] != b["size"]:
+        return False
+    values_a = a["spacing"] + a["origin"] + a["direction"]
+    values_b = b["spacing"] + b["origin"] + b["direction"]
+    return all(abs(x - y) <= tol for x, y in zip(values_a, values_b))
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="校验预处理输出")
-    ap.add_argument("--ids", required=True, help="逗号分隔的影像号")
-    ap.add_argument("--prep-dir", default="output/preprocessed",
-                    help="预处理输出目录（相对项目根）")
-    args = ap.parse_args()
-    ids = [x.strip() for x in args.ids.split(",") if x.strip()]
-    prep = os.path.join(ROOT, args.prep_dir)
+def _metric_value(metric: Optional[pd.Series], key: str) -> str:
+    if metric is None or key not in metric.index or pd.isna(metric[key]):
+        return ""
+    return str(metric[key]).strip()
 
-    fails: list[str] = []
+
+def _finite_float(metric: Optional[pd.Series], key: str) -> bool:
+    value = _metric_value(metric, key)
+    try:
+        return bool(np.isfinite(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
+def latest_metric(metrics: pd.DataFrame, pid: str, reader: str,
+                  expected: str) -> Optional[pd.Series]:
+    required = {"影像号", "读者", "normalization_requested"}
+    if metrics.empty or not required.issubset(metrics.columns):
+        return None
+    rows = metrics.loc[
+        (metrics["影像号"].astype(str) == str(pid))
+        & (metrics["读者"].astype(str) == reader)
+        & (metrics["normalization_requested"].astype(str) == expected)]
+    return rows.iloc[-1] if len(rows) else None
+
+
+def validate_metric(metric: Optional[pd.Series], expected: str) -> List[str]:
+    if metric is None:
+        return ["normalization metrics 缺失"]
+    failures = []
+    if _metric_value(metric, "normalization_applied") != expected:
+        failures.append("normalization_applied 不匹配")
+    if _metric_value(metric, "normalization_status") != "success":
+        failures.append("normalization_status 不是 success")
+    if expected == "muscle":
+        if _metric_value(metric, "reference_label") != "3":
+            failures.append("muscle reference_label 不是 3")
+        if not _finite_float(metric, "reference_mean"):
+            failures.append("reference_mean 非有限数")
+        else:
+            if float(_metric_value(metric, "reference_mean")) <= 0:
+                failures.append("reference_mean 不大于 0")
+        if "fallback" in metric.index and _metric_value(metric, "fallback").lower() in {
+                "true", "1", "yes"}:
+            failures.append("存在 fallback 标记")
+    else:
+        if _metric_value(metric, "reference_label") != "1":
+            failures.append("z-score reference_label 不是 1")
+        if not _finite_float(metric, "reference_mean"):
+            failures.append("z-score reference_mean 非有限数")
+        if not _finite_float(metric, "reference_sd"):
+            failures.append("z-score reference_sd 非有限数")
+        elif float(_metric_value(metric, "reference_sd")) <= 1e-12:
+            failures.append("z-score reference_sd 无效")
+    return failures
+
+
+def validate_case(prep: str, pid: str, reader: str, expected: str,
+                  metrics: pd.DataFrame) -> Tuple[List[str], List[str]]:
+    failures: List[str] = []
+    notes: List[str] = []
+    directory = os.path.join(prep, pid)
+    image_path = os.path.join(directory, reader + "_image.nrrd")
+    mask_path = os.path.join(directory, reader + "_mask.nrrd")
+    if not os.path.exists(image_path) or not os.path.exists(mask_path):
+        return ["图像或掩膜文件缺失"], notes
+    try:
+        image = sitk.ReadImage(image_path)
+        mask = sitk.ReadImage(mask_path)
+    except Exception as exc:
+        return ["读取失败: {0}: {1}".format(type(exc).__name__, exc)], notes
+    if not all(abs(a - b) <= EPS for a, b in zip(image.GetSpacing(), TARGET)):
+        failures.append("spacing 不符合目标间距")
+    if not geometry_matches(image, mask):
+        failures.append("图像与掩膜几何不一致")
+    if image.GetPixelID() != sitk.sitkFloat32:
+        failures.append("图像不是 float32")
+    mask_array = sitk.GetArrayFromImage(mask)
+    tumor = mask_array == 1
+    n_tumor = int(tumor.sum())
+    if n_tumor == 0:
+        failures.append("肿瘤 ROI 为空")
+    metric = latest_metric(metrics, pid, reader, expected)
+    failures.extend(validate_metric(metric, expected))
+    image_array = sitk.GetArrayFromImage(image).astype(np.float64)
+    if n_tumor and expected == "zscore":
+        mean, sd = float(image_array[tumor].mean()), float(image_array[tumor].std())
+        if abs(mean) >= 1e-3 or abs(sd - 1.0) >= 1e-2:
+            failures.append("z-score 肿瘤 ROI 均值/标准差不符合要求")
+        notes.append("肿瘤 ROI 均值={0:.4f} 标准差={1:.4f}".format(mean, sd))
+    elif n_tumor:
+        mean, sd = float(image_array[tumor].mean()), float(image_array[tumor].std())
+        notes.append("muscle 模式肿瘤 ROI 均值={0:.4f} 标准差={1:.4f}".format(mean, sd))
+    return failures, notes
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="显式验证预处理输出")
+    parser.add_argument("--ids", required=True, help="逗号分隔的影像号")
+    parser.add_argument("--expected-normalization", required=True,
+                        choices=["muscle", "zscore"],
+                        help="本次输出必须符合的 normalization")
+    parser.add_argument("--prep-dir", default=None,
+                        help="预处理目录；缺省按 normalization 选择")
+    parser.add_argument("--metrics-csv", default=METRICS,
+                        help="preprocess_metrics.csv 路径")
+    args = parser.parse_args()
+    ids = [value.strip() for value in args.ids.split(",") if value.strip()]
+    default_prep = ("output/preprocessed_zscore"
+                    if args.expected_normalization == "zscore"
+                    else "output/preprocessed")
+    prep = args.prep_dir or default_prep
+    if not os.path.isabs(prep):
+        prep = os.path.join(ROOT, prep)
+    metrics_path = args.metrics_csv
+    if not os.path.isabs(metrics_path):
+        metrics_path = os.path.join(ROOT, metrics_path)
+    try:
+        metrics = pd.read_csv(metrics_path, dtype=str)
+    except (OSError, pd.errors.EmptyDataError, FileNotFoundError):
+        metrics = pd.DataFrame()
+
+    failures: List[str] = []
     for pid in ids:
-        d = os.path.join(prep, pid)
-        lines = [f"== {pid} =="]
-        img1 = sitk.ReadImage(os.path.join(d, "R1_image.nrrd"))
-        g1 = geom(img1)
-        sp1 = all(abs(a - b) < EPS for a, b in zip(g1["spacing"], TARGET))
-        f32_1 = img1.GetPixelID() == sitk.sitkFloat32
-        a1 = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(d, "R1_mask.nrrd")))
-        n1 = int((a1 == 1).sum())
-        z1 = sitk.GetArrayFromImage(img1)
-        mu1, sd1 = float(z1[a1 == 1].mean()), float(z1[a1 == 1].std())
-        mode1 = infer_mode(mu1, sd1)
-        lines.append(f"R1: 间距={['%.3f' % s for s in g1['spacing']]} 网格OK={sp1} float32={f32_1} "
-                     f"肿瘤体素={n1} 标准化={mode1}")
-        lines.append(f"    肿瘤ROI均值={mu1:.4f} 标准差={sd1:.4f}"
-                     f"（muscle 模式均值≈肿瘤/肌肉信号比，无固定目标）")
-        lines.append(f"    方向={['%.4f' % x for x in g1['direction']]} 原点={['%.2f' % x for x in g1['origin']]}")
-        ok1 = sp1 and f32_1 and n1 > 0
-        if mode1 == "zscore":
-            ok1 = ok1 and abs(mu1) < 1e-3 and abs(sd1 - 1.0) < 1e-2
+        lines = ["== {0} ==".format(pid)]
+        r1_fail, r1_notes = validate_case(
+            prep, pid, "R1", args.expected_normalization, metrics)
+        lines.append("R1: " + ("通过" if not r1_fail else "失败: " + "; ".join(r1_fail)))
+        lines.extend("    " + note for note in r1_notes)
+        if r1_fail:
+            failures.append(pid + " R1")
+
+        r2_image = os.path.join(prep, pid, "R2_image.nrrd")
+        r2_mask = os.path.join(prep, pid, "R2_mask.nrrd")
+        if os.path.exists(r2_image) or os.path.exists(r2_mask):
+            r2_fail, r2_notes = validate_case(
+                prep, pid, "R2", args.expected_normalization, metrics)
+            lines.append("R2: " + ("通过" if not r2_fail else "失败: " + "; ".join(r2_fail)))
+            lines.extend("    " + note for note in r2_notes)
+            if r2_fail:
+                failures.append(pid + " R2")
         else:
-            ok1 = ok1 and sd1 > 0 and np.isfinite(mu1) and np.isfinite(sd1) and abs(mu1) < 1e6
-        if not ok1:
-            fails.append(pid + " R1")
-        r2p = os.path.join(d, "R2_image.nrrd")
-        if os.path.exists(r2p):
-            img2 = sitk.ReadImage(r2p)
-            g2 = geom(img2)
-            sp2 = all(abs(a - b) < EPS for a, b in zip(g2["spacing"], TARGET))
-            f32_2 = img2.GetPixelID() == sitk.sitkFloat32
-            a2 = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(d, "R2_mask.nrrd")))
-            n2 = int((a2 == 1).sum())
-            same = (g2["size"] == g1["size"]
-                    and all(abs(a - b) < EPS for a, b in zip(g2["spacing"], g1["spacing"]))
-                    and all(abs(a - b) < EPS for a, b in zip(g2["origin"], g1["origin"]))
-                    and all(abs(a - b) < EPS for a, b in zip(g2["direction"], g1["direction"])))
-            z2 = sitk.GetArrayFromImage(img2)
-            mu2, sd2 = float(z2[a2 == 1].mean()), float(z2[a2 == 1].std())
-            mode2 = infer_mode(mu2, sd2)
-            ok2 = same and n2 > 0
-            if mode2 == "zscore":
-                ok2 = ok2 and abs(mu2) < 1e-3 and abs(sd2 - 1.0) < 1e-2
-            else:
-                ok2 = ok2 and sd2 > 0 and np.isfinite(mu2) and np.isfinite(sd2)
-            lines.append(f"R2: 与R1网格一致={same} 间距OK={sp2} float32={f32_2} 肿瘤体素={n2} 标准化={mode2}")
-            if not ok2:
-                fails.append(pid + " R2")
-        else:
-            lines.append("R2: 无（单读者病例）")
+            lines.append("R2: 未生成（可能因 R2 QC 失败而跳过）")
         print("\n".join(lines))
-    print("\n" + ("全部通过" if not fails else "失败项: " + ", ".join(fails)))
+    print("\n" + ("全部通过" if not failures else "失败项: " + ", ".join(failures)))
+    return 0 if not failures else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -1,6 +1,6 @@
 {
   "analysis_id": "habitat_cross_case_kmeans_k2_4mm",
-  "status": "candidate_pending_zero_failure_gate",
+  "status": "M1_structural_state_gate_pending_outcome_blind_validation",
   "random_seed": 12345,
   "cohort": {
     "primary_definition": "tumor_high_signal_voxels_ge_1_and_fraction_ge_0.001",
@@ -34,13 +34,11 @@
     "n_init": 100,
     "max_iter": 300,
     "tol": 0.0001,
-    "max_supervoxels_per_case_for_fit": 2000,
     "label_order": ["H-low", "H-high"]
   },
   "technical_gate": {
     "failure_unit": "unique_case_with_any_failure",
     "failure_types": [
-      "empty_habitat",
       "algorithm_failure",
       "unassigned_tumor_voxels",
       "geometry_or_label_error"
@@ -50,8 +48,12 @@
     "stop_condition": "failure_fraction >= 0.05",
     "maximum_failures_development_A": 19,
     "maximum_failures_validation_B": 5,
-    "action_below_threshold": "record_and_exclude_failed_cases_then_continue",
+    "action_below_threshold": "record_and_exclude_hard_technical_failures_then_continue",
     "action_at_or_above_threshold": "stop_stage_and_report_failures",
+    "structural_state_values": ["single-H-low", "single-H-high", "dual-habitat"],
+    "structural_state_is_failure": false,
+    "impute_structural_zero_descriptors": true,
+    "impute_structural_undefined_texture": false,
     "impute_failed_habitat": false,
     "outcome_informed_exclusion": false
   },

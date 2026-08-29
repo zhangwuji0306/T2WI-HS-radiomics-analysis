@@ -5,7 +5,7 @@
   output/qc/logs/preprocess_metrics.csv  预处理记录的肌肉指标（normalization=muscle 行）
   output/manifest.csv                    病例清单（双读者标志）
   output/scanner_map.csv                 影像号 → 厂商/机型/场强（DICOM 头）
-  output/qc/qc_report.csv                预处理告警（R2_MUSCLE_LABEL2 / NO_MUSCLE 等）
+  output/qc/qc_report.csv                预处理告警（肌肉参照失败及 R2 标签未解析等）
   output/preprocessed/<ID>/              肌肉参照归一化输出（双读者一致性用）
 
 输出：output/qc/normalization_qc/
@@ -43,6 +43,15 @@ CV_N4_THRESHOLD = 0.15      # 设备组肌肉 CV 中位 > 15% → 建议重启 N
 GRAD_N4_THRESHOLD = 1.0     # 设备组肌肉梯度中位 > 1 %/mm → 建议重启 N4
 
 METRICS = ["muscle_mean", "muscle_cv", "muscle_p10", "muscle_p50", "muscle_p90", "grad"]
+METRIC_ALIASES = {
+    "reference_mean": "muscle_mean",
+    "reference_cv": "muscle_cv",
+    "reference_p10": "muscle_p10",
+    "reference_p50": "muscle_p50",
+    "reference_p90": "muscle_p90",
+    "reference_grad": "grad",
+    "reference_voxels": "muscle_voxels",
+}
 # 离群规则：μ 系指标用组中位比值（组织互换会使 μ 偏移 2 倍以上，天然个体差异 <2.5 倍）；
 # CV 与梯度用绝对阈值（上侧）。均为可解释的保守规则。
 RATIO_LOW, RATIO_HIGH = 0.4, 2.5
@@ -75,7 +84,21 @@ def main() -> None:
         print("缺少 preprocess_metrics.csv，请先运行预处理（muscle 模式）")
         return
     m = pd.read_csv(metrics_path, dtype=str)
-    m = m[m["normalization"] == "muscle"].copy()
+    required = {
+        "normalization_requested", "normalization_applied",
+        "normalization_status", "reference_mean", "reference_cv",
+        "reference_p10", "reference_p50", "reference_p90",
+        "reference_grad", "reference_voxels",
+    }
+    if not required.issubset(m.columns):
+        print("preprocess_metrics.csv 缺少严格 normalization 字段，请重新运行预处理")
+        return
+    m = m[(m["normalization_requested"] == "muscle") &
+          (m["normalization_applied"] == "muscle") &
+          (m["normalization_status"] == "success")].copy()
+    for source, target in METRIC_ALIASES.items():
+        if source in m.columns and target not in m.columns:
+            m[target] = m[source]
     for c in METRICS + ["muscle_voxels", "eroded_voxels"]:
         m[c] = pd.to_numeric(m[c], errors="coerce")
     man = pd.read_csv(os.path.join(OUT, "manifest.csv"), encoding="utf-8-sig", dtype=str)
@@ -138,20 +161,21 @@ def main() -> None:
     # ---- 告警与退回标志汇总 ---- #
     flags = []
     if not qc.empty:
-        qp = qc[(qc["阶段"] == "preprocess") & (qc["代码"].isin(["NO_MUSCLE", "R2_MUSCLE_LABEL2"]))]
+        qp = qc[(qc["阶段"] == "preprocess") &
+                (qc["代码"].isin([
+                    "R1_MUSCLE_LABEL_MISSING", "R1_MUSCLE_EROSION_EMPTY",
+                    "R1_MUSCLE_MEAN_INVALID", "R2_MUSCLE_LABEL_MISSING",
+                    "R2_MUSCLE_LABEL_UNRESOLVED", "R2_MUSCLE_EROSION_EMPTY",
+                    "R2_MUSCLE_MEAN_INVALID"]))]
         for _, r in qp.iterrows():
             flags.append({"影像号": r["影像号"], "读者": r["读者"] if "读者" in r else "",
                           "代码": r["代码"], "说明": r["说明"]})
-    fb = mm_all[mm_all["fallback"].astype(str).str.strip().isin(["True", "1"])]
-    for _, r in fb.iterrows():
-        flags.append({"影像号": r["影像号"], "读者": r["读者"],
-                      "代码": "FALLBACK", "说明": "退回 Z-score 标准化"})
     ero_bad = mm_all[mm_all["erode_radius"].notna() & (mm_all["erode_radius"].str.strip() != "")]
     ero_default = {"R1": "1,1,0", "R2": "2,2,0"}
     for _, r in ero_bad.iterrows():
         if r["erode_radius"].strip() != ero_default.get(r["读者"], ""):
             flags.append({"影像号": r["影像号"], "读者": r["读者"],
-                          "代码": "ERODE_FALLBACK", "说明": f"实际腐蚀半径 {r['erode_radius']}"})
+                          "代码": "ERODE_RADIUS_DIFFERENT", "说明": f"实际腐蚀半径 {r['erode_radius']}"})
     pd.DataFrame(flags).to_csv(os.path.join(qcdir, "flags.csv"), index=False, encoding="utf-8-sig")
 
     # ---- 设备间比较 ---- #
@@ -224,7 +248,7 @@ def main() -> None:
              f"- 设备分组：{len(groups)} 组（见 device_groups.csv）",
              f"- 不均匀性较大（CV>{CV_HARD} / 梯度>{GRAD_HARD} %/mm，复核参考）：{n_sev} 条",
              f"- 采集尺度变体（μ 系指标超出组中位 {RATIO_LOW}×~{RATIO_HIGH}×，信息性，肌肉归一化已消除尺度）：{n_scale} 条",
-             f"- 标志（NO_MUSCLE/R2_MUSCLE_LABEL2/FALLBACK/ERODE_FALLBACK）：{len(flags)} 条（见 flags.csv）",
+             f"- 标志（肌肉参照失败、R2 标签未解析或腐蚀半径差异）：{len(flags)} 条（见 flags.csv）",
              f"- 双读者一致性（描述性）：{len(pair_rows)} 例（见 pair_consistency.csv）", "",
              "## N4 重启建议", ""]
     lines += n4_rec if n4_rec else ["- 各设备组肌肉 CV 中位 ≤15% 且梯度中位 ≤1 %/mm，暂不重启 N4", ""]

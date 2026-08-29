@@ -8,33 +8,30 @@
 
 - 项目代码分为 `feature_extract`、`habitat_analysis` 和 `prognosis_analysis` 三个工作区。
 - 影像预处理、设备映射、高信号筛选审计及整块肿瘤候选特征 QC 已形成现有上游资产。
+- 预处理已采用显式 normalization 状态、完整有效配置 SHA-256 印章及输入/版本 provenance；R1/R2 的肌肉标签规则已分离。
+- Original 与 Wavelet/LoG 特征提取已采用原子最终写入；过滤特征通过 `completion_manifest.csv` 判断是否完成。
+- 已加入 11 个合成数据回归测试，覆盖标签解析、归一化隔离、强制覆盖、断点续跑、流水线印章和倾斜 FOV。
 - 当前主方法候选为三维 SLIC 4 mm 加跨病例 K-means K=2。
 - A 集和 B 集的队列定义、数据隔离规则及主参数已记录在项目方法文档中。
-- 当前阶段尚未进入 `habitat_maps_A` 及其下游生境结果阶段。
+- 当前已完成A集无结局M1技术运行；结构性单生境不计入硬技术失败。尚未解除结局盲态，仍需完成结构诊断、local-global诊断、bootstrap、技术因素核验、A=137敏感性及主特征冻结。
 - GitHub/Codex 仓库采用代码和文档边界；原始影像、临床数据、患者级结果和原始影像号均保留在本地。
 
 ## In progress
 
 - 维护代码、配置和方法文档的 GitHub 版本。
 - 使用本地匿名化映射表管理影像号与匿名号之间的对应关系。
-- 准备可在 Codex 云端复现依赖安装和代码检查的环境；真实患者数据分析仍在本地受控环境执行。
+- 在本地完成代码检查后重新生成上游清单、muscle 预处理、z-score 敏感性预处理及对应 QC；真实患者数据分析仍在本地受控环境执行。
 
 ## Next task
 
-在本地受控环境中，对 A 集全部 393 例执行无结局技术干跑：
-
-1. 按冻结参数生成候选生境结果；
-2. 记录空生境、算法失败、未分配肿瘤体素及几何/标签错误；
-3. 按病例合并技术失败并计算联合失败率；
-4. 失败率低于 5% 时冻结成功/排除病例清单，达到或超过 5% 时停止并提交失败清单；
-5. 在 A 集参数、特征和模型全部冻结前，不读取或使用 B 集 107 例。
+在结局盲态下完成结构状态、local-global机制、患者层面bootstrap、技术因素和严格A=137敏感性核验；满足冻结条件后再纳入A集预设临床变量与DFS。B集在全A参数、特征和模型冻结前保持不可见。
 
 ## Important decisions
 
 - GitHub/Codex 仓库不保存原始影像、ROI、Slicer 工程、临床/病理/预后表及患者级派生结果。
 - 任何进入仓库的影像相关资料必须使用匿名影像号；原始影像号—匿名号映射仅保存在本地 `local_private/image_id_mapping.csv`。
 - 技术干跑不得读取结局或临床变量。
-- 生境失败不填 0、不作普通缺失插补、不切换为病例内 K-means，也不根据结局决定排除。
+- 硬技术失败不填补；结构性单生境保留，主低维描述符按结构零规则生成，表型内纹理在相应表型不存在时保持未定义；不切换主方法，也不根据结局决定排除。
 - B 集在全 A 集参数、特征和模型冻结前保持不可见，冻结后仅用于一次验证。
 - 预计超过 40 分钟的任务必须先进行小样本估时，并遵守 `AGENTS.md` 中的单次检查和结果核验规则。
 
@@ -56,3 +53,10 @@ bash setup.sh
 ```
 
 云端验证仅覆盖依赖安装、脚本帮助信息和不含患者级数据的静态检查，不执行真实影像或临床数据分析。
+
+### Code regression checks
+
+```powershell
+conda run -n t2_radiomics --no-capture-output python -m compileall -q feature_extract/scripts tests
+conda run -n t2_radiomics --no-capture-output python -m unittest discover -s tests -p "test_*.py"
+```

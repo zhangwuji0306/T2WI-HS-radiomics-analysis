@@ -8,7 +8,9 @@ preprocessing:
   n4_mask: foreground                     # 启用 N4 时仅前景掩膜（Otsu+最大连通域）全图校正
   n4_downsample_factor: 2.0               # N4 降采样因子：粗网格估计偏置场 → 上采样回原网格施加校正
   normalization: muscle                   # 跨图像强度标准化：muscle=肌肉均值线性缩放（主分析）/ zscore=肿瘤ROI Z-score（敏感性）
-                                          # 肌肉/脂肪判别：同图内标签2与标签3平均灰度，较低者为肌肉（供归一化取 μ_muscle）
+                                          # R1 标签固定：1=肿瘤、2=脂肪、3=肌肉。
+                                          # R2 因历史勾画存在 2/3 混用，仅当两种标签均存在时比较原始图像均值，较低者定义为肌肉；
+                                          # 判别结果由 build_manifest.py 写入 R2肌肉标签，preprocess.py 不自行猜测。
   erode_radius_R1: [1, 1, 0]              # R1 肌肉掩膜面内腐蚀（体素，去部分容积）
   erode_radius_R2: [2, 2, 0]              # R2 肌肉掩膜面内腐蚀（体素，勾画部分容积更大）
   crop_padding: 5                         # 肿瘤包围盒外扩体素数

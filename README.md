@@ -67,6 +67,27 @@ conda run -n t2_radiomics --no-capture-output python <script>
 
 涉及 SimpleITK 的本地脚本需要使用本机配置的 ASCII junction。不要将本地绝对路径写入清单、报告或仓库文档。
 
+### 上游处理顺序
+
+修复后的上游主线应分别运行 muscle 主分析臂和 z-score 敏感性分析臂。R1 固定使用 label 3 作为肌肉；R2 只有在 label 2、3 均存在且均值可比较时才解析肌肉标签，无法解析时仅跳过 R2。
+
+```powershell
+conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/build_manifest.py
+conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/preprocess.py --normalize muscle
+conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/verify_preprocess.py --ids <匿名号> --expected-normalization muscle
+conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/preprocess.py --normalize zscore
+conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/verify_preprocess.py --ids <匿名号> --expected-normalization zscore
+```
+
+预处理输出目录、指标和分析结果均只保留在本地。重新生成上游结果前，不应直接沿用旧的预处理或特征输出。
+
+### 代码检查
+
+```powershell
+conda run -n t2_radiomics --no-capture-output python -m compileall -q feature_extract/scripts tests
+conda run -n t2_radiomics --no-capture-output python -m unittest discover -s tests -p "test_*.py"
+```
+
 ## 影像号匿名化
 
 本地生成或更新映射表：

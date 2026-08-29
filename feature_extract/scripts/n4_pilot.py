@@ -67,6 +67,31 @@ def load_frame() -> tuple[pd.DataFrame, set]:
     return df, flagged
 
 
+def load_muscle_metrics(path: str) -> pd.DataFrame:
+    frame = pd.read_csv(path, dtype=str)
+    required = {
+        "normalization_requested", "normalization_applied",
+        "normalization_status", "reference_mean", "reference_cv",
+        "reference_p10", "reference_p50", "reference_p90", "reference_grad",
+    }
+    if not required.issubset(frame.columns):
+        raise RuntimeError(
+            "preprocess_metrics.csv lacks the strict normalization schema; "
+            "regenerate preprocessing outputs before the N4 pilot")
+    frame = frame[(frame["normalization_requested"] == "muscle") &
+                  (frame["normalization_applied"] == "muscle") &
+                  (frame["normalization_status"] == "success")].copy()
+    frame = frame.rename(columns={
+        "reference_mean": "muscle_mean",
+        "reference_cv": "muscle_cv",
+        "reference_p10": "muscle_p10",
+        "reference_p50": "muscle_p50",
+        "reference_p90": "muscle_p90",
+        "reference_grad": "grad",
+    })
+    return frame
+
+
 def sample_pilot(df: pd.DataFrame, flagged: set, seed: int) -> tuple[list, list, list, list]:
     rng = random.Random(seed)
     big = {"GE MEDICAL SYSTEMS|DISCOVERY MR750|3.0",
@@ -201,11 +226,11 @@ def stage_report(df: pd.DataFrame, pilot_ids: list, flagged30: list, pairs: list
         print(s)
 
     # ---- 配对指标（R1, muscle）----
-    canon = pd.read_csv(METRICS_CANON, dtype=str)
-    canon = canon[(canon["读者"] == "R1") & (canon["normalization"] == "muscle")]
+    canon = load_muscle_metrics(METRICS_CANON)
+    canon = canon[canon["读者"] == "R1"]
     canon = canon[canon["影像号"].isin(pilot_ids)].set_index("影像号")
-    pil = pd.read_csv(os.path.join(PILOT, "metrics_muscle.csv"), dtype=str)
-    pil = pil[(pil["读者"] == "R1") & (pil["normalization"] == "muscle")]
+    pil = load_muscle_metrics(os.path.join(PILOT, "metrics_muscle.csv"))
+    pil = pil[pil["读者"] == "R1"]
     pil = pil[pil["影像号"].isin(pilot_ids)].set_index("影像号")
     common = sorted(set(canon.index) & set(pil.index))
     cv_b = pd.to_numeric(canon.loc[common, "muscle_cv"], errors="coerce")
