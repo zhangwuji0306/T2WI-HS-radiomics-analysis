@@ -1,0 +1,14 @@
+DFS:
+  time: DFS_time
+  event: DFS_event
+  model: cox
+CSS:
+  time: CSS
+  event: CSS_Status
+  model: cause_specific_cox
+  competing_event: "OS_Status=1 and CSS_Status=0"
+  sensitivity_model: fine_gray
+OS:
+  time: OS
+  event: OS_Status
+  model: cox

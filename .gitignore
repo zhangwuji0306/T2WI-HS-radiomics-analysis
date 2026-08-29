@@ -1,0 +1,48 @@
+# Local/private material
+local_private/
+.env
+.env.*
+
+# Patient-level, clinical and imaging data
+feature_extract/result/
+feature_extract/reader_2_result/
+feature_extract/output/
+prognosis_analysis/data/
+prognosis_analysis/output/
+habitat_analysis/output/
+archive/
+*.csv
+*.xlsx
+*.xls
+
+# Imaging, Slicer and model artifacts
+*.nrrd
+*.mrb
+*.mrml
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.onnx
+*.zip
+*.tar
+*.gz
+
+# Generated files and caches
+**/__pycache__/
+*.py[cod]
+*.pipeline_stamp
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments and editor files
+.venv/
+venv/
+.conda/
+.codex-venv/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

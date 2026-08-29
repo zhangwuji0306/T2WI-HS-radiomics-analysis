@@ -1,0 +1,56 @@
+# T2 加权 MRI 影像组学参数（预处理 + 特征提取）
+# 预处理在 PyRadiomics 外部完成；PyRadiomics 仅负责特征计算。
+preprocessing:
+  target_spacing: [1.0, 1.0, 2.0]        # 重采样间距（mm）
+  resample_interpolator: sitkBSpline      # 图像插值
+  mask_interpolator: sitkNearestNeighbor  # 掩膜插值
+  n4_enabled: false                       # N4 偏置场校正：false=暂缓（直接归一化，质控后决策是否重启）
+  n4_mask: foreground                     # 启用 N4 时仅前景掩膜（Otsu+最大连通域）全图校正
+  n4_downsample_factor: 2.0               # N4 降采样因子：粗网格估计偏置场 → 上采样回原网格施加校正
+  normalization: muscle                   # 跨图像强度标准化：muscle=肌肉均值线性缩放（主分析）/ zscore=肿瘤ROI Z-score（敏感性）
+                                          # 肌肉/脂肪判别：同图内标签2与标签3平均灰度，较低者为肌肉（供归一化取 μ_muscle）
+  erode_radius_R1: [1, 1, 0]              # R1 肌肉掩膜面内腐蚀（体素，去部分容积）
+  erode_radius_R2: [2, 2, 0]              # R2 肌肉掩膜面内腐蚀（体素，勾画部分容积更大）
+  crop_padding: 5                         # 肿瘤包围盒外扩体素数
+  zscore_roi: tumor                       # 以肿瘤 ROI 统计量标准化整幅裁剪图像
+  geometry_tolerance: 0.001
+  min_tumor_voxels: 10
+
+featureExtraction:
+  imageType:
+    Original: {}
+    # Wavelet/LoG 在 PyRadiomics 外部实现（滤波 + 各滤波输出全局网格预离散化，见 scripts/extract_features_filters.py）
+  featureClass:
+    firstorder: []
+    shape: []
+    glcm: []
+    glrlm: []
+    glszm: []
+    gldm: []
+    ngtdm: []
+  setting:
+    resampledPixelSpacing: null # 外部已重采样，关闭内部重采样
+    normalize: false            # 外部已标准化
+    interpolator: sitkBSpline
+    binWidth: 1.0               # 运行时由训练集 A 的 sigma_A × f 覆盖
+    padDistance: 0
+    minimumROIDimensions: 2
+    minimumROISize: 10
+    label: 1
+  binning:
+    method: pyradiomics_fbs     # 固定箱宽；连续图像输入，不预离散化整幅图像
+    firstorder_input: continuous
+    texture_input: continuous_with_runtime_binWidth
+    clip_to_training_range: false
+    shape_on_filtered_images: false
+    output_version: v2_continuous
+    f_values: [0.1, 0.25]       # binWidth = f × σ_A；肌肉归一化与 Z-score 两条通路均取这两档
+    main:                       # 主分析：肌肉归一化 × 0.25σ
+      normalization: muscle
+      f: 0.25
+    sigma_A: {muscle: 0.9952, zscore: 1.0000}  # 训练集 A（GE DISCOVERY MR750 3T，530 例，R1）肿瘤 ROI 合并标准差
+    binWidth:                   # 实测固定值 = f × σ_A
+      muscle: {0.1: 0.0995, 0.25: 0.2488}
+      zscore: {0.1: 0.1000, 0.25: 0.2500}
+
+random_seed: 12345
