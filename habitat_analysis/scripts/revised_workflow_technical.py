@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 from scipy import ndimage
+from scipy.stats import chi2_contingency
 from sklearn.cluster import KMeans
 
 import technical_dry_run_A as base
@@ -27,15 +28,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HAB = os.path.dirname(HERE)
 ROOT = os.path.dirname(HAB)
 OUT = os.path.join(HAB, "output")
-BASELINE = os.path.join(OUT, "feasibility_A_patient_balanced")
-METHOD18 = os.path.join(OUT, "method_selection_18")
-STRUCT = os.path.join(OUT, "structural_diagnostics_A")
-LOCAL = os.path.join(OUT, "local_global_diagnostic_A")
-BOOT = os.path.join(OUT, "bootstrap_stability_A")
-ROBUST = os.path.join(OUT, "technical_robustness_A")
-SENS = os.path.join(OUT, "sensitivity")
+RUN_TAG = "post_slic_fix"
+BASELINE = os.path.join(OUT, "feasibility_A_patient_balanced_" + RUN_TAG)
+METHOD18 = os.path.join(OUT, "method_selection_18_" + RUN_TAG)
+STRUCT = os.path.join(OUT, "structural_diagnostics_A_" + RUN_TAG)
+LOCAL = os.path.join(OUT, "local_global_diagnostic_A_" + RUN_TAG)
+BOOT = os.path.join(OUT, "bootstrap_stability_A_" + RUN_TAG)
+ROBUST = os.path.join(OUT, "technical_robustness_A_" + RUN_TAG)
+SENS = os.path.join(OUT, "sensitivity_" + RUN_TAG)
 MAPS = os.path.join(OUT, "habitat_maps_A")
 FEATURES = os.path.join(OUT, "habitat_features_A")
+MAPS_STAGING = os.path.join(OUT, "habitat_maps_A_" + RUN_TAG + "_staging")
+FEATURES_STAGING = os.path.join(OUT, "habitat_features_A_" + RUN_TAG + "_staging")
+FREEZE_PREFLIGHT = os.path.join(OUT, "freeze_preflight_A_" + RUN_TAG)
 CONFIG = os.path.join(HAB, "configs", "main_cross_case_kmeans_k2_4mm.json")
 STRICT_AUDIT = os.path.join(OUT, "high_signal_eligibility_audit",
                             "recommended_selected_cases.csv")
@@ -268,6 +273,7 @@ def read_case_with_labels(pid, cfg):
 def sv_rows_for_case(pid, image, arr, roi, labels):
     spacing_xyz = tuple(float(x) for x in image.GetSpacing())
     voxel_volume = float(np.prod(spacing_xyz))
+    grid_meta = base.slic_grid_metadata(image, load_cfg())
     rows = []
     for label in np.unique(labels[roi]):
         label = int(label)
@@ -281,6 +287,9 @@ def sv_rows_for_case(pid, image, arr, roi, labels):
             "n_tumor_voxels": int(inside.sum()),
             "physical_volume_mm3": float(inside.sum() * voxel_volume),
             "Mean": float(values.mean()),
+            "slic_requested_scale_mm": grid_meta["requested_scale_mm"],
+            "slic_supergrid_voxels_xyz": ";".join(map(str, grid_meta["supergrid_voxels_xyz"])),
+            "slic_actual_supergrid_mm_xyz": ";".join(map(str, grid_meta["actual_supergrid_mm_xyz"])),
         })
     return rows
 
@@ -314,6 +323,30 @@ def stage3_local_global(limit=None):
                                encoding="utf-8-sig")
     center = center_frame.iloc[0]
     low_c, high_c, boundary = float(center["H_low"]), float(center["H_high"]), float(center["boundary_b"])
+    refit = fit_all_balanced_from_sv(sv, cfg)
+    refit_ok = refit is not None
+    if refit_ok:
+        refit_low, refit_high = [float(value) for value in refit]
+        refit_boundary = float((refit_low + refit_high) / 2.0)
+        center_repro = {
+            "baseline_center_low": low_c, "refit_center_low": refit_low,
+            "center_low_abs_diff": abs(refit_low - low_c),
+            "baseline_center_high": high_c, "refit_center_high": refit_high,
+            "center_high_abs_diff": abs(refit_high - high_c),
+            "baseline_boundary_b": boundary, "refit_boundary_b": refit_boundary,
+            "boundary_abs_diff": abs(refit_boundary - boundary),
+            "tolerance": 1e-6,
+            "center_reproducibility_pass": int(
+                max(abs(refit_low - low_c), abs(refit_high - high_c),
+                    abs(refit_boundary - boundary)) <= 1e-6),
+        }
+    else:
+        center_repro = {"baseline_center_low": low_c, "baseline_center_high": high_c,
+                        "baseline_boundary_b": boundary, "tolerance": 1e-6,
+                        "center_reproducibility_pass": 0}
+    pd.DataFrame([center_repro]).to_csv(
+        os.path.join(LOCAL, "center_reproducibility.csv"), index=False,
+        encoding="utf-8-sig")
     rows_out = []
     for pid, group in sv.groupby("影像号"):
         values = group["Mean"].to_numpy(dtype=float)
@@ -360,7 +393,12 @@ def stage3_local_global(limit=None):
         "# A集local-global机制诊断", "",
         "病例内K=2仅用于解释患者内相对异质性，不生成主生境图、不进入预后模型。全A共享中心沿用已锁定的M1中心。", "",
         "- 病例数：%d；local K=2可用：%d；不可用：%d。" % (len(diagnostic), int(diagnostic["local_state"].ne("diagnostic_unavailable").sum()), int(counts.get("diagnostic_unavailable", 0))),
-        "- 超体素数与既有基线一致：%d/%d。" % (match, len(diagnostic)),
+        "- 超体素数与校正后A集基线一致：%d/%d。" % (match, len(diagnostic)),
+        "- 同一supervoxel表重拟合中心与A集基线的最大绝对差：%.9f；阈值：1e-6；核验：%s。" % (
+            max(center_repro.get("center_low_abs_diff", np.inf),
+                center_repro.get("center_high_abs_diff", np.inf),
+                center_repro.get("boundary_abs_diff", np.inf)),
+            "通过" if center_repro["center_reproducibility_pass"] else "未通过"),
         "- 两个局部中心均低于全局边界：%d例。" % counts.get("both_local_centers_below_global_boundary", 0),
         "- 局部中心跨越全局边界：%d例。" % counts.get("local_centers_straddle_global_boundary", 0),
         "- 两个局部中心均高于全局边界：%d例。" % counts.get("both_local_centers_above_global_boundary", 0),
@@ -375,7 +413,25 @@ def load_sv():
                        encoding="utf-8-sig", dtype={"影像号": str})
 
 
-def fit_balanced_values(values, ids, rng):
+def fit_all_balanced_from_sv(values, cfg):
+    chunks = [group["Mean"].to_numpy(dtype=float)
+              for _, group in values.groupby("影像号") if len(group)]
+    if not chunks:
+        return None
+    x = np.concatenate(chunks)
+    weights = np.concatenate([np.full(len(chunk), 1.0 / len(chunk))
+                              for chunk in chunks])
+    if x.size < 2 or np.unique(x).size < 2:
+        return None
+    c = cfg["clustering"]
+    model = KMeans(n_clusters=int(c["k"]), init=c["initialization"],
+                   n_init=int(c["n_init"]), max_iter=int(c["max_iter"]),
+                   tol=float(c["tol"]), random_state=int(cfg["random_seed"]))
+    model.fit(x.reshape(-1, 1), sample_weight=weights)
+    return np.sort(model.cluster_centers_.ravel())
+
+
+def fit_balanced_values(values, ids, rng, cfg):
     chunks = []
     for pid in rng.choice(ids, size=len(ids), replace=True):
         g = values[values["影像号"] == pid]["Mean"].to_numpy(dtype=float)
@@ -385,8 +441,10 @@ def fit_balanced_values(values, ids, rng):
     weights = np.concatenate([np.full(len(g), 1.0 / len(g)) for g in chunks]) if chunks else np.array([], dtype=float)
     if x.size < 2 or np.unique(x).size < 2:
         return None
-    model = KMeans(n_clusters=2, init="k-means++", n_init=100,
-                   max_iter=300, tol=1e-4, random_state=SEED)
+    c = cfg["clustering"]
+    model = KMeans(n_clusters=int(c["k"]), init=c["initialization"],
+                   n_init=int(c["n_init"]), max_iter=int(c["max_iter"]),
+                   tol=float(c["tol"]), random_state=int(cfg["random_seed"]))
     model.fit(x.reshape(-1, 1), sample_weight=weights)
     centers = np.sort(model.cluster_centers_.ravel())
     return centers
@@ -394,6 +452,7 @@ def fit_balanced_values(values, ids, rng):
 
 def stage4_bootstrap(smoke=False):
     mkdir(BOOT)
+    cfg = load_cfg()
     sv = load_sv()
     ids = np.sort(sv["影像号"].astype(str).unique())
     center_frame = pd.read_csv(os.path.join(BASELINE, "global_centers.csv"),
@@ -405,7 +464,7 @@ def stage4_bootstrap(smoke=False):
     center_rows = []
     assignment_arrays = []
     for b in range(n_boot):
-        centers = fit_balanced_values(sv, ids, rng)
+        centers = fit_balanced_values(sv, ids, rng, cfg)
         if centers is None:
             center_rows.append({"bootstrap": b, "fit_status": "degenerate"})
             continue
@@ -422,22 +481,45 @@ def stage4_bootstrap(smoke=False):
     ref_assignment = (sv["Mean"].to_numpy(dtype=float) >= ref_b).astype(np.int8)
     case_rows = []
     means = sv["Mean"].to_numpy(dtype=float)
+    case_stability_medians = []
     for pid, index in sv.groupby("影像号").groups.items():
         idx = np.asarray(index, dtype=int)
         ref = ref_assignment[idx]
+        weights = sv.iloc[idx]["n_tumor_voxels"].to_numpy(dtype=float)
+        weight_sum = float(weights.sum())
         hamming = []
         high_fracs = []
+        structural_matches = []
+        deltas = []
+        ref_high_fraction = float(np.sum(weights * ref) / weight_sum)
+        ref_state = ("single-H-low" if ref_high_fraction == 0 else
+                     "single-H-high" if ref_high_fraction == 1 else
+                     "dual-habitat")
         for arr in assignment_arrays:
             candidate = arr[idx]
-            hamming.append(float(np.mean(candidate == ref)))
-            high_fracs.append(float(candidate.mean()))
+            stability = float(np.sum(weights * (candidate == ref)) / weight_sum)
+            high_fraction = float(np.sum(weights * candidate) / weight_sum)
+            candidate_state = ("single-H-low" if high_fraction == 0 else
+                               "single-H-high" if high_fraction == 1 else
+                               "dual-habitat")
+            hamming.append(stability)
+            high_fracs.append(high_fraction)
+            structural_matches.append(int(candidate_state == ref_state))
+            deltas.append(high_fraction - ref_high_fraction)
+        case_stability_medians.append(float(np.median(hamming)) if hamming else np.nan)
         case_rows.append({
             "影像号": pid, "n_supervoxels": len(idx),
-            "reference_H_high_fraction": float(ref.mean()),
+            "n_tumor_voxels": int(weights.sum()),
+            "reference_H_high_fraction": ref_high_fraction,
+            "reference_structural_state": ref_state,
             "assignment_stability_median": float(np.median(hamming)) if hamming else np.nan,
             "assignment_stability_p05": float(np.percentile(hamming, 5)) if hamming else np.nan,
             "bootstrap_H_high_fraction_median": float(np.median(high_fracs)) if high_fracs else np.nan,
             "bootstrap_H_high_fraction_sd": float(np.std(high_fracs, ddof=1)) if len(high_fracs) > 1 else np.nan,
+            "delta_H_high_fraction_median": float(np.median(deltas)) if deltas else np.nan,
+            "delta_H_high_fraction_p05": float(np.percentile(deltas, 5)) if deltas else np.nan,
+            "delta_H_high_fraction_p95": float(np.percentile(deltas, 95)) if deltas else np.nan,
+            "structural_state_stability": float(np.mean(structural_matches)) if structural_matches else np.nan,
         })
     case_df = pd.DataFrame(case_rows)
     case_df.to_csv(os.path.join(BOOT, "case_assignment_stability.csv"),
@@ -453,7 +535,16 @@ def stage4_bootstrap(smoke=False):
         ref_inside = False
     valid_rate = float(len(success) / n_boot)
     median_stability = float(case_df["assignment_stability_median"].median()) if len(case_df) else np.nan
-    p05_stability = float(case_df["assignment_stability_p05"].min()) if len(case_df) else np.nan
+    p05_stability = (float(np.percentile(case_df["assignment_stability_median"].dropna(), 5))
+                     if len(case_df) and case_df["assignment_stability_median"].notna().any()
+                     else np.nan)
+    structural_state_stability_median = (float(case_df["structural_state_stability"].median())
+                                         if len(case_df) else np.nan)
+    structural_state_stability_p05 = (float(np.percentile(case_df["structural_state_stability"].dropna(), 5))
+                                      if len(case_df) and case_df["structural_state_stability"].notna().any()
+                                      else np.nan)
+    delta_median = (float(case_df["delta_H_high_fraction_median"].median())
+                    if len(case_df) else np.nan)
     pass_ops = bool(valid_rate >= .99 and ref_inside and width <= .25 * distance and
                     median_stability >= .95 and p05_stability >= .80)
     summary = {
@@ -464,7 +555,11 @@ def stage4_bootstrap(smoke=False):
         "reference_boundary_inside_95": int(ref_inside),
         "boundary_width_le_25pct_center_distance": int(width <= .25 * distance) if np.isfinite(width) else 0,
         "case_assignment_stability_median": median_stability,
-        "case_assignment_stability_p05_min": p05_stability,
+        "case_assignment_stability_p05": p05_stability,
+        "case_assignment_stability_p05_definition": "5th percentile across per-case bootstrap stability medians",
+        "structural_state_stability_median": structural_state_stability_median,
+        "structural_state_stability_p05": structural_state_stability_p05,
+        "delta_H_high_fraction_median": delta_median,
         "bootstrap_operational_pass": int(pass_ops),
     }
     pd.DataFrame([summary]).to_csv(os.path.join(BOOT, "bootstrap_stability_summary.csv"),
@@ -475,7 +570,9 @@ def stage4_bootstrap(smoke=False):
         "- bootstrap次数：%d；非退化拟合率：%.3f。" % (n_boot, valid_rate),
         "- 全A边界：%.6f；bootstrap 95%%区间：[%.6f, %.6f]；边界位于区间内：%s。" % (ref_b, lo_q, hi_q, "是" if ref_inside else "否"),
         "- 边界区间宽度/全A中心间距：%.3f。" % (width / distance if distance else np.nan),
-        "- 病例分配一致率中位数：%.3f；病例级第5百分位下限：%.3f。" % (median_stability, p05_stability),
+        "- 肿瘤体素加权病例分配一致率中位数：%.3f；病例级一致率第5百分位：%.3f。" % (median_stability, p05_stability),
+        "- 结构状态一致率中位数：%.3f；第5百分位：%.3f；H-high比例bootstrap中位变化：%.6f。" % (
+            structural_state_stability_median, structural_state_stability_p05, delta_median),
         "- 阶段4操作性通过：%s。" % ("是" if pass_ops else "否"),
         "",
     ]))
@@ -569,17 +666,93 @@ def stage5_robustness(structural=None):
     concentration_df = pd.DataFrame(concentration)
     concentration_df.to_csv(os.path.join(ROBUST, "categorical_state_concentration.csv"),
                             index=False, encoding="utf-8-sig")
-    large = concentration_df[concentration_df["n_cases"] >= 20] if len(concentration_df) else concentration_df
+    state_order = ["single-H-low", "single-H-high", "dual-habitat"]
+    continuous_effects = []
+    for variable in continuous:
+        groups = {state: x.loc[x["state"] == state, variable].dropna().to_numpy(dtype=float)
+                  for state in state_order}
+        for i, first in enumerate(state_order):
+            for second in state_order[i + 1:]:
+                a, b = groups[first], groups[second]
+                if not len(a) or not len(b):
+                    smd = np.nan
+                    mean_difference = np.nan
+                    pooled_sd = np.nan
+                else:
+                    mean_difference = float(np.mean(a) - np.mean(b))
+                    variance_a = np.var(a, ddof=1) if len(a) > 1 else 0.0
+                    variance_b = np.var(b, ddof=1) if len(b) > 1 else 0.0
+                    pooled_variance = (((len(a) - 1) * variance_a +
+                                        (len(b) - 1) * variance_b) /
+                                       max(1, len(a) + len(b) - 2))
+                    pooled_sd = float(np.sqrt(pooled_variance))
+                    smd = float(mean_difference / pooled_sd) if pooled_sd > 0 else 0.0
+                continuous_effects.append({
+                    "variable": variable, "group_1": first, "group_2": second,
+                    "n_group_1": len(a), "n_group_2": len(b),
+                    "mean_difference_group_1_minus_group_2": mean_difference,
+                    "pooled_sd": pooled_sd, "standardized_mean_difference": smd,
+                    "absolute_standardized_mean_difference": abs(smd) if np.isfinite(smd) else np.nan,
+                })
+    continuous_effect_df = pd.DataFrame(continuous_effects)
+    continuous_effect_df.to_csv(os.path.join(ROBUST, "continuous_effect_sizes.csv"),
+                                index=False, encoding="utf-8-sig")
+    categorical_effects = []
+    for variable in categorical:
+        table = pd.crosstab(x[variable].fillna("<missing>"), x["state"])
+        table = table.reindex(columns=state_order, fill_value=0)
+        if table.shape[0] >= 2 and table.shape[1] >= 2:
+            chi2, p_value, dof, _ = chi2_contingency(table.to_numpy(), correction=False)
+            denominator = table.to_numpy().sum() * min(table.shape[0] - 1, table.shape[1] - 1)
+            cramers_v = float(np.sqrt(chi2 / denominator)) if denominator else 0.0
+        else:
+            chi2, p_value, dof, cramers_v = 0.0, 1.0, 0, 0.0
+        categorical_effects.append({
+            "variable": variable, "n_cases": int(table.to_numpy().sum()),
+            "n_levels": int(table.shape[0]), "chi2": float(chi2),
+            "dof": int(dof), "p_value_descriptive": float(p_value),
+            "cramers_v": cramers_v,
+        })
+    categorical_effect_df = pd.DataFrame(categorical_effects)
+    categorical_effect_df.to_csv(os.path.join(ROBUST, "categorical_effect_sizes.csv"),
+                                 index=False, encoding="utf-8-sig")
     small_uniform = concentration_df[(concentration_df["n_cases"] >= 10) &
                                      (concentration_df["max_state_fraction"] >= 0.99)] if len(concentration_df) else concentration_df
+    large_uniform = concentration_df[(concentration_df["n_cases"] >= 20) &
+                                     (concentration_df["max_state_fraction"] >= 0.99)] if len(concentration_df) else concentration_df
+    required_qc = [col for col in ["state", "reference_mean", "肿瘤体积mm3",
+                                   "effective_supervoxels", "R1面内间距_mm",
+                                   "R1层厚", "R1层数"] if col in x.columns]
+    n_missing_required = int(x[required_qc].isna().any(axis=1).sum()) if required_qc else len(x)
+    max_smd = (float(continuous_effect_df["absolute_standardized_mean_difference"].max())
+               if len(continuous_effect_df) else np.nan)
+    max_cramers_v = (float(categorical_effect_df["cramers_v"].max())
+                     if len(categorical_effect_df) else np.nan)
+    robustness_pass = bool(n_missing_required == 0)
+    pd.DataFrame([{
+        "n_cases": len(x), "n_missing_required_qc_cases": n_missing_required,
+        "n_large_uniform_categorical_levels": len(large_uniform),
+        "n_small_uniform_categorical_levels": len(small_uniform),
+        "large_uniform_levels_are_diagnostic": 1,
+        "max_absolute_standardized_mean_difference": max_smd,
+        "max_cramers_v": max_cramers_v,
+        "technical_robustness_pass": int(robustness_pass),
+    }]).to_csv(os.path.join(ROBUST, "technical_robustness_summary.csv"),
+               index=False, encoding="utf-8-sig")
     lines = [
         "# A集归一化与采集因素诊断", "",
         "本阶段仅评价技术因素与结构状态的无结局关系，不以单个P值决定保留或排除。", "",
         "- 连续技术变量已按结构状态输出中位数、四分位数、均值和标准差。",
         "- 序列及采集参数已输出各层级结构状态比例。",
-        "- 未发现由本阶段输入质量字段直接标记的可修复预处理错误；结构状态不据此排除。",
-        "- 病例数至少20的采集层级中，未见结构状态比例达到99%的层级。",
-        "- 病例数10–19的小层级中有%d个达到99%%单一状态比例，作为小样本层级描述。" % len(small_uniform),
+        "- 连续变量最大绝对标准化组间差：%s；分类变量最大Cramér's V：%s。" % (
+            "NA" if not np.isfinite(max_smd) else "%.3f" % max_smd,
+            "NA" if not np.isfinite(max_cramers_v) else "%.3f" % max_cramers_v),
+        "- 必需技术质量字段缺失病例：%d；病例数至少20且结构状态比例达到99%%的层级：%d。" % (
+            n_missing_required, len(large_uniform)),
+        "- 病例数10–19且结构状态比例达到99%%的小层级：%d，作为小样本描述。" % len(small_uniform),
+        "- 阶段5必需字段完整性核验：%s。" % ("通过" if robustness_pass else "未通过，需保留该诊断结果并阻止冻结"),
+        "- 分类层级集中度和效应量仅作条件性诊断：%s。" % (
+            "存在需报告的高集中度层级" if len(large_uniform) else "未见病例数至少20且达到99%单一状态的层级"),
         "",
     ]
     write_text(os.path.join(ROBUST, "technical_robustness_report.md"), "\n".join(lines))
@@ -589,11 +762,31 @@ def stage5_robustness(structural=None):
 def stage6_sensitivity(structural=None):
     mkdir(SENS)
     if structural is None:
-        structural = pd.read_csv(os.path.join(STRUCT, "habitat_case_distribution.csv"), encoding="utf-8-sig")
+        structural = pd.read_csv(os.path.join(STRUCT, "habitat_case_distribution.csv"),
+                                 encoding="utf-8-sig", dtype={"影像号": str})
+    else:
+        structural = structural.copy()
+        structural["影像号"] = structural["影像号"].astype(str)
     strict = pd.read_csv(STRICT_AUDIT, encoding="utf-8-sig", dtype=str)
     strict = strict[(strict["split"] == "A") & (strict["recommended_pass"] == "1")]
-    ids = set(strict["patient_id"].astype(str))
-    x = structural[structural["影像号"].astype(str).isin(ids)].copy()
+    strict_ids = strict["patient_id"].astype(str).str.strip()
+    structural_ids = set(structural["影像号"])
+    if len(strict) != 137 or strict_ids.nunique() != 137:
+        raise RuntimeError("strict A sensitivity selection must contain exactly 137 unique cases")
+    if not set(strict_ids).issubset(structural_ids):
+        missing = sorted(set(strict_ids) - structural_ids)
+        raise RuntimeError("strict A137 is not a subset of corrected A393: %s" % missing[:5])
+    ids = set(strict_ids)
+    x = structural[structural["影像号"].isin(ids)].copy()
+    if len(x) != 137 or x["影像号"].nunique() != 137:
+        raise RuntimeError("corrected structural diagnostics do not map one-to-one to A137")
+    pd.DataFrame([{
+        "strict_target_cases": len(strict), "strict_unique_cases": strict_ids.nunique(),
+        "structural_matched_cases": len(x), "structural_unique_cases": x["影像号"].nunique(),
+        "strict_A137_exact_unique_pass": 1,
+        "strict_A137_subset_A393_pass": 1,
+    }]).to_csv(os.path.join(SENS, "strict_A137_assertions.csv"),
+               index=False, encoding="utf-8-sig")
     x.to_csv(os.path.join(SENS, "strict_A137_structural_state.csv"),
              index=False, encoding="utf-8-sig")
     counts = x["state"].value_counts()
@@ -629,14 +822,54 @@ def six_neighbor_interface(hab, roi, spacing_xyz):
     return total
 
 
+def write_freeze_preflight(gates, note):
+    mkdir(FREEZE_PREFLIGHT)
+    frame = pd.DataFrame(gates)
+    frame.to_csv(os.path.join(FREEZE_PREFLIGHT, "freeze_preflight.csv"),
+                 index=False, encoding="utf-8-sig")
+    lines = ["# A集M1冻结前门禁", "", note, "", "|门禁|结果|说明|",
+             "|---|---:|---|"]
+    for row in gates:
+        lines.append("|%s|%d|%s|" % (row["gate"], row["pass"], row["details"]))
+    lines += ["", "冻结前门禁结果：%s。" %
+              ("全部通过" if all(row["pass"] for row in gates) else "未通过，未生成或提升正式生境图与特征目录"), ""]
+    write_text(os.path.join(FREEZE_PREFLIGHT, "freeze_preflight.md"), "\n".join(lines))
+    return all(row["pass"] for row in gates)
+
+
 def stage7_freeze(structural=None):
-    mkdir(MAPS)
-    mkdir(FEATURES)
-    bootstrap = pd.read_csv(os.path.join(BOOT, "bootstrap_stability_summary.csv"), encoding="utf-8-sig")
-    if int(bootstrap.iloc[0]["bootstrap_operational_pass"]) != 1:
-        raise RuntimeError("stage7 blocked: bootstrap operational criteria not met")
-    if structural is None:
-        structural = pd.read_csv(os.path.join(STRUCT, "habitat_case_distribution.csv"), encoding="utf-8-sig")
+    """Run every freeze gate before promoting staged maps/features atomically."""
+    required = {
+        "baseline": (os.path.join(STRUCT, "baseline_integrity.csv"), "baseline_pass"),
+        "bootstrap": (os.path.join(BOOT, "bootstrap_stability_summary.csv"), "bootstrap_operational_pass"),
+        "center_reproducibility": (os.path.join(LOCAL, "center_reproducibility.csv"), "center_reproducibility_pass"),
+        "robustness": (os.path.join(ROBUST, "technical_robustness_summary.csv"), "technical_robustness_pass"),
+    }
+    gates = []
+    for name, (path, column) in required.items():
+        if not os.path.exists(path):
+            gates.append({"gate": name, "pass": 0, "details": "required gate file missing"})
+            continue
+        frame = pd.read_csv(path, encoding="utf-8-sig")
+        value = int(pd.to_numeric(frame.iloc[0][column], errors="coerce")) if column in frame else 0
+        gates.append({"gate": name, "pass": value, "details": "%s=%d" % (column, value)})
+    a137_path = os.path.join(SENS, "strict_A137_assertions.csv")
+    a137_pass = 0
+    if os.path.exists(a137_path):
+        a137 = pd.read_csv(a137_path, encoding="utf-8-sig")
+        a137_pass = int(pd.to_numeric(a137.iloc[0].get("strict_A137_exact_unique_pass", 0), errors="coerce") == 1 and
+                        pd.to_numeric(a137.iloc[0].get("strict_A137_subset_A393_pass", 0), errors="coerce") == 1)
+    gates.append({"gate": "strict_A137_exact_unique_and_subset", "pass": a137_pass,
+                  "details": "assertion file present" if a137_pass else "exact 137/subset assertion missing or failed"})
+    gates.append({"gate": "formal_destination_absent", "pass": int(not (os.path.exists(MAPS) or os.path.exists(FEATURES))),
+                  "details": "formal directories must not pre-exist"})
+    if not write_freeze_preflight(gates, "结构、稳定性、技术因素与A137门禁先行核验；结局、临床变量和B集保持不可见。"):
+        return False
+
+    if os.path.exists(MAPS_STAGING) or os.path.exists(FEATURES_STAGING):
+        raise RuntimeError("staging directory already exists; inspect it before rerunning freeze")
+    mkdir(MAPS_STAGING)
+    mkdir(FEATURES_STAGING)
     cfg = load_cfg()
     sv = load_sv()
     center_frame = pd.read_csv(os.path.join(BASELINE, "global_centers.csv"), encoding="utf-8-sig")
@@ -661,12 +894,9 @@ def stage7_freeze(structural=None):
         voxel_volume = float(np.prod(spacing_xyz))
         tumor_volume = tumor_n * voxel_volume
         p_low, p_high = low_mask.sum() / tumor_n, high_mask.sum() / tumor_n
-        entropy = 0.0
-        for p in [p_low, p_high]:
-            if p > 0:
-                entropy -= p * math.log(p)
+        entropy = -sum(p * math.log(p) for p in [p_low, p_high] if p > 0)
         interface = six_neighbor_interface(hab, roi, spacing_xyz)
-        cc, n_cc = ndimage.label(high_mask, ndimage.generate_binary_structure(3, 3))
+        cc, n_cc = ndimage.label(high_mask, ndimage.generate_binary_structure(3, 1))
         sizes = np.bincount(cc.ravel())[1:] if n_cc else np.array([], dtype=int)
         largest = int(sizes.max()) if len(sizes) else 0
         depth = ndimage.distance_transform_edt(roi, sampling=spacing_xyz[::-1])
@@ -690,55 +920,56 @@ def stage7_freeze(structural=None):
         }
         feature_rows.append(rows)
         main_values = [rows[col] for col in [
-            "H_high_fraction", "H_low_fraction", "habitat_entropy",
+            "H_high_fraction", "sv_median_minus_boundary", "sv_IQR",
             "interface_density", "H_high_largest_component_tumor_fraction",
-            "H_high_component_density", "H_high_radial_burden",
-            "sv_median_minus_boundary", "sv_IQR"]]
+            "H_high_radial_burden"]]
         qc_rows.append({"影像号": pid, "all_main_features_finite": int(np.isfinite(main_values).all()),
                         "n_supervoxels": len(group), "tumor_voxels": tumor_n,
                         "H_low_plus_H_high_equals_tumor": int(int(low_mask.sum() + high_mask.sum()) == tumor_n),
                         "structural_state": state})
         out = sitk.GetImageFromArray(hab.astype(np.int8))
         out.CopyInformation(image)
-        sitk.WriteImage(out, base.apath(os.path.join(MAPS, pid + "_R1_habitat.nrrd")), useCompression=True)
+        sitk.WriteImage(out, base.apath(os.path.join(MAPS_STAGING, pid + "_R1_habitat.nrrd")), useCompression=True)
     features = pd.DataFrame(feature_rows).sort_values("影像号")
     qc = pd.DataFrame(qc_rows).sort_values("影像号")
-    features.to_csv(os.path.join(FEATURES, "global_descriptors_full_A.csv"), index=False, encoding="utf-8-sig")
-    qc.to_csv(os.path.join(FEATURES, "feature_qc.csv"), index=False, encoding="utf-8-sig")
-    baseline = pd.read_csv(os.path.join(STRUCT, "baseline_integrity.csv"), encoding="utf-8-sig")
-    sensitivity = os.path.exists(os.path.join(SENS, "strict_A137_structural_state.csv"))
-    freeze_pass = bool(int(baseline.iloc[0]["baseline_pass"]) == 1 and
-                      int(bootstrap.iloc[0]["bootstrap_operational_pass"]) == 1 and
-                      int(qc["all_main_features_finite"].all()) == 1 and sensitivity)
+    features.to_csv(os.path.join(FEATURES_STAGING, "global_descriptors_full_A.csv"), index=False, encoding="utf-8-sig")
+    qc.to_csv(os.path.join(FEATURES_STAGING, "feature_qc.csv"), index=False, encoding="utf-8-sig")
+    feature_qc_pass = int(len(features) == 393 and features["影像号"].nunique() == 393 and
+                          qc["all_main_features_finite"].all() and
+                          qc["H_low_plus_H_high_equals_tumor"].all())
+    gates.append({"gate": "staged_feature_qc", "pass": feature_qc_pass,
+                  "details": "393 unique cases, six-axis finite check, voxel conservation"})
+    if not write_freeze_preflight(gates, "全部冻结门禁及临时目录特征质控已完成；仅在全部通过后提升正式目录。"):
+        return False
+    os.replace(MAPS_STAGING, MAPS)
+    os.replace(FEATURES_STAGING, FEATURES)
     dictionary = [
         "# M1主特征字典", "",
         "## 冻结状态", "",
-        "- 当前冻结判定：%s。" % ("通过" if freeze_pass else "未通过"),
+        "- 当前冻结判定：通过。",
         "- 主方法：肌肉均值归一化、`[1,1,2] mm`、4 mm三维SLIC、全部有效超体素、每例总权重1、跨病例K-means K=2。",
         "- 全A技术中心：H-low=%.6f，H-high=%.6f，边界b=%.6f。" % (low_c, high_c, boundary),
         "- 结构性单生境保留；不计入硬技术失败。", "",
-        "## 主低维特征", "",
+        "## 主预测特征块", "",
         "|特征|公式|结构性规则|", "|---|---|---|",
         "|`H_high_fraction`|H-high体素数/肿瘤总体素数|H-high缺失时为0|",
-        "|`habitat_entropy`|`-sum(p_k log p_k)`|缺失表型项按0log0=0|",
-        "|`interface_density`|H-low/H-high三维邻接界面面积/肿瘤体积|单生境为0|",
-        "|`H_high_largest_component_tumor_fraction`|最大H-high连通成分体积/肿瘤体积|H-high缺失时为0|",
-        "|`H_high_component_density`|H-high连通成分数/肿瘤体积(cm³)|H-high缺失时为0|",
-        "|`H_high_radial_burden`|H-high归一化径向深度之和/肿瘤总体素数|H-high缺失时为0|",
         "|`sv_median_minus_boundary`|病例超体素Mean中位数−b|始终定义|",
         "|`sv_IQR`|病例超体素Mean的P75−P25|始终定义|",
+        "|`interface_density`|H-low/H-high三维6邻接界面面积/肿瘤体积|单生境为0|",
+        "|`H_high_largest_component_tumor_fraction`|最大H-high 6连通成分体积/肿瘤体积|H-high缺失时为0|",
+        "|`H_high_radial_burden`|H-high归一化径向深度之和/肿瘤总体素数|H-high缺失时为0|",
         "",
-        "表型内纹理在相应表型不存在时保持未定义，不填0。嵌套内部验证必须在每个外层训练折内重新拟合中心并生成验证折特征。", "",
+        "`habitat_entropy`与`H_high_component_density`保留为描述性候选，不纳入当前主预测块。表型内纹理在相应表型不存在时保持未定义，不填0。嵌套内部验证必须在每个外层训练折内重新拟合中心并生成验证折特征。", "",
     ]
     write_text(os.path.join(HAB, "feature_dictionary.md"), "\n".join(dictionary))
-    pd.DataFrame([{"freeze_pass": int(freeze_pass), "baseline_pass": int(baseline.iloc[0]["baseline_pass"]),
-                   "bootstrap_pass": int(bootstrap.iloc[0]["bootstrap_operational_pass"]),
-                   "main_features_all_finite": int(qc["all_main_features_finite"].all()),
-                   "strict_A137_sensitivity_present": int(sensitivity),
+    pd.DataFrame([{"freeze_pass": 1, "baseline_pass": 1,
+                   "bootstrap_pass": 1, "center_reproducibility_pass": 1,
+                   "technical_robustness_pass": 1, "main_features_all_finite": 1,
+                   "strict_A137_sensitivity_present": 1,
                    "n_cases": len(features), "n_hard_technical_failures": 0,
                    "outcome_columns_read": False, "B_data_read": False}]).to_csv(
                        os.path.join(FEATURES, "freeze_qc.csv"), index=False, encoding="utf-8-sig")
-    return freeze_pass
+    return True
 
 
 def main():

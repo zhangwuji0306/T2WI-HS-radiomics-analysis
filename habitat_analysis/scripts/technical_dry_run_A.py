@@ -103,9 +103,28 @@ def geom(image, mask):
     return errors, arr, roi
 
 
+def slic_grid_metadata(image, cfg):
+    """Return the voxel super-grid implied by a requested physical scale.
+
+    SimpleITK's SLIC filter expects the super-grid in voxel units.  The
+    conversion is therefore target physical scale divided by voxel spacing,
+    independent of the image field of view.
+    """
+    target = float(cfg["slic"]["target_scale_mm"])
+    spacing = tuple(float(value) for value in image.GetSpacing())
+    grid = [max(1, int(round(target / spacing[i]))) for i in range(3)]
+    actual = [grid[i] * spacing[i] for i in range(3)]
+    return {
+        "requested_scale_mm": target,
+        "spacing_mm_xyz": spacing,
+        "supergrid_voxels_xyz": tuple(grid),
+        "actual_supergrid_mm_xyz": tuple(actual),
+    }
+
+
 def slic_labels(image, cfg, connected):
-    size, spacing = image.GetSize(), image.GetSpacing()
-    grid = [max(1, int(round(size[i] * spacing[i] / float(cfg["slic"]["target_scale_mm"])))) for i in range(3)]
+    meta = slic_grid_metadata(image, cfg)
+    grid = list(meta["supergrid_voxels_xyz"])
     f = sitk.SLICImageFilter()
     f.SetSuperGridSize(grid)
     f.SetMaximumNumberOfIterations(int(cfg["slic"]["maximum_iterations"]))
@@ -144,7 +163,7 @@ def residual_stats(arr, labels, roi, means):
 
 def lcc(mask, spacing):
     if not mask.any(): return 0, 0.0, 0.0
-    cc, _ = ndimage.label(mask, ndimage.generate_binary_structure(3, 3))
+    cc, _ = ndimage.label(mask, ndimage.generate_binary_structure(3, 1))
     sizes = np.bincount(cc.ravel())[1:]
     n = int(sizes.max())
     return n, n * float(np.prod(spacing)), float(n / int(mask.sum()))
@@ -194,10 +213,15 @@ def first_pass(case, cfg):
             row["geometry_or_label_error"], row["failure_reason"] = 1, ";".join(errors)
             return row, None
         before, after = slic_labels(image, cfg, False), slic_labels(image, cfg, True)
+        slic_meta = slic_grid_metadata(image, cfg)
         row.update(slic_image_unassigned_before=int((before < 0).sum()),
                    slic_image_unassigned_after=int((after < 0).sum()),
                    slic_supervoxels_before_connectivity=int(np.unique(before[roi]).size),
-                   slic_supervoxels_after_connectivity=int(np.unique(after[roi]).size))
+                   slic_supervoxels_after_connectivity=int(np.unique(after[roi]).size),
+                   slic_requested_scale_mm=slic_meta["requested_scale_mm"],
+                   slic_spacing_mm_xyz=";".join(map(str, slic_meta["spacing_mm_xyz"])),
+                   slic_supergrid_voxels_xyz=";".join(map(str, slic_meta["supergrid_voxels_xyz"])),
+                   slic_actual_supergrid_mm_xyz=";".join(map(str, slic_meta["actual_supergrid_mm_xyz"])))
         row["slic_supervoxel_count_change"] = row["slic_supervoxels_after_connectivity"] - row["slic_supervoxels_before_connectivity"]
         vals, sizes, means = sv_stats(arr, after, roi)
         row.update(effective_supervoxels=len(vals), **qstats(vals, "supervoxel_mean"),
@@ -242,6 +266,9 @@ def assign(case, row, cache, centers, equal, cfg):
         unassigned, low, high = int((roi & ((labels < 0) | (hab < 0))).sum()), int((hab == 0).sum()), int((hab == 1).sum())
         out.update(H_low_voxels=low, H_high_voxels=high, unassigned_tumor_voxels=unassigned,
                    unassigned_tumor_fraction=float(unassigned / roi.sum()), empty_habitat=int(low == 0 or high == 0))
+        out["structural_state"] = ("single-H-low" if high == 0 else
+                                    "single-H-high" if low == 0 else
+                                    "dual-habitat")
         spacing = tuple(float(x) for x in image.GetSpacing()[::-1])
         fat = number(case.get("R1标签2均灰度"))
         manifest_muscle = number(case.get("R1标签3均灰度"))
@@ -272,7 +299,6 @@ def assign(case, row, cache, centers, equal, cfg):
                        equal_case_weight_H_high_count=int(np.sum(vals >= eb)),
                        equal_case_weight_empty=int(np.sum(vals < eb) == 0 or np.sum(vals >= eb) == 0))
         types = []
-        if out["empty_habitat"]: types.append("empty_habitat")
         if out["algorithm_failure"]: types.append("algorithm_failure")
         if out["unassigned_tumor_voxels"] > 0: types.append("unassigned_tumor_voxels")
         if out["geometry_or_label_error"]: types.append("geometry_or_label_error")
@@ -328,9 +354,8 @@ def main():
         row, cache = first_pass(case, cfg)
         bases.append(row)
         if cache is not None:
-            vals, maxn = cache["values"], int(cfg["clustering"]["max_supervoxels_per_case_for_fit"])
-            use = vals if len(vals) <= maxn else np.random.RandomState(int(cfg["random_seed"]) + len(fit)).choice(vals, maxn, replace=False)
-            fit.append(use); allvals.append(vals); caches[str(row["影像号"])] = cache
+            vals = cache["values"]
+            fit.append(vals); allvals.append(vals); caches[str(row["影像号"])] = cache
     centers, equal = fit_primary(fit, cfg), fit_equal_case(allvals, cfg)
     lookup = {str(x["影像号"]): x for _, x in cases.iterrows()}
     df = pd.DataFrame([assign(lookup[str(r["影像号"])], r, caches.get(str(r["影像号"])), centers, equal, cfg) for r in bases])

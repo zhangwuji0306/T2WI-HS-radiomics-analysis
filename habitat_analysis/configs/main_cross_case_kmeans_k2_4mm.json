@@ -24,7 +24,10 @@
     "spatial_proximity_weight": 10.0,
     "initialization_perturbation": false,
     "enforce_connectivity": true,
-    "work_units": 1
+    "work_units": 1,
+    "supergrid_conversion": "round(target_scale_mm / spacing_mm_xyz)",
+    "supergrid_voxels_xyz": [4, 4, 2],
+    "actual_supergrid_mm_xyz": [4.0, 4.0, 4.0]
   },
   "clustering": {
     "scope": "cross_case_training_only",
@@ -34,7 +37,9 @@
     "n_init": 100,
     "max_iter": 300,
     "tol": 0.0001,
-    "label_order": ["H-low", "H-high"]
+    "label_order": ["H-low", "H-high"],
+    "fit_supervoxels": "all",
+    "case_weighting": "1/n_i"
   },
   "technical_gate": {
     "failure_unit": "unique_case_with_any_failure",

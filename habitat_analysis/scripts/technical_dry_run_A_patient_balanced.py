@@ -13,7 +13,7 @@ from sklearn.cluster import KMeans
 import technical_dry_run_A as base
 
 
-OUT = os.path.join(base.HAB, "output", "feasibility_A_patient_balanced")
+OUT = os.path.join(base.HAB, "output", "feasibility_A_patient_balanced_post_slic_fix")
 
 
 def fit_patient_balanced(chunks, cfg):
@@ -91,6 +91,7 @@ def main():
         ["technical_failure_cases", failures], ["technical_failure_rate", rate],
         ["failure_threshold_exclusive", .05],
         ["maximum_failures_at_strict_threshold", int(np.floor(.05 * n - 1e-12))],
+        ["structural_single_habitat_cases", int((df["structural_state"].isin(["single-H-low", "single-H-high"])).sum())],
         ["empty_habitat_cases", counts["empty_habitat"]],
         ["algorithm_failure_cases", counts["algorithm_failure"]],
         ["unassigned_tumor_voxel_cases", counts["unassigned_tumor_voxels"]],
@@ -103,6 +104,9 @@ def main():
         "H_low": centers[0], "H_high": centers[1],
         "boundary_b": float(np.mean(centers)), "fit_cases": fit_cases,
         "fit_supervoxels": fit_supervoxels, "fit_case_weighting": "each_case_total_weight_1",
+        "fit_supervoxels_scope": "all_effective_supervoxels",
+        "slic_supergrid_voxels_xyz": "4;4;2",
+        "slic_actual_supergrid_mm_xyz": "4.0;4.0;4.0",
     }]).to_csv(os.path.join(OUT, "global_centers.csv"), index=False, encoding="utf-8-sig")
     base.group_failure(df, ["R1厂商", "R1机型", "R1场强", "R1系列"]).to_csv(
         os.path.join(OUT, "failure_by_scanner.csv"), index=False, encoding="utf-8-sig")
@@ -118,6 +122,11 @@ def main():
         "B_data_read": False, "fit_cases": fit_cases,
         "fit_supervoxels": fit_supervoxels, "technical_failure_cases": failures,
         "technical_failure_rate": rate, "automatic_gate_decision": decision,
+        "fit_supervoxels_scope": "all_effective_supervoxels",
+        "fit_case_weighting": "each_case_total_weight_1",
+        "slic_grid_conversion": "target_scale_mm / spacing_mm_xyz",
+        "slic_supergrid_voxels_xyz": "4;4;2",
+        "slic_actual_supergrid_mm_xyz": "4.0;4.0;4.0",
         "elapsed_seconds": round(time.time() - start, 3), "smoke": False,
     }]).to_csv(os.path.join(OUT, "run_manifest.csv"), index=False, encoding="utf-8-sig")
     print("A cases:", n, "valid first pass cases:", len(fit),

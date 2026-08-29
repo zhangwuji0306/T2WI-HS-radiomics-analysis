@@ -34,7 +34,7 @@ SELECTION = os.path.join(ROOT, "archive", "exploration_20260828",
                          "previous_habitat", "outputs", "technical_pilot",
                          "case_selection.csv")
 CONFIG_PATH = os.path.join(HAB, "configs", "main_cross_case_kmeans_k2_4mm.json")
-OUT = os.path.join(HAB, "output", "method_selection_18")
+OUT = os.path.join(HAB, "output", "method_selection_18_post_slic_fix")
 SEED = 12345
 K = 2
 MIN_SV_SUPPORT = 10
@@ -654,6 +654,9 @@ def main():
         "entropy_log_base": "e", "entropy_min_window_tumor_voxels": MIN_ENTROPY_WINDOW_TUMOR_VOXELS,
         "minimum_supervoxel_tumor_voxels_M2": MIN_SV_SUPPORT,
         "preprocessing": "muscle_mean;spacing_1,1,2;N4_off", "slic": "3D;4mm;iter5;weight10;connectivity_on",
+        "slic_grid_conversion": "target_scale_mm / spacing_mm_xyz",
+        "slic_supergrid_voxels_xyz": "4;4;2", "slic_actual_supergrid_mm_xyz": "4.0;4.0;4.0",
+        "fit_supervoxels": "all_effective_supervoxels", "case_weighting": "1/n_i",
         "fit_reader": "R1", "outcome_columns_read": False, "B_data_read": False,
         "elapsed_seconds": round(time.time() - start, 3), "smoke": args.smoke,
     }]).to_csv(os.path.join(OUT, "run_manifest.csv"), index=False, encoding="utf-8-sig")
