@@ -20,8 +20,8 @@ FEAT = os.path.join(ROOT, "feature_extract")
 PREP = os.path.join(FEAT, "output", "preprocessed")
 MANIFEST = os.path.join(FEAT, "output", "manifest.csv")
 SCANNER = os.path.join(FEAT, "output", "scanner_map.csv")
-A_TABLE = os.path.join(ROOT, "prognosis_analysis", "output", "modeling_v2",
-                       "dataset_primary_raw_A.csv")
+TECHNICAL_A = os.path.join(HAB, "output", "technical_cohort_manifest",
+                           "cohort_A_lenient.csv")
 AUDIT = os.path.join(HAB, "output", "high_signal_eligibility_audit",
                      "patient_features.csv")
 PREP_METRICS = os.path.join(FEAT, "output", "qc", "logs", "preprocess_metrics.csv")
@@ -45,7 +45,8 @@ def number(value):
 
 
 def load_cases():
-    a = pd.read_csv(A_TABLE, encoding="utf-8-sig", dtype=str, usecols=["影像号"])
+    a = pd.read_csv(TECHNICAL_A, encoding="utf-8-sig", dtype=str,
+                    usecols=["影像号"])
     ids = sorted(set(a["影像号"].astype(str).str.strip()))
     if len(ids) != 393:
         raise RuntimeError("A identifier count is %d, expected 393" % len(ids))
@@ -342,7 +343,7 @@ def main():
     cases = load_cases()
     if args.smoke: cases = cases.head(1).copy()
     inrows = [file_record(p, r) for p, r in
-              [(A_TABLE, "A_identifier_list_only"), (MANIFEST, "technical_manifest"),
+              [(TECHNICAL_A, "outcome_blind_A_identifier_list"), (MANIFEST, "technical_manifest"),
                (SCANNER, "technical_scanner_map"), (AUDIT, "technical_high_signal_features_R1"),
                (PREP_METRICS, "preprocess_metrics_R1"), (CONFIG, "locked_config")]]
     for pid in cases["影像号"].astype(str):

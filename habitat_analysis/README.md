@@ -7,12 +7,12 @@
 - 图像清单与设备信息：`../feature_extract/output/manifest.csv`、`../feature_extract/output/scanner_map.csv`
 - 肌肉归一化主预处理图像：`../feature_extract/output/preprocessed/`
 - 高信号筛选审计：`output/high_signal_eligibility_audit/`
-- 宽松主分析集与严格敏感性集：`../prognosis_analysis/output/modeling_v2/`
+- 技术宽松主分析集与严格敏感性集：`output/technical_cohort_manifest/`
 - 临床、影像、病理及预后原始表：`../prognosis_analysis/data/`
 - H5 整块肿瘤候选：`../feature_extract/output/features_v2/`及`../prognosis_analysis/output/qc/stage6_v2/`
 
 ## 执行边界
 
-当前主方法为三维 SLIC 4 mm 加全部有效超体素、每例总权重固定为1的跨病例 K-means K=2；在`[1,1,2] mm`图像上使用`[4,4,2]`体素超网格。空生境记录为`single-H-low`、`single-H-high`或`dual-habitat`结构状态，不计入硬技术失败；硬技术失败率＜5%时记录并剔除，达到或超过5%时停止。校正后18例比较、A=393基线、结构诊断、local-global、bootstrap冒烟、技术因素效应量和A=137核验已完成；正式1000次bootstrap及冻结门禁完成前不纳入A集结局。B=107 在全 A 参数、特征和模型冻结前保持不可见。
+当前主方法为三维 SLIC 4 mm 加全部有效超体素、每例总权重固定为1的跨病例 K-means K=2；在`[1,1,2] mm`图像上使用`[4,4,2]`体素超网格。空生境记录为`single-H-low`、`single-H-high`或`dual-habitat`结构状态，不计入硬技术失败；硬技术失败率＜5%时记录并剔除，达到或超过5%时停止。技术队列由影像清单、设备映射和高信号筛选审计独立生成。bootstrap固定为`smoke=20`、`preflight=200`、`formal=1000`并分目录保存；A集preflight 200次已判定为`CLEAR PASS`，但smoke/preflight不能解锁冻结，只有完整formal=1000及全部门禁通过后才能生成`freeze_lock.json`。B=107 在冻结锁生成前保持不可见。
 
 `scripts/`仅存放当前方案脚本；`output/`各目录的用途见`output/README.md`；参数冻结及执行状态见`analysis_freeze.md`。

@@ -17,7 +17,6 @@ import logging
 import math
 import multiprocessing
 import os
-import shutil
 import time
 
 import numpy as np
@@ -25,6 +24,8 @@ import pandas as pd
 import SimpleITK as sitk
 import radiomics
 from radiomics import imageoperations
+from workflow_utils import atomic_write_csv, atomic_write_json
+from sigma_guard import promote_complete_sigma
 
 radiomics.setVerbosity(logging.ERROR)
 
@@ -98,13 +99,25 @@ def main() -> None:
 
     acc: dict[tuple, list] = {}
     n_fail = 0
+    failures: list[dict] = []
+    used_by_arm = {arm: set() for arm in ARMS}
     t0 = time.perf_counter()
     with multiprocessing.Pool(args.workers) as pool:
         for res in pool.imap_unordered(prepass_task, tasks, chunksize=4):
             if not res["ok"]:
                 n_fail += 1
+                failures.append({"arm": res["arm"], "patient_id": res["pid"],
+                                 "failure_type": "filter_or_roi_failure",
+                                 "error": res["error"]})
                 print(f"[FAIL] {res['arm']} {res['pid']}: {res['error']}")
                 continue
+            if len(res["stats"]) != 11:
+                n_fail += 1
+                failures.append({"arm": res["arm"], "patient_id": res["pid"],
+                                 "failure_type": "incomplete_filter_outputs",
+                                 "error": "expected 11 filters, got %d" % len(res["stats"])})
+                continue
+            used_by_arm[res["arm"]].add(res["pid"])
             for k, (n, s, sq, mn, mx) in res["stats"].items():
                 a0 = acc.setdefault((res["arm"], k), [0, 0.0, 0.0, math.inf, -math.inf])
                 a0[0] += n
@@ -128,19 +141,33 @@ def main() -> None:
             nb = int(math.ceil((mx - mn) / bw)) if bw > 0 else 1
             print(f"    f={f}:  binWidth={bw:.4f}  网格 bin 数 ≈ {nb}")
 
+    arm_complete = {arm: len(used_by_arm[arm]) == len(ids) for arm in ARMS}
+    expected_filter_keys = 11
+    filters_complete = all(len(arms_out.get(arm, {})) == expected_filter_keys
+                           for arm in ARMS)
+    complete_case_pass = (n_fail == 0 and all(arm_complete.values()) and
+                          filters_complete and len(tasks) == len(ids) * len(ARMS))
     doc = {
         "method": "各滤波输出PyRadiomics固定箱宽；binWidth=f×σ_A(filt)；min/max仅作A参考范围；仅训练集A "
                   "（GE DISCOVERY MR750 3T，R1）肿瘤 ROI 合并统计；滤波 = PyRadiomics "
                   "imageoperations（Wavelet coif1 8 子带 / LoG σ=1,2,3 mm）",
         "n_cases": len(ids),
+        "n_cases_expected": len(ids),
+        "n_cases_used": min((len(values) for values in used_by_arm.values()), default=0),
+        "n_cases_failed": n_fail,
+        "complete_case_pass": bool(complete_case_pass),
+        "n_filters_expected_per_arm": expected_filter_keys,
         "log_sigmas": LOG_SIGMAS,
         "f_values": [0.1, 0.25],
         "arms": arms_out,
     }
-    with open(OUT_JSON, "w", encoding="utf-8") as f:
-        json.dump(doc, f, ensure_ascii=False, indent=2)
     os.makedirs(os.path.join(OUT, "configs"), exist_ok=True)
-    shutil.copy2(OUT_JSON, os.path.join(OUT, "configs", "sigma_a_filters.json"))
+    if not complete_case_pass:
+        atomic_write_csv(pd.DataFrame(failures),
+                         os.path.join(OUT, "configs", "sigma_a_filters_errors.csv"))
+        raise RuntimeError("filtered sigma_A incomplete: formal JSON was not overwritten")
+    promote_complete_sigma(doc, OUT_JSON,
+                           os.path.join(OUT, "configs", "sigma_a_filters.json"))
     print(f"\n已写入 {OUT_JSON}")
 
 

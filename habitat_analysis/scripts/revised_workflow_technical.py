@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import subprocess
 import time
 from collections import Counter
 
@@ -22,6 +23,10 @@ from scipy.stats import chi2_contingency
 from sklearn.cluster import KMeans
 
 import technical_dry_run_A as base
+from freeze_lock import (
+    FORMAL_BOOTSTRAPS, atomic_write_json, file_sha256, files_sha256,
+    id_hash, utc_now, validate_formal_bootstrap,
+)
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +38,7 @@ BASELINE = os.path.join(OUT, "feasibility_A_patient_balanced_" + RUN_TAG)
 METHOD18 = os.path.join(OUT, "method_selection_18_" + RUN_TAG)
 STRUCT = os.path.join(OUT, "structural_diagnostics_A_" + RUN_TAG)
 LOCAL = os.path.join(OUT, "local_global_diagnostic_A_" + RUN_TAG)
-BOOT = os.path.join(OUT, "bootstrap_stability_A_" + RUN_TAG)
+BOOT_ROOT = os.path.join(OUT, "bootstrap_stability_A_" + RUN_TAG)
 ROBUST = os.path.join(OUT, "technical_robustness_A_" + RUN_TAG)
 SENS = os.path.join(OUT, "sensitivity_" + RUN_TAG)
 MAPS = os.path.join(OUT, "habitat_maps_A")
@@ -45,7 +50,34 @@ CONFIG = os.path.join(HAB, "configs", "main_cross_case_kmeans_k2_4mm.json")
 STRICT_AUDIT = os.path.join(OUT, "high_signal_eligibility_audit",
                             "recommended_selected_cases.csv")
 SEED = 12345
-N_BOOTSTRAPS = 1000
+BOOTSTRAP_COUNTS = {"smoke": 20, "preflight": 200,
+                    "formal": FORMAL_BOOTSTRAPS}
+BOOTSTRAP_CHECKPOINT_EVERY = 50
+
+
+def bootstrap_run_config(mode):
+    if mode not in BOOTSTRAP_COUNTS:
+        raise ValueError("bootstrap mode must be smoke, preflight, or formal")
+    return {"bootstrap_mode": mode,
+            "n_bootstrap_requested": BOOTSTRAP_COUNTS[mode],
+            "random_seed": SEED,
+            "checkpoint_every": BOOTSTRAP_CHECKPOINT_EVERY}
+
+
+def bootstrap_directory(mode):
+    bootstrap_run_config(mode)
+    return os.path.join(BOOT_ROOT, mode)
+
+
+def bootstrap_checkpoint_path(mode):
+    return os.path.join(bootstrap_directory(mode), "bootstrap_global_centers.csv")
+
+
+def atomic_csv(frame, path):
+    mkdir(os.path.dirname(path))
+    temporary = path + ".tmp"
+    frame.to_csv(temporary, index=False, encoding="utf-8-sig")
+    os.replace(temporary, path)
 
 
 def mkdir(path):
@@ -431,53 +463,105 @@ def fit_all_balanced_from_sv(values, cfg):
     return np.sort(model.cluster_centers_.ravel())
 
 
-def fit_balanced_values(values, ids, rng, cfg):
-    chunks = []
-    for pid in rng.choice(ids, size=len(ids), replace=True):
-        g = values[values["影像号"] == pid]["Mean"].to_numpy(dtype=float)
-        if g.size:
-            chunks.append(g)
+def fit_balanced_values(values, ids, rng, cfg, random_state=None):
+    if isinstance(values, pd.DataFrame):
+        groups = {str(pid): group["Mean"].to_numpy(dtype=float)
+                  for pid, group in values.groupby("影像号")}
+    else:
+        groups = values
+    chunks = [groups[str(pid)] for pid in rng.choice(ids, size=len(ids), replace=True)
+              if str(pid) in groups and len(groups[str(pid)])]
     x = np.concatenate(chunks) if chunks else np.array([], dtype=float)
-    weights = np.concatenate([np.full(len(g), 1.0 / len(g)) for g in chunks]) if chunks else np.array([], dtype=float)
+    weights = (np.concatenate([np.full(len(group), 1.0 / len(group)) for group in chunks])
+               if chunks else np.array([], dtype=float))
     if x.size < 2 or np.unique(x).size < 2:
         return None
     c = cfg["clustering"]
     model = KMeans(n_clusters=int(c["k"]), init=c["initialization"],
                    n_init=int(c["n_init"]), max_iter=int(c["max_iter"]),
-                   tol=float(c["tol"]), random_state=int(cfg["random_seed"]))
+                   tol=float(c["tol"]),
+                   random_state=int(cfg["random_seed"] if random_state is None else random_state))
     model.fit(x.reshape(-1, 1), sample_weight=weights)
-    centers = np.sort(model.cluster_centers_.ravel())
-    return centers
+    return np.sort(model.cluster_centers_.ravel())
 
 
-def stage4_bootstrap(smoke=False):
-    mkdir(BOOT)
+def bootstrap_center_rows(values, ids, cfg, indices, base_seed=SEED):
+    groups = {str(pid): group["Mean"].to_numpy(dtype=float)
+              for pid, group in values.groupby("影像号")}
+    rows = []
+    for index in indices:
+        seed = int(base_seed + int(index))
+        rng = np.random.RandomState(seed)
+        centers = fit_balanced_values(groups, ids, rng, cfg, random_state=seed)
+        row = {"bootstrap_mode": "", "bootstrap_index": int(index),
+               "seed": seed, "fit_status": "degenerate",
+               "C_low": np.nan, "C_high": np.nan,
+               "boundary_b": np.nan, "center_distance": np.nan}
+        if centers is not None:
+            low, high = float(centers[0]), float(centers[1])
+            row.update({"fit_status": "success", "C_low": low, "C_high": high,
+                        "boundary_b": (low + high) / 2.0,
+                        "center_distance": high - low})
+        rows.append(row)
+    return rows
+
+
+def load_bootstrap_checkpoint(mode):
+    path = bootstrap_checkpoint_path(mode)
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    frame = pd.read_csv(path, encoding="utf-8-sig")
+    if frame.empty:
+        return frame
+    if frame["bootstrap_index"].duplicated().any():
+        raise RuntimeError("bootstrap checkpoint contains duplicate indices")
+    if "bootstrap_mode" in frame and not frame["bootstrap_mode"].fillna(mode).eq(mode).all():
+        raise RuntimeError("bootstrap checkpoint mode mismatch")
+    return frame.sort_values("bootstrap_index").reset_index(drop=True)
+
+
+def stage4_bootstrap(mode="smoke", until=None):
+    run = bootstrap_run_config(mode)
+    boot = bootstrap_directory(mode)
+    mkdir(boot)
     cfg = load_cfg()
     sv = load_sv()
     ids = np.sort(sv["影像号"].astype(str).unique())
     center_frame = pd.read_csv(os.path.join(BASELINE, "global_centers.csv"),
                                encoding="utf-8-sig")
-    ref_low, ref_high = float(center_frame.iloc[0]["H_low"]), float(center_frame.iloc[0]["H_high"])
+    ref_low = float(center_frame.iloc[0]["H_low"])
+    ref_high = float(center_frame.iloc[0]["H_high"])
     ref_b = float(center_frame.iloc[0]["boundary_b"])
-    n_boot = 20 if smoke else N_BOOTSTRAPS
-    rng = np.random.RandomState(SEED)
-    center_rows = []
-    assignment_arrays = []
-    for b in range(n_boot):
-        centers = fit_balanced_values(sv, ids, rng, cfg)
-        if centers is None:
-            center_rows.append({"bootstrap": b, "fit_status": "degenerate"})
-            continue
-        low, high = float(centers[0]), float(centers[1])
-        boundary = (low + high) / 2.0
-        center_rows.append({"bootstrap": b, "fit_status": "success",
-                            "C_low": low, "C_high": high, "boundary_b": boundary,
-                            "center_distance": high - low,
-                            "reference_boundary_inside_95": np.nan})
-        assignment_arrays.append((sv["Mean"].to_numpy(dtype=float) >= boundary).astype(np.int8))
-    centers_df = pd.DataFrame(center_rows)
-    centers_df.to_csv(os.path.join(BOOT, "bootstrap_global_centers.csv"),
-                      index=False, encoding="utf-8-sig")
+    requested = int(run["n_bootstrap_requested"])
+    target = requested if until is None else int(until)
+    if target < 1 or target > requested:
+        raise ValueError("bootstrap-until must be between 1 and %d" % requested)
+    centers_df = load_bootstrap_checkpoint(mode)
+    if len(centers_df) and pd.to_numeric(centers_df["bootstrap_index"]).max() >= requested:
+        raise RuntimeError("bootstrap checkpoint index exceeds requested mode count")
+    completed = set(pd.to_numeric(centers_df.get("bootstrap_index", pd.Series(dtype=int)),
+                                  errors="coerce").dropna().astype(int))
+    missing = [index for index in range(target) if index not in completed]
+    new_rows = []
+    for number, index in enumerate(missing, 1):
+        rows = bootstrap_center_rows(sv, ids, cfg, [index], SEED)
+        rows[0]["bootstrap_mode"] = mode
+        new_rows.extend(rows)
+        if number % BOOTSTRAP_CHECKPOINT_EVERY == 0:
+            centers_df = pd.concat([centers_df, pd.DataFrame(new_rows)], ignore_index=True)
+            centers_df = centers_df.sort_values("bootstrap_index").reset_index(drop=True)
+            atomic_csv(centers_df, bootstrap_checkpoint_path(mode))
+            new_rows = []
+            print("[%s] checkpoint %d/%d" % (mode, len(centers_df), requested))
+    if new_rows:
+        centers_df = pd.concat([centers_df, pd.DataFrame(new_rows)], ignore_index=True)
+    centers_df = centers_df.sort_values("bootstrap_index").reset_index(drop=True)
+    atomic_csv(centers_df, bootstrap_checkpoint_path(mode))
+    success = centers_df[centers_df["fit_status"] == "success"].copy()
+    assignment_arrays = [
+        (sv["Mean"].to_numpy(dtype=float) >= float(boundary)).astype(np.int8)
+        for boundary in success["boundary_b"].tolist()
+    ]
     ref_assignment = (sv["Mean"].to_numpy(dtype=float) >= ref_b).astype(np.int8)
     case_rows = []
     means = sv["Mean"].to_numpy(dtype=float)
@@ -522,9 +606,7 @@ def stage4_bootstrap(smoke=False):
             "structural_state_stability": float(np.mean(structural_matches)) if structural_matches else np.nan,
         })
     case_df = pd.DataFrame(case_rows)
-    case_df.to_csv(os.path.join(BOOT, "case_assignment_stability.csv"),
-                   index=False, encoding="utf-8-sig")
-    success = centers_df[centers_df["fit_status"] == "success"].copy()
+    atomic_csv(case_df, os.path.join(boot, "case_assignment_stability.csv"))
     if len(success):
         lo_q, hi_q = success["boundary_b"].quantile([.025, .975])
         ref_inside = bool(lo_q <= ref_b <= hi_q)
@@ -533,7 +615,8 @@ def stage4_bootstrap(smoke=False):
     else:
         lo_q = hi_q = width = distance = np.nan
         ref_inside = False
-    valid_rate = float(len(success) / n_boot)
+    n_completed = len(centers_df)
+    valid_rate = float(len(success) / n_completed) if n_completed else 0.0
     median_stability = float(case_df["assignment_stability_median"].median()) if len(case_df) else np.nan
     p05_stability = (float(np.percentile(case_df["assignment_stability_median"].dropna(), 5))
                      if len(case_df) and case_df["assignment_stability_median"].notna().any()
@@ -547,8 +630,15 @@ def stage4_bootstrap(smoke=False):
                     if len(case_df) else np.nan)
     pass_ops = bool(valid_rate >= .99 and ref_inside and width <= .25 * distance and
                     median_stability >= .95 and p05_stability >= .80)
+    completion_status = "complete" if n_completed == requested else "partial"
+    formal_eligible = int(mode == "formal" and requested == FORMAL_BOOTSTRAPS and
+                          n_completed == FORMAL_BOOTSTRAPS and completion_status == "complete" and
+                          pass_ops)
     summary = {
-        "n_bootstrap_requested": n_boot, "n_bootstrap_success": len(success),
+        "bootstrap_mode": mode, "n_bootstrap_requested": requested,
+        "n_bootstrap_completed": n_completed,
+        "n_bootstrap_success": len(success), "random_seed": SEED,
+        "completion_status": completion_status, "formal_eligible": formal_eligible,
         "nondegenerate_fit_rate": valid_rate, "reference_boundary_b": ref_b,
         "bootstrap_boundary_p2_5": lo_q, "bootstrap_boundary_p97_5": hi_q,
         "bootstrap_boundary_width": width, "reference_center_distance": distance,
@@ -562,26 +652,29 @@ def stage4_bootstrap(smoke=False):
         "delta_H_high_fraction_median": delta_median,
         "bootstrap_operational_pass": int(pass_ops),
     }
-    pd.DataFrame([summary]).to_csv(os.path.join(BOOT, "bootstrap_stability_summary.csv"),
-                                   index=False, encoding="utf-8-sig")
-    write_text(os.path.join(BOOT, "bootstrap_stability_report.md"), "\n".join([
+    atomic_csv(pd.DataFrame([summary]), os.path.join(boot, "bootstrap_stability_summary.csv"))
+    write_text(os.path.join(boot, "bootstrap_stability_report.md"), "\n".join([
         "# A集患者层面bootstrap稳定性", "",
         "采用患者层面有放回抽样；每个抽样病例实例内部超体素总权重为1。", "",
-        "- bootstrap次数：%d；非退化拟合率：%.3f。" % (n_boot, valid_rate),
+        "- 模式：%s；计划%d次；已完成%d次；非退化拟合率：%.3f。" %
+        (mode, requested, n_completed, valid_rate),
         "- 全A边界：%.6f；bootstrap 95%%区间：[%.6f, %.6f]；边界位于区间内：%s。" % (ref_b, lo_q, hi_q, "是" if ref_inside else "否"),
         "- 边界区间宽度/全A中心间距：%.3f。" % (width / distance if distance else np.nan),
         "- 肿瘤体素加权病例分配一致率中位数：%.3f；病例级一致率第5百分位：%.3f。" % (median_stability, p05_stability),
         "- 结构状态一致率中位数：%.3f；第5百分位：%.3f；H-high比例bootstrap中位变化：%.6f。" % (
             structural_state_stability_median, structural_state_stability_p05, delta_median),
         "- 阶段4操作性通过：%s。" % ("是" if pass_ops else "否"),
+        "- formal_eligible：%d；smoke/preflight无论结果均不能解锁冻结。" % formal_eligible,
         "",
     ]))
+    stage4_margin_update(mode)
     return summary
 
 
-def stage4_margin_update():
+def stage4_margin_update(mode="formal"):
     """Add continuous distance-to-boundary diagnostics without refitting."""
-    path = os.path.join(BOOT, "case_assignment_stability.csv")
+    boot = bootstrap_directory(mode)
+    path = os.path.join(boot, "case_assignment_stability.csv")
     stability = pd.read_csv(path, encoding="utf-8-sig", dtype={"影像号": str})
     sv = load_sv()
     center_frame = pd.read_csv(os.path.join(BASELINE, "global_centers.csv"),
@@ -601,7 +694,7 @@ def stage4_margin_update():
     stability = stability.merge(margins, on="影像号", how="left", validate="one_to_one")
     stability.to_csv(path, index=False, encoding="utf-8-sig")
     margins.sort_values("sv_abs_margin_median").to_csv(
-        os.path.join(BOOT, "case_margin_diagnostics.csv"), index=False,
+        os.path.join(boot, "case_margin_diagnostics.csv"), index=False,
         encoding="utf-8-sig")
     return margins
 
@@ -841,7 +934,6 @@ def stage7_freeze(structural=None):
     """Run every freeze gate before promoting staged maps/features atomically."""
     required = {
         "baseline": (os.path.join(STRUCT, "baseline_integrity.csv"), "baseline_pass"),
-        "bootstrap": (os.path.join(BOOT, "bootstrap_stability_summary.csv"), "bootstrap_operational_pass"),
         "center_reproducibility": (os.path.join(LOCAL, "center_reproducibility.csv"), "center_reproducibility_pass"),
         "robustness": (os.path.join(ROBUST, "technical_robustness_summary.csv"), "technical_robustness_pass"),
     }
@@ -853,6 +945,25 @@ def stage7_freeze(structural=None):
         frame = pd.read_csv(path, encoding="utf-8-sig")
         value = int(pd.to_numeric(frame.iloc[0][column], errors="coerce")) if column in frame else 0
         gates.append({"gate": name, "pass": value, "details": "%s=%d" % (column, value)})
+    formal_summary_path = os.path.join(bootstrap_directory("formal"),
+                                       "bootstrap_stability_summary.csv")
+    formal_summary = None
+    if os.path.exists(formal_summary_path):
+        formal_summary = pd.read_csv(formal_summary_path, encoding="utf-8-sig").iloc[0].to_dict()
+        bootstrap_errors = validate_formal_bootstrap(formal_summary)
+    else:
+        bootstrap_errors = ["formal bootstrap summary missing"]
+    gates.append({"gate": "formal_bootstrap_1000", "pass": int(not bootstrap_errors),
+                  "details": "formal 1000 complete" if not bootstrap_errors else "; ".join(bootstrap_errors)})
+    cohort_summary_path = os.path.join(OUT, "technical_cohort_manifest", "cohort_summary.json")
+    identity_pass = 0
+    if os.path.exists(cohort_summary_path):
+        with open(cohort_summary_path, encoding="utf-8") as handle:
+            cohort_summary = json.load(handle)
+        identity_pass = int(cohort_summary.get("identity_audit_pass", 0) == 1 and
+                            cohort_summary.get("A137_subset_A393", 0) == 1)
+    gates.append({"gate": "A393_identity_and_A137_subset", "pass": identity_pass,
+                  "details": "technical cohort audit passed" if identity_pass else "technical cohort audit missing or failed"})
     a137_path = os.path.join(SENS, "strict_A137_assertions.csv")
     a137_pass = 0
     if os.path.exists(a137_path):
@@ -968,7 +1079,53 @@ def stage7_freeze(structural=None):
                    "strict_A137_sensitivity_present": 1,
                    "n_cases": len(features), "n_hard_technical_failures": 0,
                    "outcome_columns_read": False, "B_data_read": False}]).to_csv(
-                       os.path.join(FEATURES, "freeze_qc.csv"), index=False, encoding="utf-8-sig")
+                   os.path.join(FEATURES, "freeze_qc.csv"), index=False, encoding="utf-8-sig")
+    technical_dir = os.path.join(OUT, "technical_cohort_manifest")
+    a393_path = os.path.join(technical_dir, "cohort_A_lenient.csv")
+    a137_path = os.path.join(technical_dir, "cohort_A_strict.csv")
+    a393 = pd.read_csv(a393_path, encoding="utf-8-sig", dtype=str)
+    a137 = pd.read_csv(a137_path, encoding="utf-8-sig", dtype=str)
+    diag = load_diag()
+    failures = diag.loc[hard_failure_flags(diag).any(axis=1), "影像号"].astype(str)
+    screen_paths = [
+        os.path.join(OUT, "high_signal_eligibility_audit", "lenient_screening_decisions.csv"),
+        os.path.join(OUT, "high_signal_eligibility_audit", "recommended_screening_decisions.csv"),
+    ]
+    preprocess_config = os.path.join(ROOT, "feature_extract", "configs", "radiomics_params.yaml")
+    manifest_path = os.path.join(ROOT, "feature_extract", "output", "manifest.csv")
+    scanner_path = os.path.join(ROOT, "feature_extract", "output", "scanner_map.csv")
+    try:
+        commit = subprocess.check_output(
+            ["git", "-c", "safe.directory=" + ROOT.replace("\\", "/"), "rev-parse", "HEAD"],
+            cwd=ROOT, universal_newlines=True).strip()
+    except Exception:  # noqa: BLE001
+        commit = "unknown"
+    lock = {
+        "analysis_id": cfg["analysis_id"], "git_commit": commit,
+        "A393_id_hash": id_hash(a393["影像号"]),
+        "A137_id_hash": id_hash(a137["影像号"]),
+        "manifest_hash": file_sha256(manifest_path),
+        "scanner_map_hash": file_sha256(scanner_path),
+        "high_signal_screen_hash": files_sha256(screen_paths),
+        "preprocessing_config_hash": file_sha256(preprocess_config),
+        "slic_config_hash": file_sha256(CONFIG),
+        "slic_supergrid_voxels_xyz": cfg["slic"]["supergrid_voxels_xyz"],
+        "slic_actual_supergrid_mm_xyz": cfg["slic"]["actual_supergrid_mm_xyz"],
+        "global_center_low": low_c, "global_center_high": high_c,
+        "global_boundary_b": boundary,
+        "bootstrap_mode": "formal", "bootstrap_requested": FORMAL_BOOTSTRAPS,
+        "bootstrap_completed": int(float(formal_summary["n_bootstrap_completed"])),
+        "bootstrap_success": int(float(formal_summary["n_bootstrap_success"])),
+        "bootstrap_completion_status": formal_summary["completion_status"],
+        "bootstrap_operational_pass": int(float(formal_summary["bootstrap_operational_pass"])),
+        "formal_eligible": int(float(formal_summary["formal_eligible"])),
+        "bootstrap_summary_hash": file_sha256(formal_summary_path),
+        "technical_failure_case_hash": id_hash(failures),
+        "main_feature_dictionary_hash": file_sha256(os.path.join(HAB, "feature_dictionary.md")),
+        "outcome_columns_read": False, "B_data_read": False,
+        "freeze_timestamp": utc_now(),
+    }
+    atomic_write_json(os.path.join(HAB, "freeze_lock.json"), lock)
     return True
 
 
@@ -977,8 +1134,10 @@ def main():
     parser.add_argument("--stage", choices=["baseline", "structural", "local-global", "bootstrap", "bootstrap-margin", "robustness", "sensitivity", "freeze", "all"], required=True)
     parser.add_argument("--limit", type=int, default=None,
                         help="limit cases for local-global timing smoke test")
-    parser.add_argument("--smoke", action="store_true",
-                        help="run 20 bootstrap replicates instead of 1000")
+    parser.add_argument("--bootstrap-mode", choices=sorted(BOOTSTRAP_COUNTS),
+                        default="smoke")
+    parser.add_argument("--bootstrap-until", type=int, default=None,
+                        help="resume the selected mode through this replicate count")
     args = parser.parse_args()
     if args.stage in ("baseline", "structural", "all"):
         frame = stage1_baseline()
@@ -988,9 +1147,9 @@ def main():
     if args.stage in ("local-global", "all"):
         stage3_local_global(args.limit)
     if args.stage in ("bootstrap", "all"):
-        stage4_bootstrap(args.smoke)
+        stage4_bootstrap(args.bootstrap_mode, args.bootstrap_until)
     if args.stage == "bootstrap-margin":
-        stage4_margin_update()
+        stage4_margin_update(args.bootstrap_mode)
     if args.stage in ("robustness", "all"):
         stage5_robustness()
     if args.stage in ("sensitivity", "all"):

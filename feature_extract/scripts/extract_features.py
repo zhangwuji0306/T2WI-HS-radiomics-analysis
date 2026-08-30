@@ -27,6 +27,7 @@ import time
 from typing import Dict, Iterable, Set, Tuple
 
 import numpy as np
+import pandas as pd
 
 # On Windows, initialize NumPy's numeric backend before SimpleITK is loaded.
 # Otherwise PyRadiomics 3D shape can fail inside numpy.dot with 0xC06D007F.
@@ -38,6 +39,7 @@ from workflow_utils import (
     atomic_write_csv, atomic_write_json, drop_keys, file_sha256, frame_keys,
     git_commit, merge_rows, read_csv_or_empty, update_stage_metadata, utc_now,
 )
+from data_split_guard import add_split, select_split
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "output")
@@ -168,8 +170,6 @@ def extract_task(task: tuple) -> dict:
 
 
 def main() -> None:
-    import pandas as pd
-
     ap = argparse.ArgumentParser(description="Original 特征提取（连续强度 + 固定箱宽）")
     ap.add_argument("--norm", required=True, choices=["muscle", "zscore"])
     ap.add_argument("--f", required=True, type=float, choices=[0.1, 0.25])
@@ -177,6 +177,8 @@ def main() -> None:
     ap.add_argument("--limit", type=int, help="仅处理前 N 例（测试用）")
     ap.add_argument("--workers", type=int, default=2, help="并行进程数（缺省 2）")
     ap.add_argument("--force", action="store_true", help="忽略已存在输出，重新提取")
+    ap.add_argument("--split", choices=["A", "B", "all"], default="A",
+                    help="冻结前默认仅处理A；B/all需要有效的B验证解锁")
     ap.add_argument("--prep-dir", help="预处理产物目录覆盖（如 N4 试点 output/n4pilot/preprocessed）")
     ap.add_argument("--out-root", help="特征输出根目录覆盖（缺省 output/features_v2）")
     args = ap.parse_args()
@@ -192,15 +194,12 @@ def main() -> None:
 
     man = pd.read_csv(MANIFEST, encoding="utf-8-sig", dtype=str)
     sc = pd.read_csv(SCANNER, encoding="utf-8-sig", dtype=str)
-    df = man.merge(sc[["影像号", "R1厂商", "R1机型", "R1场强"]], on="影像号", how="left")
-    df["_f"] = pd.to_numeric(df["R1场强"], errors="coerce")
-    is_a = (df["R1厂商"] == "GE MEDICAL SYSTEMS") & (df["R1机型"] == "DISCOVERY MR750") & \
-           (df["_f"].round(1) == 3.0)
-    df["split"] = np.where(is_a, "A", "B")
+    df = add_split(man, sc)
     if args.ids:
         ids = [x.strip() for x in args.ids.split(",") if x.strip()]
         df = df[df["影像号"].isin(ids)]
     df = df[df["排除"] != "1"]
+    df = select_split(df, args.split)
     if args.limit:
         df = df.head(args.limit)
     prep = args.prep_dir if args.prep_dir else PREP_DIRS[args.norm]

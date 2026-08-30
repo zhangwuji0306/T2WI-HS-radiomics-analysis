@@ -15,7 +15,7 @@ import pandas as pd
 import SimpleITK as sitk
 
 from workflow_utils import (
-    atomic_write_csv, atomic_write_json, atomic_write_text, git_commit,
+    atomic_write_csv, atomic_write_json, atomic_write_text, file_sha256, git_commit,
     merge_rows, physical_points_inside_image, read_csv_or_empty,
     stable_json_sha256, utc_now,
 )
@@ -76,9 +76,17 @@ def preprocessing_config_sha256(cfg: Dict) -> str:
     return stable_json_sha256(cfg)
 
 
+def pipeline_code_sha256() -> str:
+    files = [os.path.abspath(__file__), os.path.join(ROOT, "scripts", "preprocess.py")]
+    return stable_json_sha256({os.path.basename(path): file_sha256(path)
+                               for path in files if os.path.exists(path)})
+
+
 def pipeline_stamp(cfg: Dict) -> str:
     return stable_json_sha256(
-        {"pipeline_version": PIPELINE_VERSION, "preprocessing": cfg})
+        {"pipeline_version": PIPELINE_VERSION,
+         "pipeline_code_sha256": pipeline_code_sha256(),
+         "preprocessing": cfg})
 
 
 def load_config() -> Dict:
@@ -325,6 +333,7 @@ def build_metadata(cfg: Dict, normalization: str, inputs: Dict,
     return {
         "pipeline_version": PIPELINE_VERSION,
         "pipeline_stamp": pipeline_stamp(cfg),
+        "pipeline_code_sha256": pipeline_code_sha256(),
         "git_commit": git_commit(ROOT),
         "config_sha256": preprocessing_config_sha256(cfg),
         "normalization": normalization,
@@ -334,6 +343,28 @@ def build_metadata(cfg: Dict, normalization: str, inputs: Dict,
         "inputs": inputs,
         "readers": readers,
     }
+
+
+def input_records_current(records: Dict) -> bool:
+    if not records:
+        return False
+    for record in records.values():
+        if not isinstance(record, dict) or "path" not in record:
+            return False
+        stored = str(record["path"])
+        path = stored if os.path.isabs(stored) else os.path.abspath(os.path.join(ROOT, stored))
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return False
+        try:
+            expected_size = int(record["size_bytes"])
+            expected_mtime = int(record["mtime_ns"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if int(stat.st_size) != expected_size or int(stat.st_mtime_ns) != expected_mtime:
+            return False
+    return True
 
 
 def case_is_current(outdir: str, cfg: Dict, has_r2: bool) -> bool:
@@ -352,6 +383,10 @@ def case_is_current(outdir: str, cfg: Dict, has_r2: bool) -> bool:
     except (OSError, ValueError):
         return False
     if metadata.get("pipeline_stamp") != pipeline_stamp(cfg):
+        return False
+    if metadata.get("pipeline_code_sha256") != pipeline_code_sha256():
+        return False
+    if not input_records_current(metadata.get("inputs") or {}):
         return False
     if has_r2:
         r2 = [os.path.join(outdir, name)

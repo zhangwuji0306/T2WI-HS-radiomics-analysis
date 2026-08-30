@@ -31,14 +31,14 @@ EXPECTED_FEATURES = {"original": 107, "wavelet": 8 * 93, "log": 3 * 93}
 COMBOS = ["muscle_f0.25", "muscle_f0.1", "zscore_f0.1", "zscore_f0.25"]
 
 
-def load_pairs() -> tuple[list[str], list[str]]:
+def load_pairs() -> list[str]:
     man = pd.read_csv(MANIFEST, encoding="utf-8-sig", dtype=str)
     sc = pd.read_csv(SCANNER, encoding="utf-8-sig", dtype=str)
     df = man.merge(sc[["影像号", "R1机型"]], on="影像号", how="left")
     pairs = df.loc[df["是否双读者"] == "1", "影像号"].tolist()
     a_pairs = [x for x in pairs if df.loc[df["影像号"] == x, "R1机型"].iloc[0]
                == "DISCOVERY MR750"]
-    return a_pairs, [x for x in pairs if x not in a_pairs]
+    return a_pairs
 
 
 def icc21(pivot: pd.DataFrame) -> float:
@@ -59,7 +59,7 @@ def icc21(pivot: pd.DataFrame) -> float:
         ms_subject + (k - 1) * ms_error + k * (ms_rater - ms_error) / n)
 
 
-def process_table(combo: str, batch: str, a_pairs: list[str], b_pairs: list[str]) -> dict:
+def process_table(combo: str, batch: str, a_pairs: list[str]) -> dict:
     fname, meta = BATCHES[batch]
     path = os.path.join(FEATURES, combo, fname)
     if not os.path.exists(path):
@@ -78,10 +78,8 @@ def process_table(combo: str, batch: str, a_pairs: list[str], b_pairs: list[str]
     for col in feat_cols:
         p_a = readers.loc[readers["影像号"].isin(a_pairs)].pivot(
             index="影像号", columns="读者", values=col)
-        p_b = readers.loc[readers["影像号"].isin(b_pairs)].pivot(
-            index="影像号", columns="读者", values=col)
-        rows.append({"feature": col, "icc_A": icc21(p_a), "n_A": int(p_a.dropna().shape[0]),
-                     "icc_B": icc21(p_b), "n_B": int(p_b.dropna().shape[0])})
+        rows.append({"feature": col, "icc_A": icc21(p_a),
+                     "n_A": int(p_a.dropna().shape[0])})
     icc = pd.DataFrame(rows)
     icc["pass_icc"] = icc["icc_A"] > ICC_THRESHOLD
 
@@ -106,7 +104,7 @@ def main() -> None:
     ap.add_argument("--combos", default=",".join(COMBOS))
     args = ap.parse_args()
     combos = [x.strip() for x in args.combos.split(",") if x.strip()]
-    a_pairs, b_pairs = load_pairs()
+    a_pairs = load_pairs()
     summaries = []
 
     for combo in combos:
@@ -114,7 +112,7 @@ def main() -> None:
         os.makedirs(outdir, exist_ok=True)
         combined = []
         for batch in BATCHES:
-            result = process_table(combo, batch, a_pairs, b_pairs)
+            result = process_table(combo, batch, a_pairs)
             result["icc"].to_csv(os.path.join(outdir, f"{batch}_icc.csv"), index=False,
                                  encoding="utf-8-sig")
             result["dropped"].to_csv(os.path.join(outdir, f"{batch}_dropped.csv"), index=False,
@@ -140,7 +138,7 @@ def main() -> None:
     os.makedirs(STAGE6, exist_ok=True)
     summary.to_csv(os.path.join(STAGE6, "summary.csv"), index=False, encoding="utf-8-sig")
     lines = ["# 阶段六 v2 特征质控汇总", "",
-             f"- A 内双读者 {len(a_pairs)} 对用于 ICC(2,1)>0.75；B 内 {len(b_pairs)} 对仅描述。",
+             f"- A 内双读者 {len(a_pairs)} 对用于 ICC(2,1)>0.75；冻结前不读取或报告B集ICC。",
              "- v2 使用连续强度一阶特征、固定箱宽纹理；Shape 仅在 Original 提取一次。",
              "- 近零方差、跨三批次相关去重和标准化全部延后至嵌套 CV 外层训练折。",
              "", "| 情景 | 批次 | 总数 | ICC通过 | 缺失剔除 | 候选 |",

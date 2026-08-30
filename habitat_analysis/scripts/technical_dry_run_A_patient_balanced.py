@@ -37,7 +37,7 @@ def main():
     if len(cases) != 393:
         raise RuntimeError("expected 393 A cases, got %d" % len(cases))
     input_paths = [
-        (base.A_TABLE, "A_identifier_list_only"),
+        (base.TECHNICAL_A, "outcome_blind_A_identifier_list"),
         (base.MANIFEST, "technical_manifest"),
         (base.SCANNER, "technical_scanner_map"),
         (base.AUDIT, "technical_high_signal_features_R1"),

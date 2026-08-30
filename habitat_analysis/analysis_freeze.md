@@ -22,6 +22,9 @@
 - 跨病例K-means，K=2，k-means++，`n_init=100`，`max_iter=300`，`tol=1e-4`，随机种子12345。
 - `fit_supervoxels=all`；病例 (i) 的超体素权重为 (w_{ij}=1/n_i)，`case_weighting=1/n_i`，每例权重和为1。
 - 聚类中心只在对应训练数据中拟合；标签按中心从低到高固定为`H-low`和`H-high`。
+- bootstrap为患者层面、结局盲态技术稳定性评估，模式固定为`smoke=20`、`preflight=200`、`formal=1000`；三种模式分别写入`output/bootstrap_stability_A_post_slic_fix/smoke/`、`preflight/`和`formal/`，每个重复使用`12345+bootstrap_index`作为种子并支持断点续跑。
+- `smoke`仅用于流程核验，`preflight`仅用于正式运行前估时和稳定性预审；二者均不得解锁冻结。只有完整的`formal=1000`结果及其余门禁全部通过后，才可生成`freeze_lock.json`。
+- 当前状态：A集`preflight=200`已完成，全部拟合成功，操作性判定为`CLEAR PASS`；尚未执行`formal=1000`，未生成`freeze_lock.json`。
 - 生境Original特征固定箱宽`0.248808`；关闭PyRadiomics内部重采样和归一化。
 
 ## 技术失败与结构状态
@@ -46,5 +49,7 @@
 ## 数据隔离
 
 - 技术干跑不得读取结局或临床变量。
+- A集技术队列由影像清单、设备映射和高信号筛选审计独立生成；严禁使用预后或临床表确定技术队列。
+- B集在`freeze_lock.json`生成前保持不可见；冻结前不生成B集特征、QC或模型比较结果。
 - 快速检查及重复内部验证中，聚类、插补、特征处理、标准化和调参均在外层训练折内拟合。
 - B在全A参数、特征和模型冻结前不得用于方法选择；冻结后仅验证一次。
