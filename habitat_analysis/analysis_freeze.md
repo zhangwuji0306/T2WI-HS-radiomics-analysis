@@ -25,6 +25,7 @@
 - bootstrap为患者层面、结局盲态技术稳定性评估，模式固定为`smoke=20`、`preflight=200`、`formal=1000`；三种模式分别写入`output/bootstrap_stability_A_post_slic_fix/smoke/`、`preflight/`和`formal/`，每个重复使用`12345+bootstrap_index`作为种子并支持断点续跑。
 - `smoke`仅用于流程核验，`preflight`仅用于正式运行前估时和稳定性预审；二者均不得解锁冻结。只有完整的`formal=1000`结果及其余门禁全部通过后，才可生成`freeze_lock.json`。
 - 当前状态：A集`preflight=200`已完成，全部拟合成功，操作性判定为`CLEAR PASS`；尚未执行`formal=1000`，未生成`freeze_lock.json`。
+- 结局盲态0.1%阈值技术合理性审计已完成：A筛选母队列530例，重算A393身份一致，A137为A393真子集；阈值扫描、近阈值形态、post-SLIC保留、技术因素、R1/R2一致性及既有200次preflight均已核验。审计等级为`CONCERNING`，主要警示为近0.10–<0.25%高信号经超体素平均后的保留召回率中位数为0，以及肿瘤体积/体素数和序列因素关联；该审计不改变0.1%主标准、不执行阈值优化，formal及结局分析仍未执行。
 - 生境Original特征固定箱宽`0.248808`；关闭PyRadiomics内部重采样和归一化。
 
 ## 技术失败与结构状态

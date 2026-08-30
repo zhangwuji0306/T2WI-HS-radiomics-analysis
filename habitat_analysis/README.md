@@ -7,6 +7,7 @@
 - 图像清单与设备信息：`../feature_extract/output/manifest.csv`、`../feature_extract/output/scanner_map.csv`
 - 肌肉归一化主预处理图像：`../feature_extract/output/preprocessed/`
 - 高信号筛选审计：`output/high_signal_eligibility_audit/`
+- 0.1%阈值技术合理性审计：`output/high_signal_threshold_audit/`
 - 技术宽松主分析集与严格敏感性集：`output/technical_cohort_manifest/`
 - 临床、影像、病理及预后原始表：`../prognosis_analysis/data/`
 - H5 整块肿瘤候选：`../feature_extract/output/features_v2/`及`../prognosis_analysis/output/qc/stage6_v2/`
