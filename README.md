@@ -23,26 +23,27 @@ GitHub/Codex 仓库只保存代码、配置、方法文档和不含原始影像�
 - `habitat_analysis/configs/`：主方法参数和终点定义。
 - `habitat_analysis/` 下的 Markdown 文件：队列定义、分析冻结和执行边界。
 - `prognosis_analysis/scripts/`：队列建模表和候选特征 QC 脚本。
-- `archive/`：历史探索材料，仅保存在本地。
+- `manuscript/methodology_defense/`：方法学证据归档；不作为重新选择技术方法的入口。
+- `archive/protocol_history/`：已完成或被替代的任务书和方法审阅报告。
+- `archive/exploration_20260828/`：含患者级结果的历史探索材料，仅保存在本地。
 
 ## 当前主线
 
-主方法候选为三维 SLIC 4 mm 加跨病例 K-means，聚类数为 K=2。
+主方法固定为三维 SLIC 4 mm 加跨病例 K-means，聚类数为 K=2。当前执行协议为《T2WI-HS-radiomics-analysis 后续分析、双阶段冻结与外部验证任务书.md》。
 
 分析顺序为：
 
 ```text
-feasibility_A
-→ habitat_maps_A
-→ habitat_features_A
-→ modeling
-→ quick_check
-→ nested_cv
-→ final_model
-→ validation_B
+formal bootstrap 1000
+→ 技术门禁与正式生境特征
+→ habitat_analysis/freeze_lock.json
+→ A-only endpoint QC与nested modeling
+→ final A refit
+→ prognosis_analysis/model_freeze_lock.json
+→ B一次性外部验证
 ```
 
-A 集为技术干跑和模型开发队列，B 集在 A 集参数、特征和模型冻结前保持不可见。技术干跑不得读取结局或临床变量；失败病例按预先冻结的规则处理。
+第一把锁只允许读取A集临床变量和结局；第二把锁生成前，B集临床、结局、特征分布和性能均保持不可见。B只用于最终模型冻结后的一次性外部验证。
 
 ## 环境
 
@@ -100,8 +101,10 @@ python tools/build_image_id_mapping.py
 
 ## 文档入口
 
+- [当前执行任务书](T2WI-HS-radiomics-analysis%20后续分析、双阶段冻结与外部验证任务书.md)
 - [项目说明](项目说明.md)
 - [组学分析方案](组学分析方案.md)
 - [生境分析方案与工作流](生境分析方案与工作流.md)
 - [分析冻结状态](habitat_analysis/analysis_freeze.md)
 - [项目状态](PROJECT_STATUS.md)
+- [历史协议归档](archive/protocol_history/README.md)

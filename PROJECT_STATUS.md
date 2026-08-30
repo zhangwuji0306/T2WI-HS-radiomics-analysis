@@ -19,13 +19,13 @@
 
 ## In progress
 
-- 维护代码、配置和方法文档的 GitHub 版本；患者级技术输出仅保留在本地。
-- 使用本地匿名化映射表管理影像号与匿名号之间的对应关系。
-- 在本地完成代码检查后重新生成上游清单、muscle 预处理、z-score 敏感性预处理及对应 QC；真实患者数据分析仍在本地受控环境执行。
+- 当前执行协议为《T2WI-HS-radiomics-analysis 后续分析、双阶段冻结与外部验证任务书.md》。
+- 旧冻结前修复任务书和方法学修订报告已转入`archive/protocol_history/`，仅作为决策历史保存。
+- 方法学证据存放于`manuscript/methodology_defense/`；患者级技术输出仍仅保留在本地。
 
 ## Next task
 
-在结局盲态下申请并执行正式1000次患者层面bootstrap，随后执行冻结前全部门禁。满足冻结条件后再纳入A集预设临床变量与DFS。B集在全A参数、特征和模型冻结前保持不可见。
+在结局盲态下执行正式1000次患者层面bootstrap，随后完成formal门禁、正式生境特征原子晋升及第一阶段`freeze_lock.json`。第一把锁只解锁A集预设临床变量与DFS；完成A-only nested validation、全A最终拟合并生成第二阶段`model_freeze_lock.json`后，才允许首次读取B集进行一次性外部验证。
 
 ## Important decisions
 
@@ -33,10 +33,10 @@
 - 任何进入仓库的影像相关资料必须使用匿名影像号；原始影像号—匿名号映射仅保存在本地 `local_private/image_id_mapping.csv`。
 - 技术干跑不得读取结局或临床变量。
 - 硬技术失败不填补；结构性单生境保留，主低维描述符按结构零规则生成，表型内纹理在相应表型不存在时保持未定义；不切换主方法，也不根据结局决定排除。
-- B 集在全 A 集参数、特征和模型冻结前保持不可见，冻结后仅用于一次验证。
+- 第一阶段技术锁只允许A outcome读取，不允许B访问；B必须保持不可见直至第二阶段最终模型锁生成，之后仅用于一次验证。
 - 技术队列清单只由影像清单、设备映射和高信号筛选审计生成；不得从预后或临床表生成A集技术候选。
 - bootstrap模式固定为`smoke=20`、`preflight=200`、`formal=1000`，分别写入`habitat_analysis/output/bootstrap_stability_A_post_slic_fix/{smoke,preflight,formal}/`；只有完整formal=1000可进入冻结门禁。
-- 冻结前不得读取B集；B集相关特征、QC和模型步骤必须由`freeze_lock.json`及独立B解锁控制。
+- B集相关特征、QC和模型步骤必须同时通过第一阶段`freeze_lock.json`和第二阶段`model_freeze_lock.json`校验。
 - 预计超过 40 分钟的任务必须先进行小样本估时，并遵守 `AGENTS.md` 中的单次检查和结果核验规则。
 
 ## Verification
