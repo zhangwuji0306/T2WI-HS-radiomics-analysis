@@ -45,9 +45,8 @@ def _read_json(path: str) -> dict:
         return json.load(handle)
 
 
-def load_config(path: str = DEFAULT_CONFIG) -> dict:
-    """Load and validate the immutable W07 design configuration."""
-    config = _read_json(path)
+def _validate_config(config: dict) -> dict:
+    """Validate the immutable W07 design configuration."""
     required = {"stage", "status", "input", "outer_cv", "populations",
                 "forbidden_operations"}
     missing = sorted(required - set(config))
@@ -57,6 +56,31 @@ def load_config(path: str = DEFAULT_CONFIG) -> dict:
         raise W07ValidationError("W07 config must be frozen")
 
     input_cfg = config["input"]
+    required_input = {
+        "source", "schema", "source_audit", "source_sha256",
+        "schema_sha256", "source_audit_sha256", "expected_columns",
+        "technical_cohort", "expected_population", "expected_events",
+        "expected_censors", "eligibility_source",
+    }
+    missing_input = sorted(required_input - set(input_cfg))
+    if missing_input:
+        raise W07ValidationError(
+            "W07 input binding missing keys: %s" % missing_input)
+    if os.path.basename(os.path.normpath(input_cfg["source"])) != \
+            "A_modeling_population.csv":
+        raise W07ValidationError("W07 source must be A_modeling_population.csv")
+    if os.path.basename(os.path.normpath(input_cfg["schema"])) != \
+            "A_modeling_population_schema.json":
+        raise W07ValidationError("W07 source schema must be the W06 schema")
+    if os.path.basename(os.path.normpath(input_cfg["source_audit"])) != \
+            "endpoint_qc_summary.json":
+        raise W07ValidationError("W07 source audit must be the W06 endpoint summary")
+    for name in ("source_sha256", "schema_sha256", "source_audit_sha256"):
+        value = input_cfg[name]
+        if not isinstance(value, str) or len(value) != 64 or \
+                any(character not in "0123456789abcdefABCDEF"
+                    for character in value):
+            raise W07ValidationError("W07 %s must be a SHA-256 hex digest" % name)
     if input_cfg.get("expected_columns") != POPULATION_COLUMNS:
         raise W07ValidationError("W07 input schema is not the W06 schema")
     if input_cfg.get("technical_cohort") != "A393":
@@ -67,6 +91,8 @@ def load_config(path: str = DEFAULT_CONFIG) -> dict:
         raise W07ValidationError("W07 expected event count must be 89")
     if input_cfg.get("expected_censors") != 304:
         raise W07ValidationError("W07 expected censor count must be 304")
+    if input_cfg.get("eligibility_source") != "W06 endpoint QC only":
+        raise W07ValidationError("W07 eligibility must come from W06 endpoint QC")
 
     outer = config["outer_cv"]
     if outer.get("n_splits") != 5 or outer.get("n_repeats") != 10:
@@ -89,12 +115,79 @@ def load_config(path: str = DEFAULT_CONFIG) -> dict:
     return config
 
 
+def load_config(path: str = DEFAULT_CONFIG) -> dict:
+    """Load and validate the immutable W07 design configuration."""
+    return _validate_config(_read_json(path))
+
+
 def _sha256_file(path: str) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _absolute_path(path: str) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def _configured_path(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise W07ValidationError("W07 configured source path is empty")
+    if os.path.isabs(value):
+        return _absolute_path(value)
+    return _absolute_path(os.path.join(PROJECT_ROOT, value))
+
+
+def _validate_w06_source_binding(path: str, config: dict) -> str:
+    """Verify the exact W06 artifact, schema, and audit before reading CSV."""
+    input_cfg = config["input"]
+    configured_source = _configured_path(input_cfg["source"])
+    supplied_source = _absolute_path(path)
+    if supplied_source != configured_source or \
+            _absolute_path(os.path.realpath(path)) != \
+            _absolute_path(os.path.realpath(configured_source)):
+        raise W07ValidationError(
+            "W07 input path is not the configured W06 A source artifact")
+
+    schema_path = _configured_path(input_cfg["schema"])
+    audit_path = _configured_path(input_cfg["source_audit"])
+    for label, candidate in (("source", supplied_source),
+                             ("schema", schema_path),
+                             ("source audit", audit_path)):
+        if not os.path.isfile(candidate):
+            raise W07ValidationError("W07 %s artifact is missing" % label)
+
+    source_hash = _sha256_file(supplied_source)
+    if source_hash.lower() != input_cfg["source_sha256"].lower():
+        raise W07ValidationError("W07 source hash is not the frozen W06 hash")
+    if _sha256_file(schema_path).lower() != \
+            input_cfg["schema_sha256"].lower():
+        raise W07ValidationError("W07 schema hash is not the frozen W06 hash")
+    if _sha256_file(audit_path).lower() != \
+            input_cfg["source_audit_sha256"].lower():
+        raise W07ValidationError(
+            "W07 source audit hash is not the frozen W06 hash")
+
+    schema = _read_json(schema_path)
+    if schema.get("file") != "A_modeling_population.csv" or \
+            schema.get("columns") != POPULATION_COLUMNS or \
+            schema.get("n_rows") != input_cfg["expected_population"] or \
+            schema.get("eligibility_source") != input_cfg["eligibility_source"]:
+        raise W07ValidationError("W07 W06 schema contract mismatch")
+
+    audit = _read_json(audit_path)
+    counts = audit.get("counts", {})
+    if audit.get("workflow_stage") != "W06" or \
+            audit.get("A_modeling_population_sha256", "").lower() != \
+            source_hash.lower() or \
+            counts.get("A_modeling_population") != \
+            input_cfg["expected_population"] or \
+            counts.get("DFS_event_count") != input_cfg["expected_events"] or \
+            counts.get("censor_count") != input_cfg["expected_censors"]:
+        raise W07ValidationError("W07 W06 source audit contract mismatch")
+    return source_hash
 
 
 def _normalize_population(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
@@ -148,16 +241,16 @@ def _normalize_population(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
 
 def load_a_modeling_population(path: str = DEFAULT_POPULATION,
                                config: Optional[dict] = None) -> pd.DataFrame:
-    """Read only the exact W06 A modeling-population CSV contract.
-
-    The filename guard is intentional: W07 has no generic dataset reader and
-    cannot be pointed at a clinical workbook, a radiomics table, or a B file.
-    """
+    """Read only the hash-bound W06 A modeling-population artifact."""
+    path = os.fspath(path)
     if os.path.basename(os.path.normpath(path)) != "A_modeling_population.csv":
         raise W07ValidationError(
             "W07 accepts only A_modeling_population.csv as its input")
     if config is None:
         config = load_config()
+    else:
+        config = _validate_config(config)
+    _validate_w06_source_binding(path, config)
     frame = pd.read_csv(path, dtype={"影像号": str})
     return _normalize_population(frame, config)
 

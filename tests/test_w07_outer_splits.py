@@ -36,6 +36,55 @@ def synthetic_population(n=393, events=89):
     })
 
 
+def write_bound_w06_fixture(tmp):
+    config = synthetic_config()
+    population_dir = os.path.join(tmp, "A_modeling")
+    audit_dir = os.path.join(tmp, "A_endpoint_qc")
+    os.makedirs(population_dir)
+    os.makedirs(audit_dir)
+
+    population_path = os.path.join(population_dir,
+                                    "A_modeling_population.csv")
+    schema_path = os.path.join(population_dir,
+                               "A_modeling_population_schema.json")
+    audit_path = os.path.join(audit_dir, "endpoint_qc_summary.json")
+    population = synthetic_population()
+    population.to_csv(population_path, index=False)
+    source_hash = w07._sha256_file(population_path)
+    schema = {
+        "file": "A_modeling_population.csv",
+        "columns": w07.POPULATION_COLUMNS,
+        "n_rows": len(population),
+        "patient_level_local_sensitive": True,
+        "eligibility_source": "W06 endpoint QC only",
+    }
+    with open(schema_path, "w", encoding="utf-8") as handle:
+        json.dump(schema, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+    audit = {
+        "workflow_stage": "W06",
+        "A_modeling_population_sha256": source_hash,
+        "counts": {
+            "A_modeling_population": 393,
+            "DFS_event_count": 89,
+            "censor_count": 304,
+        },
+    }
+    with open(audit_path, "w", encoding="utf-8") as handle:
+        json.dump(audit, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+
+    config["input"].update({
+        "source": population_path,
+        "schema": schema_path,
+        "source_audit": audit_path,
+        "source_sha256": source_hash,
+        "schema_sha256": w07._sha256_file(schema_path),
+        "source_audit_sha256": w07._sha256_file(audit_path),
+    })
+    return config, population_path
+
+
 class W07OuterSplitTests(unittest.TestCase):
     def run_synthetic(self):
         config = synthetic_config()
@@ -53,13 +102,9 @@ class W07OuterSplitTests(unittest.TestCase):
         self.assertEqual(set(splits["patient_id"]), set(population["patient_id"]))
 
         with tempfile.TemporaryDirectory() as tmp:
-            population_dir = os.path.join(tmp, "A_modeling")
-            os.makedirs(population_dir)
-            population_path = os.path.join(population_dir,
-                                            "A_modeling_population.csv")
+            config, population_path = write_bound_w06_fixture(tmp)
             config_path = os.path.join(tmp, "w07.json")
             output_path = os.path.join(tmp, "outer_splits_A.csv")
-            synthetic_population().to_csv(population_path, index=False)
             with open(config_path, "w", encoding="utf-8") as handle:
                 json.dump(config, handle)
             result = w07.run_w07(population_path, output_path, config_path)
@@ -104,6 +149,41 @@ class W07OuterSplitTests(unittest.TestCase):
                 w07.load_a_modeling_population("dataset_primary_raw_B.csv",
                                                synthetic_config())
         reader.assert_not_called()
+
+    def test_untrusted_same_name_input_is_rejected_before_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            untrusted_dir = os.path.join(tmp, "untrusted_source")
+            os.makedirs(untrusted_dir)
+            path = os.path.join(untrusted_dir,
+                                "A_modeling_population.csv")
+            synthetic_population().to_csv(path, index=False)
+            with mock.patch.object(w07.pd, "read_csv",
+                                   side_effect=AssertionError("must not read")) as reader:
+                with self.assertRaises(w07.W07ValidationError):
+                    w07.load_a_modeling_population(path, synthetic_config())
+            reader.assert_not_called()
+
+    def test_same_name_replacement_at_authorized_path_fails_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config, population_path = write_bound_w06_fixture(tmp)
+            with open(population_path, "a", encoding="utf-8") as handle:
+                handle.write("\n")
+            with mock.patch.object(w07.pd, "read_csv",
+                                   side_effect=AssertionError("must not read")) as reader:
+                with self.assertRaises(w07.W07ValidationError):
+                    w07.load_a_modeling_population(population_path, config)
+            reader.assert_not_called()
+
+    def test_untrusted_schema_replacement_fails_before_csv_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config, population_path = write_bound_w06_fixture(tmp)
+            with open(config["input"]["schema"], "a", encoding="utf-8") as handle:
+                handle.write("\n")
+            with mock.patch.object(w07.pd, "read_csv",
+                                   side_effect=AssertionError("must not read")) as reader:
+                with self.assertRaises(w07.W07ValidationError):
+                    w07.load_a_modeling_population(population_path, config)
+            reader.assert_not_called()
 
     def test_config_records_all_required_population_rules(self):
         path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
