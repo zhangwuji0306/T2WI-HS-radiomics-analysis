@@ -12,7 +12,7 @@ import hashlib
 import json
 import os
 import tempfile
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,25 @@ DEFAULT_POPULATION = os.path.join(
 DEFAULT_SPLITS = os.path.join(OUTPUT_ROOT, "outer_splits_A.csv")
 DEFAULT_CONFIG = os.path.join(
     ROOT, "configs", "w07_outer_splits.json")
+
+# W07 provenance is a code-level project lock.  The JSON configuration may
+# carry the same values for audit readability, but it is not an authority for
+# selecting the W06 artifacts or their hashes.
+FROZEN_W06_SOURCE = os.path.join(
+    "prognosis_analysis", "output", "A_modeling",
+    "A_modeling_population.csv")
+FROZEN_W06_SCHEMA = os.path.join(
+    "prognosis_analysis", "output", "A_modeling",
+    "A_modeling_population_schema.json")
+FROZEN_W06_SOURCE_AUDIT = os.path.join(
+    "prognosis_analysis", "output", "A_endpoint_qc",
+    "endpoint_qc_summary.json")
+FROZEN_W06_SOURCE_SHA256 = (
+    "5c93441f535ba86d965c3da14b4b33fe52f73d4337cd15a670b3ca2b8a2c23e4")
+FROZEN_W06_SCHEMA_SHA256 = (
+    "41f6a6ac69bc0727755817d1e3e6902e24c612c00d6c88f52c4c2f42904039c6")
+FROZEN_W06_SOURCE_AUDIT_SHA256 = (
+    "0814082014600935922d3b082b678217b81aef710b3efe62a2103a67a85ae319")
 
 POPULATION_COLUMNS = [
     "影像号", "technical_cohort", "DFS_time", "DFS_event",
@@ -45,8 +64,30 @@ def _read_json(path: str) -> dict:
         return json.load(handle)
 
 
+def _absolute_path(path: str) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def _trusted_w06_binding() -> dict:
+    """Return the W06 provenance contract fixed by this W07 implementation."""
+    return {
+        "source": FROZEN_W06_SOURCE,
+        "schema": FROZEN_W06_SCHEMA,
+        "source_audit": FROZEN_W06_SOURCE_AUDIT,
+        "source_sha256": FROZEN_W06_SOURCE_SHA256,
+        "schema_sha256": FROZEN_W06_SCHEMA_SHA256,
+        "source_audit_sha256": FROZEN_W06_SOURCE_AUDIT_SHA256,
+        "expected_columns": list(POPULATION_COLUMNS),
+        "technical_cohort": "A393",
+        "expected_population": 393,
+        "expected_events": 89,
+        "expected_censors": 304,
+        "eligibility_source": "W06 endpoint QC only",
+    }
+
+
 def _validate_config(config: dict) -> dict:
-    """Validate the immutable W07 design configuration."""
+    """Validate the W07 design and its code-locked W06 provenance."""
     required = {"stage", "status", "input", "outer_cv", "populations",
                 "forbidden_operations"}
     missing = sorted(required - set(config))
@@ -66,6 +107,19 @@ def _validate_config(config: dict) -> dict:
     if missing_input:
         raise W07ValidationError(
             "W07 input binding missing keys: %s" % missing_input)
+    trusted_input = _trusted_w06_binding()
+    for name, expected in trusted_input.items():
+        actual = input_cfg.get(name)
+        if name in ("source", "schema", "source_audit"):
+            try:
+                matches = _configured_path(actual) == _configured_path(expected)
+            except (TypeError, ValueError, OSError):
+                matches = False
+        else:
+            matches = actual == expected
+        if not matches:
+            raise W07ValidationError(
+                "W07 input binding is not the project-locked W06 %s" % name)
     if os.path.basename(os.path.normpath(input_cfg["source"])) != \
             "A_modeling_population.csv":
         raise W07ValidationError("W07 source must be A_modeling_population.csv")
@@ -116,7 +170,10 @@ def _validate_config(config: dict) -> dict:
 
 
 def load_config(path: str = DEFAULT_CONFIG) -> dict:
-    """Load and validate the immutable W07 design configuration."""
+    """Load only the project-locked W07 configuration."""
+    if _absolute_path(path) != _absolute_path(DEFAULT_CONFIG):
+        raise W07ValidationError(
+            "W07 accepts only the project-locked configuration path")
     return _validate_config(_read_json(path))
 
 
@@ -128,10 +185,6 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _absolute_path(path: str) -> str:
-    return os.path.normcase(os.path.abspath(os.fspath(path)))
-
-
 def _configured_path(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise W07ValidationError("W07 configured source path is empty")
@@ -141,9 +194,10 @@ def _configured_path(value: str) -> str:
 
 
 def _validate_w06_source_binding(path: str, config: dict) -> str:
-    """Verify the exact W06 artifact, schema, and audit before reading CSV."""
-    input_cfg = config["input"]
-    configured_source = _configured_path(input_cfg["source"])
+    """Verify the code-locked W06 artifact before reading CSV."""
+    del config  # provenance is never selected from a runtime config
+    trusted_input = _trusted_w06_binding()
+    configured_source = _configured_path(trusted_input["source"])
     supplied_source = _absolute_path(path)
     if supplied_source != configured_source or \
             _absolute_path(os.path.realpath(path)) != \
@@ -151,8 +205,8 @@ def _validate_w06_source_binding(path: str, config: dict) -> str:
         raise W07ValidationError(
             "W07 input path is not the configured W06 A source artifact")
 
-    schema_path = _configured_path(input_cfg["schema"])
-    audit_path = _configured_path(input_cfg["source_audit"])
+    schema_path = _configured_path(trusted_input["schema"])
+    audit_path = _configured_path(trusted_input["source_audit"])
     for label, candidate in (("source", supplied_source),
                              ("schema", schema_path),
                              ("source audit", audit_path)):
@@ -160,21 +214,21 @@ def _validate_w06_source_binding(path: str, config: dict) -> str:
             raise W07ValidationError("W07 %s artifact is missing" % label)
 
     source_hash = _sha256_file(supplied_source)
-    if source_hash.lower() != input_cfg["source_sha256"].lower():
+    if source_hash.lower() != trusted_input["source_sha256"].lower():
         raise W07ValidationError("W07 source hash is not the frozen W06 hash")
     if _sha256_file(schema_path).lower() != \
-            input_cfg["schema_sha256"].lower():
+            trusted_input["schema_sha256"].lower():
         raise W07ValidationError("W07 schema hash is not the frozen W06 hash")
     if _sha256_file(audit_path).lower() != \
-            input_cfg["source_audit_sha256"].lower():
+            trusted_input["source_audit_sha256"].lower():
         raise W07ValidationError(
             "W07 source audit hash is not the frozen W06 hash")
 
     schema = _read_json(schema_path)
     if schema.get("file") != "A_modeling_population.csv" or \
             schema.get("columns") != POPULATION_COLUMNS or \
-            schema.get("n_rows") != input_cfg["expected_population"] or \
-            schema.get("eligibility_source") != input_cfg["eligibility_source"]:
+            schema.get("n_rows") != trusted_input["expected_population"] or \
+            schema.get("eligibility_source") != trusted_input["eligibility_source"]:
         raise W07ValidationError("W07 W06 schema contract mismatch")
 
     audit = _read_json(audit_path)
@@ -183,15 +237,16 @@ def _validate_w06_source_binding(path: str, config: dict) -> str:
             audit.get("A_modeling_population_sha256", "").lower() != \
             source_hash.lower() or \
             counts.get("A_modeling_population") != \
-            input_cfg["expected_population"] or \
-            counts.get("DFS_event_count") != input_cfg["expected_events"] or \
-            counts.get("censor_count") != input_cfg["expected_censors"]:
+            trusted_input["expected_population"] or \
+            counts.get("DFS_event_count") != trusted_input["expected_events"] or \
+            counts.get("censor_count") != trusted_input["expected_censors"]:
         raise W07ValidationError("W07 W06 source audit contract mismatch")
     return source_hash
 
 
 def _normalize_population(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
     """Validate the exact W06 A population and retain only split inputs."""
+    trusted_input = _trusted_w06_binding()
     if list(frame.columns) != POPULATION_COLUMNS:
         raise W07ValidationError(
             "A_modeling_population schema mismatch: expected %s, got %s" %
@@ -207,7 +262,7 @@ def _normalize_population(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
         raise W07ValidationError("A population contains duplicate patient IDs")
 
     cohort = population["technical_cohort"].astype(str).str.strip()
-    if not cohort.eq(config["input"]["technical_cohort"]).all():
+    if not cohort.eq(trusted_input["technical_cohort"]).all():
         raise W07ValidationError("W07 input is not exact A393")
     eligible = pd.to_numeric(population["modeling_eligible"], errors="coerce")
     if eligible.isna().any() or not eligible.eq(1).all():
@@ -222,9 +277,9 @@ def _normalize_population(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
     if events.isna().any() or not events.isin([0, 1]).all():
         raise W07ValidationError("W07 input contains non-binary DFS_event")
 
-    expected_n = config["input"]["expected_population"]
-    expected_events = config["input"]["expected_events"]
-    expected_censors = config["input"]["expected_censors"]
+    expected_n = trusted_input["expected_population"]
+    expected_events = trusted_input["expected_events"]
+    expected_censors = trusted_input["expected_censors"]
     if len(population) != expected_n:
         raise W07ValidationError("W07 input population must contain %d rows" % expected_n)
     if int(events.eq(1).sum()) != expected_events:

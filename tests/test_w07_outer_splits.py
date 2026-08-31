@@ -101,17 +101,31 @@ class W07OuterSplitTests(unittest.TestCase):
         self.assertTrue(validation["event_gate_pass"])
         self.assertEqual(set(splits["patient_id"]), set(population["patient_id"]))
 
+    def test_custom_config_cannot_replace_w06_binding(self):
         with tempfile.TemporaryDirectory() as tmp:
             config, population_path = write_bound_w06_fixture(tmp)
             config_path = os.path.join(tmp, "w07.json")
             output_path = os.path.join(tmp, "outer_splits_A.csv")
             with open(config_path, "w", encoding="utf-8") as handle:
                 json.dump(config, handle)
-            result = w07.run_w07(population_path, output_path, config_path)
-            with open(output_path, "rb") as handle:
-                output_bytes = handle.read()
-            self.assertEqual(result["outer_split_hash"],
-                             hashlib.sha256(output_bytes).hexdigest())
+            with mock.patch.object(
+                    w07.pd, "read_csv",
+                    side_effect=AssertionError("must not read source CSV")) as reader:
+                with self.assertRaises(w07.W07ValidationError):
+                    w07.run_w07(population_path, output_path, config_path)
+            reader.assert_not_called()
+            self.assertFalse(os.path.exists(output_path))
+
+    def test_canonical_config_content_cannot_replace_w06_binding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config, _ = write_bound_w06_fixture(tmp)
+            with mock.patch.object(w07, "_read_json", return_value=config), \
+                    mock.patch.object(
+                        w07.pd, "read_csv",
+                        side_effect=AssertionError("must not read source CSV")) as reader:
+                with self.assertRaises(w07.W07ValidationError):
+                    w07.load_config(w07.DEFAULT_CONFIG)
+            reader.assert_not_called()
 
     def test_every_fold_has_events_and_roles_do_not_overlap(self):
         config, population, splits, validation = self.run_synthetic()
@@ -164,26 +178,48 @@ class W07OuterSplitTests(unittest.TestCase):
             reader.assert_not_called()
 
     def test_same_name_replacement_at_authorized_path_fails_hash(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config, population_path = write_bound_w06_fixture(tmp)
-            with open(population_path, "a", encoding="utf-8") as handle:
-                handle.write("\n")
-            with mock.patch.object(w07.pd, "read_csv",
-                                   side_effect=AssertionError("must not read")) as reader:
-                with self.assertRaises(w07.W07ValidationError):
-                    w07.load_a_modeling_population(population_path, config)
-            reader.assert_not_called()
+        with mock.patch.object(w07, "_sha256_file", return_value="0" * 64), \
+                mock.patch.object(w07.pd, "read_csv",
+                                  side_effect=AssertionError("must not read")) as reader:
+            with self.assertRaises(w07.W07ValidationError):
+                w07.load_a_modeling_population(w07.DEFAULT_POPULATION)
+        reader.assert_not_called()
 
     def test_untrusted_schema_replacement_fails_before_csv_read(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config, population_path = write_bound_w06_fixture(tmp)
-            with open(config["input"]["schema"], "a", encoding="utf-8") as handle:
-                handle.write("\n")
-            with mock.patch.object(w07.pd, "read_csv",
-                                   side_effect=AssertionError("must not read")) as reader:
-                with self.assertRaises(w07.W07ValidationError):
-                    w07.load_a_modeling_population(population_path, config)
-            reader.assert_not_called()
+        schema_path = os.path.join(
+            w07.OUTPUT_ROOT, "A_modeling", "A_modeling_population_schema.json")
+        original_hash = w07._sha256_file
+
+        def hash_with_untrusted_schema(path):
+            if w07._absolute_path(path) == w07._absolute_path(schema_path):
+                return "0" * 64
+            return original_hash(path)
+
+        with mock.patch.object(w07, "_sha256_file",
+                               side_effect=hash_with_untrusted_schema), \
+                mock.patch.object(w07.pd, "read_csv",
+                                  side_effect=AssertionError("must not read")) as reader:
+            with self.assertRaises(w07.W07ValidationError):
+                w07.load_a_modeling_population(w07.DEFAULT_POPULATION)
+        reader.assert_not_called()
+
+    def test_untrusted_audit_replacement_fails_before_csv_read(self):
+        audit_path = os.path.join(
+            w07.OUTPUT_ROOT, "A_endpoint_qc", "endpoint_qc_summary.json")
+        original_hash = w07._sha256_file
+
+        def hash_with_untrusted_audit(path):
+            if w07._absolute_path(path) == w07._absolute_path(audit_path):
+                return "0" * 64
+            return original_hash(path)
+
+        with mock.patch.object(w07, "_sha256_file",
+                               side_effect=hash_with_untrusted_audit), \
+                mock.patch.object(w07.pd, "read_csv",
+                                  side_effect=AssertionError("must not read")) as reader:
+            with self.assertRaises(w07.W07ValidationError):
+                w07.load_a_modeling_population(w07.DEFAULT_POPULATION)
+        reader.assert_not_called()
 
     def test_config_records_all_required_population_rules(self):
         path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..",

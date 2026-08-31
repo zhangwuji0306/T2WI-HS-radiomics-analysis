@@ -2,13 +2,13 @@
 
 ## Scope
 
-W07 accepts only the W06 A modeling-population artifact. This remediation
-closes the source-path validation gap without changing the split design or
-reading any B data.
+W07 consumes only the audited W06 A modeling-population artifact. Its A-only
+source authorization is fixed in `prognosis_analysis/scripts/w07_outer_splits.py`
+and cannot be redefined by a runtime configuration file.
 
-## Frozen W06 binding
+## Frozen W06 provenance
 
-The W07 configuration binds the input to these W06 artifacts:
+The code-level project lock fixes these artifacts and SHA-256 values:
 
 - Source: `prognosis_analysis/output/A_modeling/A_modeling_population.csv`
 - Schema: `prognosis_analysis/output/A_modeling/A_modeling_population_schema.json`
@@ -17,38 +17,44 @@ The W07 configuration binds the input to these W06 artifacts:
 - Schema SHA-256: `41f6a6ac69bc0727755817d1e3e6902e24c612c00d6c88f52c4c2f42904039c6`
 - W06 audit SHA-256: `0814082014600935922d3b082b678217b81aef710b3efe62a2103a67a85ae319`
 
-Before `read_csv` is called, W07 verifies:
-
-1. The supplied path is the configured A source path, including its resolved
-   filesystem target.
-2. The source, schema, and W06 audit hashes match the frozen configuration.
-3. The W06 schema has the expected file name, columns, row count, and
-   eligibility source.
-4. The W06 audit is a W06 endpoint-QC summary whose source hash and aggregate
-   counts match the frozen A393 contract.
+The checked-in JSON retains the same values for audit readability. W07 accepts
+only the project-locked configuration path, validates its provenance fields
+against the code-level lock, and performs all artifact path, resolved-target,
+hash, schema, and W06 audit checks against that lock. The source CSV is opened
+only after these checks pass.
 
 ## Rejection coverage
 
-The regression suite rejects a valid-looking
-`untrusted_source/A_modeling_population.csv`, rejects a modified file at the
-authorized source name, rejects a modified W06 schema, and retains the
-pre-existing B-named input rejection. All four cases fail before the source
-CSV is loaded by pandas.
+The regression suite rejects:
+
+- a self-consistent custom configuration with a fabricated W06 source,
+  schema, audit, and matching hashes;
+- an A-modeling file with an untrusted same-name path;
+- source, schema, or W06 audit content whose hash differs from the lock; and
+- a B-named input.
+
+Each rejection occurs before `pandas.read_csv` is called.
 
 ## Compatibility and access boundary
 
 The frozen contract remains 393 cases, 89 DFS events, 304 censored cases,
 5-fold × 10-repeat stratified outer CV, 50 validation folds, and 19,650 split
-rows. The existing outer split hash remains
+rows. The existing local split artifact remains
 `24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502`.
 
-W07 reads only the bound W06 A artifacts. No B source, B clinical data, B
-radiomics data, B QC data, or B-derived statistics were read.
+The existing split artifact was validated read-only against the code-locked
+W06 population; it was not regenerated. `B_data_read=false`.
 
 ## Verification
 
-- `python -m unittest tests.test_w07_outer_splits -v`: 10 tests passed.
-- `python prognosis_analysis/scripts/w07_outer_splits.py`: completed with the
-  frozen counts and split hash above; all B access flags were `false`.
+- `python -m unittest tests.test_w07_outer_splits -v`: 12 tests passed.
+- A-only/W06 and B-isolation regressions: 39 tests passed.
+- Read-only W07 artifact validation: 393/89/304, 19,650 rows, 50 folds, and
+  the split hash above passed.
 - `python -m py_compile prognosis_analysis/scripts/w07_outer_splits.py tests/test_w07_outer_splits.py`: passed.
 - `python -m json.tool prognosis_analysis/configs/w07_outer_splits.json`: passed.
+- Static forbidden-reader scan for W07: passed.
+
+The current system Python reports `ModuleNotFoundError: No module named
+'SimpleITK'`; this unrelated environment limitation does not affect W07,
+which does not import or use SimpleITK.
