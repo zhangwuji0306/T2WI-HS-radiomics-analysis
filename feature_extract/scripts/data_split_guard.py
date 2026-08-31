@@ -1,7 +1,6 @@
 """Cohort split helpers and pre-freeze B-access guard."""
 from __future__ import annotations
 
-import json
 import os
 import sys
 
@@ -16,11 +15,21 @@ if HABITAT_SCRIPTS not in sys.path:
     sys.path.insert(0, HABITAT_SCRIPTS)
 from freeze_lock import validate_freeze_lock  # noqa: E402
 
+PROGNOSIS_ROOT = os.path.join(PROJECT_ROOT, "prognosis_analysis")
+PROGNOSIS_SCRIPTS = os.path.join(PROGNOSIS_ROOT, "scripts")
+if PROGNOSIS_SCRIPTS not in sys.path:
+    sys.path.insert(0, PROGNOSIS_SCRIPTS)
+from model_freeze_lock import validate_model_freeze_lock  # noqa: E402
+
 FREEZE_LOCK = os.path.join(HABITAT_ROOT, "freeze_lock.json")
+# Kept as a compatibility name for callers that patch the old setting.  It is
+# deliberately not consulted for authorization.
 B_UNLOCK_LOCK = os.path.join(HABITAT_ROOT, "b_validation_unlock.json")
+MODEL_FREEZE_LOCK = os.path.join(PROGNOSIS_ROOT, "model_freeze_lock.json")
 
 
-def add_split(manifest, scanner):
+def resolve_cohort_membership(manifest, scanner):
+    """Assign A/B using the single project-wide scanner rule."""
     manifest = manifest.copy()
     scanner = scanner.copy()
     manifest["影像号"] = manifest["影像号"].astype(str).str.strip()
@@ -43,15 +52,46 @@ def add_split(manifest, scanner):
     return merged.drop(columns=["_merge"])
 
 
+def add_split(manifest, scanner):
+    return resolve_cohort_membership(manifest, scanner)
+
+
 def require_b_unlock():
+    """Require both locks; the legacy B unlock file has no authority."""
     validate_freeze_lock(FREEZE_LOCK)
-    if not os.path.exists(B_UNLOCK_LOCK):
-        raise RuntimeError("B validation remains locked until the A model is frozen")
-    with open(B_UNLOCK_LOCK, encoding="utf-8") as handle:
-        payload = json.load(handle)
-    if payload.get("A_model_frozen") is not True or payload.get("B_validation_unlocked") is not True:
-        raise RuntimeError("B validation unlock is invalid")
-    return payload
+    return validate_model_freeze_lock(MODEL_FREEZE_LOCK)
+
+
+def require_a_outcome_unlock():
+    """Require the first-stage technical lock before A clinical/outcome reads."""
+    return validate_freeze_lock(FREEZE_LOCK)
+
+
+def read_technical_data(path, reader, *args, **kwargs):
+    """Read an outcome-blind technical A artifact without an outcome lock."""
+    return reader(path, *args, **kwargs)
+
+
+def read_a_outcome(path, reader, *args, **kwargs):
+    """Validate the first lock before invoking the physical A reader."""
+    require_a_outcome_unlock()
+    return reader(path, *args, **kwargs)
+
+
+def read_b_data(path, reader, *args, **kwargs):
+    """Validate both locks before invoking the physical B reader."""
+    require_b_unlock()
+    return reader(path, *args, **kwargs)
+
+
+def read_b_csv(path, *args, **kwargs):
+    reader = kwargs.pop("reader", pd.read_csv)
+    return read_b_data(path, reader, *args, **kwargs)
+
+
+def read_b_excel(path, *args, **kwargs):
+    reader = kwargs.pop("reader", pd.read_excel)
+    return read_b_data(path, reader, *args, **kwargs)
 
 
 def select_split(frame, split):

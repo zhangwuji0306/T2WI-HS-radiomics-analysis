@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,10 @@ import pandas as pd
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = os.path.dirname(ROOT)
 EX_ROOT = os.path.join(PROJECT_ROOT, "feature_extract")
+FEATURE_SCRIPTS = os.path.join(EX_ROOT, "scripts")
+if FEATURE_SCRIPTS not in sys.path:
+    sys.path.insert(0, FEATURE_SCRIPTS)
+from data_split_guard import read_b_csv, require_b_unlock  # noqa: E402
 OUT = os.path.join(ROOT, "output")
 MANIFEST = os.path.join(EX_ROOT, "output", "manifest.csv")
 SCANNER = os.path.join(EX_ROOT, "output", "scanner_map.csv")
@@ -59,12 +64,19 @@ def icc21(pivot: pd.DataFrame) -> float:
         ms_subject + (k - 1) * ms_error + k * (ms_rater - ms_error) / n)
 
 
-def process_table(combo: str, batch: str, a_pairs: list[str]) -> dict:
+def process_table(combo: str, batch: str, a_pairs: list[str], split: str = "A") -> dict:
+    if split not in ("A", "B", "all"):
+        raise ValueError("split must be A, B, or all")
+    if split in ("B", "all"):
+        # The authorization check is deliberately before path validation and
+        # before pandas is allowed to open a B QC/radiomics table.
+        require_b_unlock()
     fname, meta = BATCHES[batch]
     path = os.path.join(FEATURES, combo, fname)
     if not os.path.exists(path):
         raise FileNotFoundError(f"缺少 v2 特征表：{path}；请先完成修正版特征重提取")
-    df = pd.read_csv(path, dtype={"影像号": str})
+    df = read_b_csv(path, dtype={"影像号": str}) if split in ("B", "all") else pd.read_csv(
+        path, dtype={"影像号": str})
     feat_cols = [c for c in df.columns if c not in meta]
     if len(feat_cols) != EXPECTED_FEATURES[batch]:
         raise AssertionError(

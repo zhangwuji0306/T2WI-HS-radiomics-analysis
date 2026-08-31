@@ -156,7 +156,9 @@ class Stage7FreezePathTests(unittest.TestCase):
             roi = np.ones((1, 1, 1), dtype=bool)
             labels = np.ones((1, 1, 1), dtype=np.int32)
 
-            with mock.patch.multiple(workflow, **paths), \
+            with mock.patch.object(workflow, "validate_freeze_lock",
+                                   wraps=workflow.validate_freeze_lock) as validate_lock, \
+                    mock.patch.multiple(workflow, **paths), \
                     mock.patch.object(workflow, "load_cfg", return_value=cfg), \
                     mock.patch.object(workflow, "load_sv", return_value=sv), \
                     mock.patch.object(workflow, "load_diag", return_value=diag), \
@@ -168,6 +170,15 @@ class Stage7FreezePathTests(unittest.TestCase):
                     mock.patch.object(workflow.subprocess, "check_output",
                                       return_value="synthetic-commit\n"):
                 self.assertTrue(workflow.stage7_freeze())
+
+            validated_paths = [os.path.abspath(call.args[0])
+                               for call in validate_lock.call_args_list]
+            self.assertIn(os.path.abspath(paths["FREEZE_LOCK_STAGING"]), validated_paths)
+            self.assertGreaterEqual(validated_paths.count(os.path.abspath(paths["FREEZE_LOCK"])), 1)
+            self.assertTrue(os.path.exists(os.path.join(paths["FREEZE_PREFLIGHT"],
+                                                        "freeze_preflight.csv")))
+            self.assertFalse(os.path.exists(paths["MAPS_STAGING"]))
+            self.assertFalse(os.path.exists(paths["FEATURES_STAGING"]))
 
             from freeze_lock import validate_freeze_lock  # noqa: E402
             payload = validate_freeze_lock(paths["FREEZE_LOCK"])

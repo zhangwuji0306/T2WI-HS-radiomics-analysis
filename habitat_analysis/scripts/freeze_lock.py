@@ -314,8 +314,11 @@ def _schema_errors(payload):
 def validate_freeze_lock(path, expected=None, artifact_paths=None, artifact_root=None):
     if not os.path.exists(path):
         raise RuntimeError("freeze_lock.json is missing; outcome/B access remains locked")
-    with open(path, encoding="utf-8") as handle:
-        payload = json.load(handle)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("invalid freeze lock: %s" % exc)
     if not isinstance(payload, dict):
         raise RuntimeError("invalid freeze lock: top-level JSON value must be an object")
     errors = _schema_errors(payload)

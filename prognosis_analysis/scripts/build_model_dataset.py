@@ -17,7 +17,6 @@ import os
 import shutil
 import sys
 
-import numpy as np
 import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,6 +34,12 @@ HABITAT_SCRIPTS = os.path.join(HABITAT_ROOT, "scripts")
 if HABITAT_SCRIPTS not in sys.path:
     sys.path.insert(0, HABITAT_SCRIPTS)
 from freeze_lock import file_sha256, files_sha256, id_hash, validate_freeze_lock  # noqa: E402
+FEATURE_SCRIPTS = os.path.join(EX_ROOT, "scripts")
+if FEATURE_SCRIPTS not in sys.path:
+    sys.path.insert(0, FEATURE_SCRIPTS)
+from data_split_guard import (  # noqa: E402
+    read_b_excel, require_b_unlock, resolve_cohort_membership,
+)
 
 TECHNICAL_COHORT = os.path.join(HABITAT_ROOT, "output", "technical_cohort_manifest")
 TECHNICAL_A393 = os.path.join(TECHNICAL_COHORT, "cohort_A_lenient.csv")
@@ -83,26 +88,8 @@ R_ALIASES = {"影像号": "patient_id", "年龄": "age", "CEA_log": "cea_log",
 def cohort_table(screen: str) -> pd.DataFrame:
     man = pd.read_csv(MANIFEST, encoding="utf-8-sig", dtype=str)
     sc = pd.read_csv(SCANNER, encoding="utf-8-sig", dtype=str)
-    man["影像号"] = man["影像号"].astype(str).str.strip()
-    sc["影像号"] = sc["影像号"].astype(str).str.strip()
-    if man["影像号"].duplicated().any():
-        raise AssertionError("manifest 影像号不唯一")
-    if sc["影像号"].duplicated().any():
-        raise AssertionError("scanner mapping 影像号不唯一")
-    scanner_cols = ["影像号", "R1厂商", "R1机型", "R1场强"]
-    cohort = man[["影像号"] + (["排除"] if "排除" in man.columns else [])].merge(
-        sc[scanner_cols], on="影像号", how="left", validate="one_to_one",
-        indicator=True)
-    target = (cohort["排除"].fillna("0") != "1") if "排除" in cohort else pd.Series(True, index=cohort.index)
-    missing_scanner = cohort.loc[target & cohort["_merge"].ne("both"), "影像号"].tolist()
-    if missing_scanner:
-        raise AssertionError("目标患者缺少scanner mapping：%s" % missing_scanner[:5])
-    cohort = cohort.loc[target].drop(columns=["_merge"])
-    cohort["_field"] = pd.to_numeric(cohort["R1场强"], errors="coerce")
-    is_a = ((cohort["R1厂商"] == "GE MEDICAL SYSTEMS") &
-            (cohort["R1机型"] == "DISCOVERY MR750") &
-            (cohort["_field"].round(1) == 3.0))
-    cohort["split"] = np.where(is_a, "A", "B")
+    cohort = resolve_cohort_membership(man, sc)
+    cohort = cohort.loc[cohort["排除"].fillna("0").ne("1")]
     cohort = cohort[["影像号", "split"]]
     if screen not in SCREEN_FILES:
         raise ValueError("screen must be lenient or strict")
@@ -245,10 +232,14 @@ def main() -> None:
     ap.add_argument("--screen", choices=["both", "lenient", "strict"], default="both",
                     help="生成宽松主分析集、严格保留集，或单独生成一种")
     args = ap.parse_args()
+    # This legacy builder opens combined feature/clinical sources and can
+    # therefore expose B.  Keep the old entry point fail-closed until the
+    # dedicated A-only builder is available.
+    require_b_unlock()
     validate_outcome_unlock()
     os.makedirs(MODELING, exist_ok=True)
     features, candidates = load_features(args.combo)
-    clinical = pd.read_excel(DATA_XLSX)
+    clinical = read_b_excel(DATA_XLSX)
     clinical["影像号"] = clinical["影像号"].astype(str).str.strip()
     clinical["性别"] = clinical["性别"].map({"男": 1, "女": 0}).astype(int)
     screens = ["lenient", "strict"] if args.screen == "both" else [args.screen]
