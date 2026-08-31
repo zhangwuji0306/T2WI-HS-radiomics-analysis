@@ -1,0 +1,381 @@
+{
+  "protocol_id": "W04_modeling_protocol_freeze",
+  "protocol_version": "1.0",
+  "status": "frozen_before_first_DFS_read",
+  "outcome_blind_at_freeze": true,
+  "scope": "A-only prognostic model development; B remains locked",
+  "source_revisions": {
+    "taskbook": {
+      "path": "T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md",
+      "sha256": "0ba96334e37b5729356b947ffa41bd2d52649cc84f8d760ba4bbc51a129ffc3c"
+    },
+    "workflow": {
+      "path": "三十二、具体执行工作流：从 formal PASS 至 A-only model freeze.md",
+      "sha256": "26be0bae34faf6dc0b22c7bb3f3e041988ed87cb85b5de1c72cfe8969bd1fd6d"
+    },
+    "technical_freeze": {
+      "path": "habitat_analysis/freeze_lock.json",
+      "sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
+      "schema_version": "1.0",
+      "git_commit": "e1b21134dd5e5a4df6befb1d6f7ecab2e84cb1fb"
+    },
+    "W01_feature_dictionary": {
+      "path": "habitat_analysis/feature_dictionary.md",
+      "sha256": "e8b5b181cd977a548c6fcff5fcbbc534be2f830b347fae589fcb38ebaf0429db"
+    },
+    "W01_method_config": {
+      "path": "habitat_analysis/configs/main_cross_case_kmeans_k2_4mm.json",
+      "sha256": "fc2f856b3bc3fcd3d358f4476fd87a8117568712b3fc382c5e24e315e976bb3f"
+    },
+    "W02_protocol": {
+      "path": "prognosis_analysis/W02_habitat_radiomics_protocol.md",
+      "sha256": "110fffe7bb2276d27276a338ff8cda829f7b22ffb522f539cad054c0c5bd4672"
+    },
+    "W02_config": {
+      "path": "prognosis_analysis/configs/w02_habitat_radiomics.json",
+      "sha256": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f"
+    },
+    "W02_output_manifest": {
+      "path": "prognosis_analysis/output/w02_habitat_radiomics_A/output_manifest.json",
+      "sha256": "8a01b3c358288dbf4cdac45bd8c2e92c75a5ae421444e16c4e52c3ee013865ef"
+    },
+    "W02_feature_schema": {
+      "path": "prognosis_analysis/output/w02_habitat_radiomics_A/feature_schema.json",
+      "sha256": "dab26184bd8ed09d1bf74aac91ff4f7e2729d23260744a2c640cc09cfcad1100"
+    },
+    "W03_protocol": {
+      "path": "prognosis_analysis/W03_habitat_radiomics_protocol.md",
+      "sha256": "1a572d42e405cf9b4bcc71576927ca498b373ffb43cbbacc5f75c3bc5c0b73c6"
+    },
+    "W03_config": {
+      "path": "prognosis_analysis/configs/w03_habitat_radiomics.json",
+      "sha256": "cfd98e5aa68f5cfcbe070287c702bd9582112c7e27f6ff4641748a78abd34307"
+    },
+    "W03_candidate_freeze": {
+      "path": "prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json",
+      "sha256": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2"
+    },
+    "W03_feature_schema": {
+      "path": "prognosis_analysis/output/w03_habitat_radiomics_A/feature_schema.json",
+      "sha256": "17d96e2ec8567b8f39cc7ff9cb72f792bdecc31d2d275ff8345cf9b6035a1d04"
+    },
+    "W03_output_manifest": {
+      "path": "prognosis_analysis/output/w03_habitat_radiomics_A/output_manifest.json",
+      "sha256": "85756d47dafa858c9ac554d85313327ba5b7dbf7e72073ef43fa42460e01b444"
+    },
+    "W03_implementation": {
+      "path": "prognosis_analysis/scripts/w03_habitat_radiomics.py",
+      "sha256": "1c582a89a8694d7cc022c7634758f65ca8e06cabb4ee6c9cf3839caf783e7a92"
+    },
+    "whole_tumor_schema_config": {
+      "path": "feature_extract/configs/radiomics_params.yaml",
+      "sha256": "5cad11c0c3671148e1d16a23b77263fbbcc7470c2e42bd28a8077bab60e058e9"
+    },
+    "whole_tumor_original_implementation": {
+      "path": "feature_extract/scripts/extract_features.py",
+      "sha256": "9ba41afab05d328827a72b4607a943166136249d6e38d73a7563925a60305b85"
+    },
+    "whole_tumor_filtered_implementation": {
+      "path": "feature_extract/scripts/extract_features_filters.py",
+      "sha256": "82a6d4a91f67cce5c20ed3b6807068ddd8b0cd07d9753c2a59e9e5c84e03a142"
+    },
+    "whole_tumor_technical_schema": {
+      "path": "prognosis_analysis/scripts/stage6_qc.py",
+      "sha256": "55c94a35f1baa24af16918973298343a4ba9fb4e01b28884ebed6d9d1c277fd4"
+    }
+  },
+  "software_environment": {
+    "python": "3.7.12",
+    "pyradiomics": "3.0.1",
+    "simpleitk": "2.2.1",
+    "protocol_freeze_git_commit": "c47e322ca2e2d85546ac36ef32f86ff6461f821c",
+    "technical_seed_root_source": "feature_extract/configs/radiomics_params.yaml:random_seed",
+    "technical_seed_root": 12345
+  },
+  "access_gate": {
+    "A_outcome_read_allowed_at_W04_freeze": false,
+    "A_only_gate_before_first_DFS_read": {
+      "required_in_order": [
+        "valid habitat_analysis/freeze_lock.json with A_outcome_unlock=true and B_unlock=false",
+        "W02 H-low/H-high Original radiomics schema and availability rules frozen",
+        "W03 R_low and R_high technical candidate pools frozen",
+        "this modeling protocol frozen and hash recorded",
+        "W05 A-only reader and centralized split resolver pass",
+        "B reader hard-fails before physical read"
+      ],
+      "first_DFS_read_stage": "W06",
+      "missing_requirement_action": "hard_fail_and_do_not_read_DFS"
+    },
+    "B_unlock": false,
+    "B_access_authority": "prognosis_analysis/model_freeze_lock.json only after W13 strict validation",
+    "model_freeze_lock": {
+      "path": "prognosis_analysis/model_freeze_lock.json",
+      "status_at_W04_freeze": "not_generated",
+      "exists_at_W04_freeze": false,
+      "must_not_be_created_by_W04": true
+    }
+  },
+  "endpoint": {
+    "primary": {
+      "name": "DFS",
+      "time_column": "DFS_time",
+      "event_column": "DFS_event",
+      "horizons_years": [3, 5],
+      "evaluation_source": "held-out outer validation predictions only"
+    },
+    "secondary": {
+      "names": ["OS", "CSS"],
+      "allowed_only_after": "primary DFS protocol and A-only model development are fixed",
+      "not_part_of_W04_primary_model_selection": true
+    }
+  },
+  "predictor_blocks": {
+    "C": {
+      "role": "fixed treatment-time clinical baseline",
+      "variables": [
+        "年龄",
+        "CEA_log",
+        "mrT_4级",
+        "mrN_3级",
+        "MRF",
+        "mrEMVI",
+        "thickness",
+        "EID",
+        "活检病理非腺癌"
+      ],
+      "excluded_from_primary_treatment_time_model": ["性别", "length", "distance", "all postoperative variables"],
+      "encoding": {
+        "continuous": ["年龄", "CEA_log", "thickness", "EID"],
+        "categorical_one_hot": ["mrT_4级", "mrN_3级"],
+        "binary": ["MRF", "mrEMVI", "活检病理非腺癌"],
+        "categorical_reference": "lowest predeclared level; levels are not outcome-derived"
+      }
+    },
+    "G": {
+      "role": "fixed global habitat block",
+      "variables": [
+        "H_high_fraction",
+        "sv_median_minus_boundary",
+        "sv_IQR",
+        "interface_density",
+        "H_high_largest_component_tumor_fraction",
+        "H_high_radial_burden"
+      ],
+      "source_schema": "W01 frozen feature dictionary and W01 global descriptor output; W02/W03 preserve the same frozen habitat labels",
+      "descriptive_not_primary": ["habitat_entropy", "H_high_component_density"]
+    },
+    "R_low": {
+      "role": "W03 frozen H-low Original radiomics candidate pool",
+      "source": "prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json",
+      "candidate_count": 49,
+      "candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+      "candidate_rule": "W03 technical ICC(2,1)>0.75, n_valid_pairs>=10, finite rate>=0.95 in each reader among habitat-present cases, main or secondary level"
+    },
+    "R_high": {
+      "role": "W03 frozen H-high Original radiomics candidate pool",
+      "source": "prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json",
+      "candidate_count": 10,
+      "candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+      "candidate_rule": "W03 technical ICC(2,1)>0.75, n_valid_pairs>=10, finite rate>=0.95 in each reader among habitat-present cases, main or secondary level"
+    },
+    "W": {
+      "role": "whole-tumor reference comparator",
+      "source_root": "feature_extract/output/features_v2/muscle_f0.25/",
+      "feature_universe_is_frozen_before_outcome": true,
+      "batches": {
+        "Original": {"feature_count": 107, "shape_included": true},
+        "Wavelet": {"subbands": 8, "features_per_subband": 93, "feature_count": 744, "shape_included": false},
+        "LoG": {"sigma_mm": [1, 2, 3], "features_per_sigma": 93, "feature_count": 279, "shape_included": false}
+      },
+      "total_feature_count": 1130,
+      "pre_outcome_filtering": "none beyond the frozen technical schema; all variance/correlation/scaling/Elastic Net selection is training-only",
+      "primary_reader": "R1",
+      "R2_role": "technical reproducibility only; never pooled into primary model predictors"
+    }
+  },
+  "models": [
+    {"id": "M0", "predictor_blocks": ["C"], "family": "Cox_PH_unpenalized", "role": "clinical baseline"},
+    {"id": "M1", "predictor_blocks": ["C", "H_high_fraction"], "family": "Cox_PH_unpenalized", "role": "high-signal burden"},
+    {"id": "M2", "predictor_blocks": ["C", "G"], "family": "Cox_PH_unpenalized", "role": "macro-habitat organization"},
+    {"id": "M3L", "predictor_blocks": ["C", "G", "R_low"], "family": "Elastic_Net_Cox", "role": "H-low internal texture"},
+    {"id": "M3H", "predictor_blocks": ["C", "G", "R_high"], "family": "Elastic_Net_Cox", "role": "H-high internal texture"},
+    {"id": "M4", "predictor_blocks": ["C", "G", "R_low", "R_high"], "family": "Elastic_Net_Cox", "role": "dual-habitat texture complementarity", "population": "dual-radiomics eligible only"},
+    {"id": "M5", "predictor_blocks": ["C", "W"], "family": "Elastic_Net_Cox", "role": "whole-tumor reference comparator"}
+  ],
+  "comparisons": [
+    {"id": "M0_to_M1", "models": ["M0", "M1"], "question": "high-signal burden", "population": "main A modeling population"},
+    {"id": "M1_to_M2", "models": ["M1", "M2"], "question": "macro-habitat organization", "population": "main A modeling population"},
+    {"id": "M2_to_M3L", "models": ["M2", "M3L"], "question": "H-low internal texture", "population": "R_low eligible population; M2 refit on identical patients and splits"},
+    {"id": "M2_to_M3H", "models": ["M2", "M3H"], "question": "H-high internal texture", "population": "R_high eligible population; M2 refit on identical patients and splits"},
+    {"id": "M3L_vs_M3H", "models": ["M3L", "M3H"], "question": "H-low versus H-high prognostic stability", "population": "dual-radiomics eligible population; identical patients and splits"},
+    {"id": "M2_to_M4", "models": ["M2", "M4"], "question": "dual-habitat texture complementarity", "population": "dual-radiomics eligible population; M2 refit on identical patients and splits"},
+    {"id": "M0_to_M5", "models": ["M0", "M5"], "question": "whole-tumor radiomics reference value", "population": "W-available main population; M0 refit on identical patients and splits"}
+  ],
+  "forbidden_primary_combinations": [
+    ["C", "W", "R_low"],
+    ["C", "W", "R_high"],
+    ["C", "W", "G", "R_low"],
+    ["C", "W", "G", "R_high"],
+    ["C", "W", "G", "R_low", "R_high"]
+  ],
+  "population_eligibility": {
+    "technical_main": "A393 exact membership from the first-stage technical freeze",
+    "strict_sensitivity": "A137 exact membership, evaluated within the A393 outer-validation framework; no new technical fitting or threshold selection",
+    "A_modeling_population": {
+      "definition": "A393 intersected with valid A DFS records after W06 endpoint QC",
+      "allowed_exclusions": ["frozen technical exclusion", "outcome unavailable", "duplicated ID", "DFS_time<=0", "DFS_event not in {0,1}", "event/time conflict", "explicit unrepairable source-data error"],
+      "performance_based_exclusion": false,
+      "outcome_read_at_W04_freeze": false
+    },
+    "model_specific": {
+      "main": {"models": ["M0", "M1", "M2"], "required_blocks": ["C", "G"]},
+      "W_available": {"models": ["M0", "M5"], "required_blocks": ["C", "W"], "pairing": "M0 is refit on the same W-available patients"},
+      "R_low": {"models": ["M2", "M3L"], "required_blocks": ["C", "G", "R_low"], "pairing": "M2 is refit on the same R_low-eligible patients"},
+      "R_high": {"models": ["M2", "M3H"], "required_blocks": ["C", "G", "R_high"], "pairing": "M2 is refit on the same R_high-eligible patients"},
+      "dual_radiomics": {"models": ["M2", "M3L", "M3H", "M4"], "required_blocks": ["C", "G", "R_low", "R_high"], "pairing": "all four models use identical patients and splits"}
+    }
+  },
+  "missingness_structural_absence_availability": {
+    "primary_reader": "R1",
+    "R2": "used only for W03 reproducibility and candidate freeze",
+    "global_descriptors": {
+      "structural_zero_fields": ["H_high_fraction", "interface_density", "H_high_largest_component_tumor_fraction", "H_high_radial_burden"],
+      "always_defined_fields": ["sv_median_minus_boundary", "sv_IQR"],
+      "structural_zero_is_valid_value": true,
+      "not_primary_predictors": ["habitat_entropy", "H_high_component_density"]
+    },
+    "radiomics_blocks": {
+      "structural_absence_value": null,
+      "technical_failure_value": null,
+      "structural_absence_is_not_technical_failure": true,
+      "structural_absence_handling": "R_low or R_high block is unavailable for that case and is never converted to zero or ordinary missingness",
+      "technical_failure_handling": "case is unavailable for any model requiring the affected block; no value is fabricated",
+      "dual_radiomics_rule": "M4 requires both R_low and R_high to be structurally and technically available",
+      "within_available_block_nonfinite": "feature-level median imputation fitted separately inside each training fold only; if no finite training value exists, drop that feature in that fold",
+      "candidate_availability_gate": "W03 finite rate>=0.95 in each reader among habitat-present cases",
+      "no_outcome_based_availability_filter": true
+    },
+    "clinical_block": {
+      "continuous_imputation": "training-fold median",
+      "categorical_imputation": "training-fold mode; ties resolved by lowest predeclared level",
+      "invalid_levels": "hard_fail",
+      "no_complete_case_filter_based_on_predictor_missingness": true
+    }
+  },
+  "nested_cv": {
+    "outer": {
+      "splitter": "StratifiedKFold",
+      "folds": 5,
+      "repeats": 10,
+      "total_outer_validation_folds": 50,
+      "shuffle": true,
+      "stratify_by": "DFS_event",
+      "minimum_events_per_train_fold": 1,
+      "minimum_events_per_validation_fold": 1,
+      "failure_if_event_requirement_not_met": "hard_fail; do not reduce folds or change the endpoint"
+    },
+    "inner": {
+      "splitter": "StratifiedKFold",
+      "folds": 5,
+      "nested_within_each_outer_training_set": true,
+      "shuffle": true,
+      "stratify_by": "DFS_event",
+      "minimum_events_per_train_fold": 1,
+      "minimum_events_per_validation_fold": 1,
+      "failure_if_event_requirement_not_met": "hard_fail"
+    },
+    "randomness": {
+      "base_seed": 12345,
+      "repeat_index": "1..10",
+      "outer_fold_index": "1..5",
+      "outer_split_seed": "base_seed + (repeat-1)",
+      "inner_split_seed": "base_seed + 1000 + 10*(repeat-1) + outer_fold",
+      "fold_kmeans_seed": "base_seed + 2000 + 10*(repeat-1) + outer_fold",
+      "model_solver_seed": "base_seed + 3000 + 10*(repeat-1) + outer_fold",
+      "unseeded_random_operations": false,
+      "all_seed_values_recorded_per_fold": true
+    },
+    "fold_specific_habitat": {
+      "fit_centers_on": "outer training patients only",
+      "patient_weighting": "each patient total supervoxel weight=1; each supervoxel weight=1/n_i",
+      "k": 2,
+      "center_order": "lower center=H-low, higher center=H-high",
+      "boundary": "midpoint of training H-low and H-high centers",
+      "apply_boundary_to": "outer training and outer validation using training boundary",
+      "validation_used_for_center_or_boundary_fit": false,
+      "recompute_fold_specific_G": true,
+      "recompute_fold_specific_R_low_R_high": true
+    }
+  },
+  "training_only_pipeline": {
+    "outer_validation_never_fits_or_tunes": ["centers", "boundary", "habitat masks", "G", "radiomics extraction", "imputation", "variance filter", "correlation filter", "scaler", "feature selection", "alpha", "lambda"],
+    "clinical_order": ["training-only imputation", "training-only continuous scaling", "fit clinical Cox model"],
+    "radiomics_order": ["training-only imputation", "training-only near-zero variance filter", "training-only correlation reduction", "training-only scaling", "inner-CV alpha/lambda tuning", "outer-training refit and Elastic Net feature selection"],
+    "near_zero_variance": {
+      "scope": "radiomics predictors after training-only imputation",
+      "drop_if": ["n_unique<=1", "n_unique/n_training<0.01 AND most_common_count/second_most_common_count>100"],
+      "second_frequency_zero": "frequency ratio=infinity",
+      "fit_scope": "training-only"
+    },
+    "correlation_reduction": {
+      "association": "absolute Pearson correlation",
+      "threshold_exclusive": ">0.90",
+      "retained_feature": "lexicographically first feature in the frozen feature order",
+      "fit_scope": "training-only"
+    },
+    "scaling": {
+      "method": "z-score",
+      "center_and_scale": "training mean and training population standard deviation",
+      "zero_standard_deviation": "drop in training-only variance step",
+      "validation_action": "transform only with training parameters"
+    },
+    "high_dimensional_model": {
+      "family": "Elastic-Net Cox",
+      "objective": "penalized Cox partial likelihood",
+      "alpha_grid": [0.1, 0.5, 0.9, 1.0],
+      "lambda_grid": {
+        "selection": "inner CV only",
+        "values_per_alpha": 100,
+        "scale": "log-spaced from training-only lambda_max to lambda_max*1e-4",
+        "lambda_max_scope": "each inner-training fit",
+        "outer_validation_used_for_tuning": false
+      },
+      "inner_selection_metric": "mean inner-validation Uno C-index",
+      "tie_break": ["within 1e-12 choose larger lambda", "remaining tie choose smaller alpha in the frozen alpha order"],
+      "univariate_outcome_feature_ranking": false,
+      "selected_features": "non-zero Elastic-Net coefficients from the training-only tuned fit"
+    },
+    "low_dimensional_model": {
+      "family": "Cox PH unpenalized",
+      "tie_handling": "Breslow",
+      "hyperparameter_tuning": false
+    }
+  },
+  "evaluation_metrics": {
+    "source": "held-out outer validation predictions",
+    "discrimination": ["Harrell C-index", "Uno C-index", "time-dependent AUC at 3 years", "time-dependent AUC at 5 years"],
+    "calibration": ["3-year calibration", "5-year calibration", "calibration slope at 3 years", "calibration slope at 5 years", "calibration-in-the-large at 3 years", "calibration-in-the-large at 5 years"],
+    "prediction_error": ["IPCW Brier score at 3 years", "IPCW Brier score at 5 years", "integrated Brier score through 5 years"],
+    "censoring_weights": "estimated from the corresponding training data only for outer-validation evaluation",
+    "feature_stability": "selection frequency across 50 outer validation folds, with repeat/fold consistency",
+    "paired_comparisons": "same eligible patients and same outer splits; report paired delta for every fixed comparison",
+    "aggregation": "retain fold-level and repeat-level results; summarize across all 50 outer folds; never select architecture by the maximum single-fold or single-repeat value",
+    "undefined_metric_rule": "record not estimable with the prespecified reason; do not substitute a different metric or alter the endpoint"
+  },
+  "final_architecture_rule": {
+    "stage": "W11 after W08-W10",
+    "allowed_models": ["M0", "M1", "M2", "M3L", "M3H", "M4"],
+    "decision_basis": ["fixed hierarchy", "incremental evidence", "parsimony", "stability"],
+    "M5_role": "reference comparator",
+    "single_metric_maximum_rule": false,
+    "W04_does_not_select_final_architecture": true
+  },
+  "prohibited_actions_after_freeze": [
+    "read DFS before W05 gate is complete",
+    "read any B clinical, outcome, radiomics, habitat, QC, missingness, distribution, or performance data",
+    "add an unprespecified model combination after seeing DFS",
+    "change C, G, R_low, R_high, W, endpoint, eligibility, CV, seed scheme, alpha grid, or lambda selection rule based on outcome",
+    "use outer validation performance for preprocessing, feature selection, alpha, or lambda tuning",
+    "create prognosis_analysis/model_freeze_lock.json in W04"
+  ]
+}
