@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 import tempfile
@@ -10,57 +9,150 @@ SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
-from freeze_lock import atomic_write_json, validate_freeze_lock  # noqa: E402
+from freeze_lock import (  # noqa: E402
+    FREEZE_SCHEMA_VERSION, atomic_write_json, compute_artifact_hashes,
+    validate_artifact_hashes, validate_freeze_lock, write_habitat_map_manifest,
+)
 
 
-def valid_payload():
+def _write(path, content):
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+def _artifact_paths(tmp):
+    os.makedirs(os.path.join(tmp, "maps"))
+    _write(os.path.join(tmp, "a393.csv"), "影像号\nA001\n")
+    _write(os.path.join(tmp, "a137.csv"), "影像号\nA001\n")
+    for name in ("manifest.csv", "scanner_map.csv", "preprocessing.yaml",
+                 "slic.json", "formal_summary.csv", "global.csv", "feature_qc.csv",
+                 "feature_dictionary.md", "threshold.md", "confounding.md",
+                 "screen_lenient.csv", "screen_strict.csv"):
+        _write(os.path.join(tmp, name), name + "\n")
+    _write(os.path.join(tmp, "maps", "A001_R1_habitat.nrrd"), "synthetic-map\n")
+    map_manifest = os.path.join(tmp, "habitat_map_manifest.csv")
+    write_habitat_map_manifest(os.path.join(tmp, "maps"), map_manifest)
     return {
-        "bootstrap_mode": "formal", "bootstrap_requested": 1000,
-        "bootstrap_completed": 1000, "bootstrap_completion_status": "complete",
-        "bootstrap_operational_pass": 1, "formal_eligible": 1,
-        "outcome_columns_read": False, "B_data_read": False,
-        "config_hash": "abc", "A393_id_hash": "ids",
+        "A393_id_hash": {"kind": "id_hash", "path": "a393.csv", "column": "影像号"},
+        "A137_id_hash": {"kind": "id_hash", "path": "a137.csv", "column": "影像号"},
+        "manifest_hash": "manifest.csv",
+        "scanner_map_hash": "scanner_map.csv",
+        "preprocessing_config_hash": "preprocessing.yaml",
+        "slic_config_hash": "slic.json",
+        "high_signal_screen_hash": ["screen_lenient.csv", "screen_strict.csv"],
+        "formal_bootstrap_summary_hash": "formal_summary.csv",
+        "global_descriptors_hash": "global.csv",
+        "feature_qc_hash": "feature_qc.csv",
+        "feature_dictionary_hash": "feature_dictionary.md",
+        "threshold_audit_hash": "threshold.md",
+        "threshold_confounding_audit_hash": "confounding.md",
+        "habitat_map_manifest_hash": {
+            "kind": "habitat_map_manifest", "path": "habitat_map_manifest.csv",
+            "map_root": "maps",
+        },
     }
 
 
+def valid_payload(tmp):
+    artifacts = _artifact_paths(tmp)
+    payload = {
+        "freeze_schema_version": FREEZE_SCHEMA_VERSION,
+        "habitat_technical_freeze": True,
+        "A_outcome_unlock": True,
+        "B_unlock": False,
+        "bootstrap_mode": "formal",
+        "bootstrap_requested": 1000,
+        "bootstrap_completed": 1000,
+        "bootstrap_completion_status": "complete",
+        "bootstrap_operational_pass": 1,
+        "formal_eligible": 1,
+        "outcome_columns_read": False,
+        "B_data_read": False,
+        "eligibility_threshold_fraction": 0.001,
+        "eligibility_threshold_role": "minimum_imaging_presence",
+        "threshold_selection_performed": False,
+        "threshold_audit_conclusion": "NEUTRAL_WITH_TECHNICAL_CAUTION",
+        "config_hash": "abc",
+        "artifact_paths": artifacts,
+    }
+    payload.update(compute_artifact_hashes(artifacts, tmp))
+    return payload
+
+
 class FreezeLockTests(unittest.TestCase):
-    def test_smoke_cannot_produce_valid_lock(self):
-        payload = valid_payload()
-        payload.update(bootstrap_mode="smoke", bootstrap_requested=20,
-                       bootstrap_completed=20, formal_eligible=0)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "lock.json")
-            atomic_write_json(path, payload)
-            with self.assertRaises(RuntimeError):
-                validate_freeze_lock(path)
+    def write_lock(self, tmp, payload):
+        path = os.path.join(tmp, "freeze_lock.json")
+        atomic_write_json(path, payload)
+        return path
 
-    def test_preflight_cannot_produce_valid_lock(self):
-        payload = valid_payload()
-        payload.update(bootstrap_mode="preflight", bootstrap_requested=200,
-                       bootstrap_completed=200, formal_eligible=0)
+    def test_valid_strict_schema_and_artifact_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "lock.json")
-            atomic_write_json(path, payload)
-            with self.assertRaises(RuntimeError):
-                validate_freeze_lock(path)
+            payload = valid_payload(tmp)
+            path = self.write_lock(tmp, payload)
+            validated = validate_freeze_lock(path)
+            self.assertTrue(validated["A_outcome_unlock"])
+            self.assertFalse(validated["B_unlock"])
 
-    def test_formal_incomplete_rejected(self):
-        payload = valid_payload()
-        payload.update(bootstrap_completed=999, bootstrap_completion_status="partial",
-                       formal_eligible=0)
+    def test_missing_required_field_hard_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "lock.json")
-            atomic_write_json(path, payload)
+            payload = valid_payload(tmp)
+            del payload["threshold_audit_conclusion"]
             with self.assertRaises(RuntimeError):
-                validate_freeze_lock(path)
+                validate_freeze_lock(self.write_lock(tmp, payload))
+
+    def test_wrong_required_values_hard_fail(self):
+        wrong_values = {
+            "freeze_schema_version": "0.9",
+            "habitat_technical_freeze": False,
+            "A_outcome_unlock": False,
+            "B_unlock": True,
+            "bootstrap_mode": "smoke",
+            "bootstrap_requested": 20,
+            "bootstrap_completed": 999,
+            "bootstrap_completion_status": "partial",
+            "bootstrap_operational_pass": 0,
+            "formal_eligible": 0,
+            "outcome_columns_read": True,
+            "B_data_read": True,
+            "eligibility_threshold_fraction": 0.01,
+            "eligibility_threshold_role": "selection_cutoff",
+            "threshold_selection_performed": True,
+            "threshold_audit_conclusion": "OUTCOME_INFORMED",
+        }
+        for key, value in wrong_values.items():
+            with self.subTest(key=key):
+                with tempfile.TemporaryDirectory() as tmp:
+                    payload = valid_payload(tmp)
+                    payload[key] = value
+                    with self.assertRaises(RuntimeError):
+                        validate_freeze_lock(self.write_lock(tmp, payload))
 
     def test_current_inputs_must_match(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "lock.json")
-            atomic_write_json(path, valid_payload())
-            self.assertEqual(validate_freeze_lock(path, {"config_hash": "abc"})["A393_id_hash"], "ids")
+            path = self.write_lock(tmp, valid_payload(tmp))
+            self.assertEqual(validate_freeze_lock(path, {"config_hash": "abc"})["config_hash"], "abc")
             with self.assertRaises(RuntimeError):
                 validate_freeze_lock(path, {"config_hash": "changed"})
+
+    def test_artifact_hash_interface_validates_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = valid_payload(tmp)
+            self.assertIs(validate_artifact_hashes(payload, payload["artifact_paths"], tmp), payload)
+
+    def test_tampered_artifact_or_map_hard_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_lock(tmp, valid_payload(tmp))
+            with open(os.path.join(tmp, "feature_qc.csv"), "a", encoding="utf-8") as handle:
+                handle.write("tampered\n")
+            with self.assertRaises(RuntimeError):
+                validate_freeze_lock(path)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_lock(tmp, valid_payload(tmp))
+            with open(os.path.join(tmp, "maps", "A001_R1_habitat.nrrd"), "a", encoding="utf-8") as handle:
+                handle.write("tampered\n")
+            with self.assertRaises(RuntimeError):
+                validate_freeze_lock(path)
 
 
 if __name__ == "__main__":

@@ -24,8 +24,9 @@ from sklearn.cluster import KMeans
 
 import technical_dry_run_A as base
 from freeze_lock import (
-    FORMAL_BOOTSTRAPS, atomic_write_json, file_sha256, files_sha256,
-    id_hash, utc_now, validate_formal_bootstrap,
+    FREEZE_SCHEMA_VERSION, FORMAL_BOOTSTRAPS, atomic_write_json,
+    compute_artifact_hashes, id_hash, utc_now, validate_formal_bootstrap,
+    validate_freeze_lock, write_habitat_map_manifest,
 )
 
 
@@ -50,6 +51,8 @@ FEATURE_DICTIONARY = os.path.join(HAB, "feature_dictionary.md")
 FEATURE_DICTIONARY_STAGING = os.path.join(HAB, "feature_dictionary_" + RUN_TAG + "_staging.md")
 FREEZE_LOCK = os.path.join(HAB, "freeze_lock.json")
 FREEZE_LOCK_STAGING = os.path.join(HAB, "freeze_lock_" + RUN_TAG + "_staging.json")
+MAP_MANIFEST = os.path.join(OUT, "habitat_maps_A_manifest.csv")
+MAP_MANIFEST_STAGING = os.path.join(OUT, "habitat_maps_A_" + RUN_TAG + "_manifest_staging.csv")
 CONFIG = os.path.join(HAB, "configs", "main_cross_case_kmeans_k2_4mm.json")
 STRICT_AUDIT = os.path.join(OUT, "high_signal_eligibility_audit",
                             "recommended_selected_cases.csv")
@@ -99,6 +102,42 @@ def write_text(path, text):
     mkdir(os.path.dirname(path))
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
+
+
+def lock_relative_path(path):
+    """Store artifact paths relative to the technical freeze lock directory."""
+    return os.path.relpath(os.path.abspath(path), HAB).replace(os.sep, "/")
+
+
+def freeze_artifact_paths(a393_path, a137_path, manifest_path, scanner_path,
+                          preprocess_config, slic_config, screen_paths,
+                          formal_summary_path, global_descriptors_path,
+                          feature_qc_path, feature_dictionary_path,
+                          threshold_paths, map_manifest_path, map_root):
+    """Describe every technical artifact bound by the first-stage lock."""
+    return {
+        "A393_id_hash": {"kind": "id_hash", "path": lock_relative_path(a393_path),
+                         "column": "影像号"},
+        "A137_id_hash": {"kind": "id_hash", "path": lock_relative_path(a137_path),
+                         "column": "影像号"},
+        "manifest_hash": lock_relative_path(manifest_path),
+        "scanner_map_hash": lock_relative_path(scanner_path),
+        "preprocessing_config_hash": lock_relative_path(preprocess_config),
+        "slic_config_hash": lock_relative_path(slic_config),
+        "high_signal_screen_hash": [lock_relative_path(path) for path in screen_paths],
+        "formal_bootstrap_summary_hash": lock_relative_path(formal_summary_path),
+        "global_descriptors_hash": lock_relative_path(global_descriptors_path),
+        "feature_qc_hash": lock_relative_path(feature_qc_path),
+        "feature_dictionary_hash": lock_relative_path(feature_dictionary_path),
+        "threshold_audit_hash": lock_relative_path(threshold_paths["threshold_audit"]),
+        "threshold_confounding_audit_hash": lock_relative_path(
+            threshold_paths["threshold_confounding_audit"]),
+        "habitat_map_manifest_hash": {
+            "kind": "habitat_map_manifest",
+            "path": lock_relative_path(map_manifest_path),
+            "map_root": lock_relative_path(map_root),
+        },
+    }
 
 
 def load_cfg():
@@ -986,7 +1025,7 @@ def stage7_freeze(structural=None):
         gates.append({"gate": name, "pass": int(os.path.exists(path)),
                       "details": "audit present" if os.path.exists(path) else "required audit file missing"})
     formal_destination_absent = not any(os.path.exists(path) for path in [
-        MAPS, FEATURES, FEATURE_DICTIONARY, FREEZE_LOCK])
+        MAPS, FEATURES, FEATURE_DICTIONARY, FREEZE_LOCK, MAP_MANIFEST])
     gates.append({"gate": "formal_destination_absent", "pass": int(formal_destination_absent),
                   "details": "formal destinations absent" if formal_destination_absent
                   else "formal destination or lock already exists; inspect before rerunning freeze"})
@@ -994,7 +1033,8 @@ def stage7_freeze(structural=None):
         return False
 
     if (os.path.exists(MAPS_STAGING) or os.path.exists(FEATURES_STAGING) or
-            os.path.exists(FEATURE_DICTIONARY_STAGING) or os.path.exists(FREEZE_LOCK_STAGING)):
+            os.path.exists(FEATURE_DICTIONARY_STAGING) or
+            os.path.exists(FREEZE_LOCK_STAGING) or os.path.exists(MAP_MANIFEST_STAGING)):
         raise RuntimeError("staging directory already exists; inspect it before rerunning freeze")
     mkdir(MAPS_STAGING)
     mkdir(FEATURES_STAGING)
@@ -1058,6 +1098,7 @@ def stage7_freeze(structural=None):
         out = sitk.GetImageFromArray(hab.astype(np.int8))
         out.CopyInformation(image)
         sitk.WriteImage(out, base.apath(os.path.join(MAPS_STAGING, pid + "_R1_habitat.nrrd")), useCompression=True)
+    write_habitat_map_manifest(MAPS_STAGING, MAP_MANIFEST_STAGING)
     features = pd.DataFrame(feature_rows).sort_values("影像号")
     qc = pd.DataFrame(qc_rows).sort_values("影像号")
     features.to_csv(os.path.join(FEATURES_STAGING, "global_descriptors_full_A.csv"), index=False, encoding="utf-8-sig")
@@ -1115,15 +1156,25 @@ def stage7_freeze(structural=None):
             cwd=ROOT, universal_newlines=True).strip()
     except Exception:  # noqa: BLE001
         commit = "unknown"
+    global_descriptors_path = os.path.join(FEATURES_STAGING, "global_descriptors_full_A.csv")
+    feature_qc_path = os.path.join(FEATURES_STAGING, "feature_qc.csv")
+    staging_artifact_paths = freeze_artifact_paths(
+        a393_path, a137_path, manifest_path, scanner_path, preprocess_config,
+        CONFIG, screen_paths, formal_summary_path, global_descriptors_path,
+        feature_qc_path, FEATURE_DICTIONARY_STAGING, threshold_paths,
+        MAP_MANIFEST_STAGING, MAPS_STAGING)
+    final_artifact_paths = freeze_artifact_paths(
+        a393_path, a137_path, manifest_path, scanner_path, preprocess_config,
+        CONFIG, screen_paths, formal_summary_path,
+        os.path.join(FEATURES, "global_descriptors_full_A.csv"),
+        os.path.join(FEATURES, "feature_qc.csv"), FEATURE_DICTIONARY,
+        threshold_paths, MAP_MANIFEST, MAPS)
     lock = {
+        "freeze_schema_version": FREEZE_SCHEMA_VERSION,
+        "habitat_technical_freeze": True,
+        "A_outcome_unlock": True,
+        "B_unlock": False,
         "analysis_id": cfg["analysis_id"], "git_commit": commit,
-        "A393_id_hash": id_hash(a393["影像号"]),
-        "A137_id_hash": id_hash(a137["影像号"]),
-        "manifest_hash": file_sha256(manifest_path),
-        "scanner_map_hash": file_sha256(scanner_path),
-        "high_signal_screen_hash": files_sha256(screen_paths),
-        "preprocessing_config_hash": file_sha256(preprocess_config),
-        "slic_config_hash": file_sha256(CONFIG),
         "slic_supergrid_voxels_xyz": cfg["slic"]["supergrid_voxels_xyz"],
         "slic_actual_supergrid_mm_xyz": cfg["slic"]["actual_supergrid_mm_xyz"],
         "global_center_low": low_c, "global_center_high": high_c,
@@ -1134,24 +1185,31 @@ def stage7_freeze(structural=None):
         "bootstrap_completion_status": formal_summary["completion_status"],
         "bootstrap_operational_pass": int(float(formal_summary["bootstrap_operational_pass"])),
         "formal_eligible": int(float(formal_summary["formal_eligible"])),
-        "bootstrap_summary_hash": file_sha256(formal_summary_path),
         "technical_failure_case_hash": id_hash(failures),
-        "main_feature_dictionary_hash": file_sha256(FEATURE_DICTIONARY_STAGING),
         "outcome_columns_read": False, "B_data_read": False,
+        "eligibility_threshold_fraction": 0.001,
+        "eligibility_threshold_role": "minimum_imaging_presence",
+        "threshold_selection_performed": False,
+        "threshold_audit_conclusion": "NEUTRAL_WITH_TECHNICAL_CAUTION",
+        "artifact_paths": final_artifact_paths,
         "freeze_timestamp": utc_now(),
     }
+    lock.update(compute_artifact_hashes(staging_artifact_paths, HAB))
     atomic_write_json(FREEZE_LOCK_STAGING, lock)
-    validate_freeze_lock(FREEZE_LOCK_STAGING)
+    validate_freeze_lock(FREEZE_LOCK_STAGING, artifact_paths=staging_artifact_paths,
+                         artifact_root=HAB)
     promoted = []
     try:
         for source, destination in [
             (MAPS_STAGING, MAPS),
             (FEATURES_STAGING, FEATURES),
+            (MAP_MANIFEST_STAGING, MAP_MANIFEST),
             (FEATURE_DICTIONARY_STAGING, FEATURE_DICTIONARY),
             (FREEZE_LOCK_STAGING, FREEZE_LOCK),
         ]:
             os.replace(source, destination)
             promoted.append((source, destination))
+        validate_freeze_lock(FREEZE_LOCK)
     except Exception:
         for source, destination in reversed(promoted):
             if os.path.exists(destination) and not os.path.exists(source):
