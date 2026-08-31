@@ -13,7 +13,7 @@
 - 已加入冻结前代码回归测试，覆盖标签解析、归一化隔离、强制覆盖、断点续跑、流水线印章、倾斜 FOV、SLIC物理尺度换算、A/B隔离、患者等权bootstrap、冻结锁和技术队列审计。
 - 当前主方法为三维 SLIC 4 mm 加全部有效超体素、每例总权重固定为1的跨病例 K-means K=2；4 mm在`[1,1,2] mm`图像上使用`[4,4,2]`体素超网格。
 - A 集和 B 集的队列定义、数据隔离规则及主参数已记录在项目方法文档中。
-- 已完成修正后18例M1/M2比较、A=393校正M1、结构状态、技术因素效应量及严格A=137核验；校正后A=393硬技术失败0例，结构性单生境25例。bootstrap按`smoke=20`、`preflight=200`、`formal=1000`分目录和模式管理；preflight 200次已完成并判定为`CLEAR PASS`，formal 1000次已完成并通过T02稳定性门禁（`FORMAL PASS`、`formal_eligible=1`），结局盲态保持。
+- 已完成修正后18例M1/M2比较、A=393校正M1、结构状态、技术因素效应量及严格A=137核验；校正后A=393硬技术失败0例，结构性单生境25例。bootstrap按`smoke=20`、`preflight=200`、`formal=1000`分目录和模式管理；preflight 200次已完成并判定为`CLEAR PASS`，formal患者层面bootstrap已完成1000/1000、成功1000/1000并通过全部稳定性门禁，正式判定为`FORMAL PASS`、`formal_eligible=1`。A393身份审计对称差为0，A137仍为A393真子集；结局盲态保持。
 - 已完成结局盲态0.1%高信号阈值技术合理性审计及补充技术混杂分解：A筛选母队列530例，重算A393与现有清单对称差为0，A137仍为A393真子集；预设阈值扫描保持单调嵌套，A393 preflight已按区间完整连接。近0.10–<0.25%区间的post-SLIC高信号保留召回率中位数为0；补充模型显示加入原始序列名没有稳定的交叉验证增益，但肿瘤体积依赖仍存在，综合判断为`NEUTRAL_WITH_TECHNICAL_CAUTION`。主阈值仍保持0.1%，未读取结局或B集，未执行阈值优化。
 - GitHub/Codex 仓库采用代码和文档边界；原始影像、临床数据、患者级结果和原始影像号均保留在本地。
 
@@ -25,7 +25,7 @@
 
 ## Next task
 
-当前进入W01 technical freeze：完成第一阶段`freeze_lock.json`后，按W02–W05冻结生境特异性组学、建模协议及A-only访问边界，再首次读取A集DFS。第一把锁只解锁A集预设临床变量与DFS；完成A-only nested validation、全A最终拟合并生成第二阶段`model_freeze_lock.json`后，才允许首次读取B集进行一次性外部验证。
+当前为`FORMAL PASS`，进入冻结前代码整改与technical freeze。下一阶段先完成W00A冻结前阻断性代码修复及W00B冻结与数据隔离集成测试，再执行W01 technical freeze并生成第一阶段`freeze_lock.json`；随后按W02–W05冻结生境特异性组学、建模协议及A-only访问边界，再首次读取A集DFS。第一把锁只解锁A集预设临床变量与DFS；完成A-only nested validation、全A最终拟合并生成第二阶段`model_freeze_lock.json`后，才允许首次读取B集进行一次性外部验证。
 
 ## Important decisions
 

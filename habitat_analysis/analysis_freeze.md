@@ -24,7 +24,7 @@
 - 聚类中心只在对应训练数据中拟合；标签按中心从低到高固定为`H-low`和`H-high`。
 - bootstrap为患者层面、结局盲态技术稳定性评估，模式固定为`smoke=20`、`preflight=200`、`formal=1000`；三种模式分别写入`output/bootstrap_stability_A_post_slic_fix/smoke/`、`preflight/`和`formal/`，每个重复使用`12345+bootstrap_index`作为种子并支持断点续跑。
 - `smoke`仅用于流程核验，`preflight`仅用于正式运行前估时和稳定性预审；二者均不得解锁冻结。只有完整的`formal=1000`结果及其余门禁全部通过后，才可生成`freeze_lock.json`。
-- 当前状态：A集`preflight=200`已完成，全部拟合成功，操作性判定为`CLEAR PASS`；`formal=1000`已完成并通过正式稳定性门禁（`FORMAL PASS`、`formal_eligible=1`），待完成technical freeze后生成`freeze_lock.json`。
+- 当前状态：A集`preflight=200`已完成，全部拟合成功，操作性判定为`CLEAR PASS`；formal患者层面bootstrap已完成1000/1000、成功1000/1000并通过正式稳定性门禁，正式判定为`FORMAL PASS`、`formal_eligible=1`。A393身份审计对称差为0，A137仍为A393真子集。当前进入冻结前代码整改与technical freeze；完成W00A/W00B后再执行W01并生成`freeze_lock.json`。
 - 结局盲态0.1%阈值技术合理性审计及补充技术混杂分解已完成：A筛选母队列530例，重算A393身份一致，A137为A393真子集；阈值扫描、近阈值形态、post-SLIC保留、技术因素、R1/R2一致性、既有200次preflight及体积/spacing/序列分解均已核验。补充分解显示原始序列名没有稳定的交叉验证增益，主要序列不存在近乎决定通过/失败的水平，但肿瘤体积依赖仍存在；综合判断为`NEUTRAL_WITH_TECHNICAL_CAUTION`。该分析不改变0.1%主标准、不执行阈值优化，formal已完成且通过，A-only结局分析尚未启动。
 - 生境Original特征固定箱宽`0.248808`；关闭PyRadiomics内部重采样和归一化。formal结果已归档于`output/bootstrap_stability_A_post_slic_fix/formal/`，尚未读取结局或启动A-only预后建模。
 
