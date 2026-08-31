@@ -84,7 +84,8 @@ def process_table(combo: str, batch: str, a_pairs: list[str], split: str = "A") 
     if not os.path.exists(path):
         raise FileNotFoundError(f"缺少 v2 特征表：{path}；请先完成修正版特征重提取")
     cohort_ids = load_cohort_ids()
-    allowed_ids = (set(a_pairs) if split == "A" else
+    a_pair_ids = set(a_pairs)
+    allowed_ids = (cohort_ids["A"] if split == "A" else
                    cohort_ids["B"] if split == "B" else
                    cohort_ids["A"] | cohort_ids["B"])
     df = (read_technical_A(path, allowed_ids=allowed_ids,
@@ -104,7 +105,7 @@ def process_table(combo: str, batch: str, a_pairs: list[str], split: str = "A") 
     readers = df[df["读者"].isin(["R1", "R2"])]
     rows = []
     for col in feat_cols:
-        p_a = readers.loc[readers["影像号"].isin(a_pairs)].pivot(
+        p_a = readers.loc[readers["影像号"].isin(a_pair_ids)].pivot(
             index="影像号", columns="读者", values=col)
         rows.append({"feature": col, "icc_A": icc21(p_a),
                      "n_A": int(p_a.dropna().shape[0])})

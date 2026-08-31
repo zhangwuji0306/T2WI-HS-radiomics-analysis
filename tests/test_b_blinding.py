@@ -37,7 +37,10 @@ class BBlindingTests(unittest.TestCase):
                     rows.append(row)
             pd.DataFrame(rows).to_csv(os.path.join(folder, "features_original.csv"),
                                       index=False, encoding="utf-8-sig")
-            with mock.patch.object(stage6_qc, "FEATURES", tmp):
+            with mock.patch.object(stage6_qc, "FEATURES", tmp), \
+                    mock.patch.object(stage6_qc, "load_cohort_ids",
+                                       return_value={"A": {"1", "2", "3"},
+                                                     "B": set()}):
                 result = stage6_qc.process_table(combo, "original", ["1", "2", "3"])
             self.assertNotIn("icc_B", result["icc"].columns)
             self.assertNotIn("n_B", result["icc"].columns)

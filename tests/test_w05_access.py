@@ -161,6 +161,95 @@ class W05ReaderTests(unittest.TestCase):
         self.assertEqual(qc_ids["B"], {"B"})
 
 
+class Stage6QCTests(unittest.TestCase):
+    @staticmethod
+    def _synthetic_feature_table():
+        rows = []
+        target_values = {
+            ("A1", "R1"): 1.0,
+            ("A1", "R2"): 1.01,
+            ("A2", "R1"): 2.0,
+            ("A2", "R2"): 2.01,
+            ("A3", "R1"): 3.0,
+            ("A3", "R2"): 3.01,
+            ("A4", "R1"): float("nan"),
+            ("A4", "R2"): 7.0,
+            ("A5", "R1"): 100.0,
+            ("A5", "R2"): -100.0,
+            ("B1", "R1"): 50.0,
+        }
+        subject_values = {"A1": 1.0, "A2": 2.0, "A3": 3.0,
+                          "A4": 4.0, "A5": 5.0, "B1": 6.0}
+        for patient_id, reader in target_values:
+            row = {"影像号": patient_id, "读者": reader,
+                   "split": "B" if patient_id == "B1" else "A",
+                   "normalization": "muscle", "f": 0.25,
+                   "binWidth": 0.2}
+            for index in range(107):
+                name = "feature_%03d" % index
+                row[name] = (target_values[(patient_id, reader)] if index == 0
+                             else float(index) + subject_values[patient_id] +
+                             (0.01 if reader == "R2" else 0.0))
+            rows.append(row)
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _synthetic_membership():
+        ids = ["A1", "A2", "A3", "A4", "A5", "B1"]
+        manifest = pd.DataFrame({"影像号": ids})
+        scanner = pd.DataFrame({
+            "影像号": ids,
+            "R1厂商": ["GE MEDICAL SYSTEMS"] * 5 + ["Other"],
+            "R1机型": ["DISCOVERY MR750"] * 5 + ["Other"],
+            "R1场强": ["3.0"] * 5 + ["1.5"],
+        })
+        return manifest, scanner
+
+    def test_a_qc_reads_full_a_but_icc_and_missingness_have_separate_scopes(self):
+        manifest, scanner = self._synthetic_membership()
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = os.path.join(tmp, "manifest.csv")
+            scanner_path = os.path.join(tmp, "scanner.csv")
+            feature_dir = os.path.join(tmp, "features", "synthetic")
+            os.makedirs(feature_dir)
+            manifest.to_csv(manifest_path, index=False)
+            scanner.to_csv(scanner_path, index=False)
+            self._synthetic_feature_table().to_csv(
+                os.path.join(feature_dir, "features_original.csv"),
+                index=False, encoding="utf-8-sig")
+            with mock.patch.object(stage6_qc, "MANIFEST", manifest_path), \
+                    mock.patch.object(stage6_qc, "SCANNER", scanner_path), \
+                    mock.patch.object(stage6_qc, "FEATURES", os.path.join(tmp, "features")), \
+                    mock.patch.object(stage6_qc, "read_technical_A",
+                                      wraps=data_split_guard.read_technical_A) as reader:
+                result = stage6_qc.process_table(
+                    "synthetic", "original", ["A1", "A2", "A3"])
+
+        self.assertEqual(reader.call_args.kwargs["allowed_ids"],
+                         {"A1", "A2", "A3", "A4", "A5"})
+        target = result["icc"].set_index("feature").loc["feature_000"]
+        self.assertGreater(float(target["icc_A"]), stage6_qc.ICC_THRESHOLD)
+        self.assertEqual(int(target["n_A"]), 3)
+        self.assertTrue(bool(target["pass_icc"]))
+        self.assertEqual(int(target["n_missing_A_R1"]), 1)
+        self.assertFalse(bool(target["candidate"]))
+        self.assertEqual(result["n_missing"], 1)
+        self.assertEqual(result["n_candidates"], 106)
+        self.assertNotIn("icc_B", result["icc"].columns)
+        self.assertNotIn("n_B", result["icc"].columns)
+
+    def test_b_qc_hard_fails_before_any_physical_read(self):
+        table_reader = mock.Mock(side_effect=AssertionError("B QC table opened"))
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(stage6_qc, "FEATURES", tmp), \
+                mock.patch.object(stage6_qc, "require_b_unlock",
+                                   side_effect=RuntimeError("model freeze required")), \
+                mock.patch.object(stage6_qc, "read_B_validation", table_reader):
+            with self.assertRaises(RuntimeError):
+                stage6_qc.process_table("synthetic", "original", [], split="B")
+        table_reader.assert_not_called()
+
+
 class W05BuilderTests(unittest.TestCase):
     @staticmethod
     def clinical_frame(ids):

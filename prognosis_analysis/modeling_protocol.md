@@ -26,6 +26,7 @@ data are read in W04.
 | W03 candidate freeze | `prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json` | `ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2` |
 | W03 schema | `prognosis_analysis/output/w03_habitat_radiomics_A/feature_schema.json` | `17d96e2ec8567b8f39cc7ff9cb72f792bdecc31d2d275ff8345cf9b6035a1d04` |
 | W03 output manifest | `prognosis_analysis/output/w03_habitat_radiomics_A/output_manifest.json` | `85756d47dafa858c9ac554d85313327ba5b7dbf7e72073ef43fa42460e01b444` |
+| Whole-tumor technical QC | `prognosis_analysis/scripts/stage6_qc.py` | `458955763d6862e0669f745accf8f31e590c6449b7bb51bd717edbb4388d8ca8` |
 
 The technical environment is Python `3.7.12`, PyRadiomics `3.0.1` and
 SimpleITK `2.2.1`. The W04 freeze commit is
