@@ -29,7 +29,7 @@ GitHub/Codex 仓库只保存代码、配置、方法文档和不含原始影像�
 
 ## 当前主线
 
-主方法固定为三维 SLIC 4 mm 加跨病例 K-means，聚类数为 K=2。当前执行协议为《T2WI-HS-radiomics-analysis 后续分析、双阶段冻结与外部验证任务书.md》。
+主方法固定为三维 SLIC 4 mm 加跨病例 K-means，聚类数为 K=2。当前执行协议为《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》，具体执行顺序见《三十二、具体执行工作流：从formal PASS至A-only model freeze.md》。
 
 分析顺序为：
 
@@ -101,7 +101,8 @@ python tools/build_image_id_mapping.py
 
 ## 文档入口
 
-- [当前执行任务书](T2WI-HS-radiomics-analysis%20后续分析、双阶段冻结与外部验证任务书.md)
+- [当前执行任务书](T2WI-HS-radiomics-analysis%20后续探索性预后分析与双阶段冻结任务书.md)
+- [具体执行工作流](三十二、具体执行工作流：从formal%20PASS至A-only%20model%20freeze.md)
 - [项目说明](项目说明.md)
 - [组学分析方案](组学分析方案.md)
 - [生境分析方案与工作流](生境分析方案与工作流.md)

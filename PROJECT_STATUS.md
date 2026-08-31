@@ -19,13 +19,13 @@
 
 ## In progress
 
-- 当前执行协议为《T2WI-HS-radiomics-analysis 后续分析、双阶段冻结与外部验证任务书.md》。
+- 当前执行协议为《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》及《三十二、具体执行工作流：从formal PASS至A-only model freeze.md》。
 - 旧冻结前修复任务书和方法学修订报告已转入`archive/protocol_history/`，仅作为决策历史保存。
 - 方法学证据存放于`manuscript/methodology_defense/`；患者级技术输出仍仅保留在本地。
 
 ## Next task
 
-完成T03技术冻结及第一阶段`freeze_lock.json`前，先依据T02 formal审核结果执行正式生境特征原子晋升。第一把锁只解锁A集预设临床变量与DFS；完成A-only nested validation、全A最终拟合并生成第二阶段`model_freeze_lock.json`后，才允许首次读取B集进行一次性外部验证。
+当前进入W01 technical freeze：完成第一阶段`freeze_lock.json`后，按W02–W05冻结生境特异性组学、建模协议及A-only访问边界，再首次读取A集DFS。第一把锁只解锁A集预设临床变量与DFS；完成A-only nested validation、全A最终拟合并生成第二阶段`model_freeze_lock.json`后，才允许首次读取B集进行一次性外部验证。
 
 ## Important decisions
 

@@ -46,6 +46,10 @@ FEATURES = os.path.join(OUT, "habitat_features_A")
 MAPS_STAGING = os.path.join(OUT, "habitat_maps_A_" + RUN_TAG + "_staging")
 FEATURES_STAGING = os.path.join(OUT, "habitat_features_A_" + RUN_TAG + "_staging")
 FREEZE_PREFLIGHT = os.path.join(OUT, "freeze_preflight_A_" + RUN_TAG)
+FEATURE_DICTIONARY = os.path.join(HAB, "feature_dictionary.md")
+FEATURE_DICTIONARY_STAGING = os.path.join(HAB, "feature_dictionary_" + RUN_TAG + "_staging.md")
+FREEZE_LOCK = os.path.join(HAB, "freeze_lock.json")
+FREEZE_LOCK_STAGING = os.path.join(HAB, "freeze_lock_" + RUN_TAG + "_staging.json")
 CONFIG = os.path.join(HAB, "configs", "main_cross_case_kmeans_k2_4mm.json")
 STRICT_AUDIT = os.path.join(OUT, "high_signal_eligibility_audit",
                             "recommended_selected_cases.csv")
@@ -972,12 +976,25 @@ def stage7_freeze(structural=None):
                         pd.to_numeric(a137.iloc[0].get("strict_A137_subset_A393_pass", 0), errors="coerce") == 1)
     gates.append({"gate": "strict_A137_exact_unique_and_subset", "pass": a137_pass,
                   "details": "assertion file present" if a137_pass else "exact 137/subset assertion missing or failed"})
-    gates.append({"gate": "formal_destination_absent", "pass": int(not (os.path.exists(MAPS) or os.path.exists(FEATURES))),
-                  "details": "formal directories must not pre-exist"})
+    threshold_paths = {
+        "threshold_audit": os.path.join(OUT, "high_signal_threshold_audit",
+                                         "outcome_blind_threshold_audit.md"),
+        "threshold_confounding_audit": os.path.join(OUT, "high_signal_threshold_audit",
+                                                      "technical_confounding_decomposition.md"),
+    }
+    for name, path in threshold_paths.items():
+        gates.append({"gate": name, "pass": int(os.path.exists(path)),
+                      "details": "audit present" if os.path.exists(path) else "required audit file missing"})
+    formal_destination_absent = not any(os.path.exists(path) for path in [
+        MAPS, FEATURES, FEATURE_DICTIONARY, FREEZE_LOCK])
+    gates.append({"gate": "formal_destination_absent", "pass": int(formal_destination_absent),
+                  "details": "formal destinations absent" if formal_destination_absent
+                  else "formal destination or lock already exists; inspect before rerunning freeze"})
     if not write_freeze_preflight(gates, "结构、稳定性、技术因素与A137门禁先行核验；结局、临床变量和B集保持不可见。"):
         return False
 
-    if os.path.exists(MAPS_STAGING) or os.path.exists(FEATURES_STAGING):
+    if (os.path.exists(MAPS_STAGING) or os.path.exists(FEATURES_STAGING) or
+            os.path.exists(FEATURE_DICTIONARY_STAGING) or os.path.exists(FREEZE_LOCK_STAGING)):
         raise RuntimeError("staging directory already exists; inspect it before rerunning freeze")
     mkdir(MAPS_STAGING)
     mkdir(FEATURES_STAGING)
@@ -1052,8 +1069,6 @@ def stage7_freeze(structural=None):
                   "details": "393 unique cases, six-axis finite check, voxel conservation"})
     if not write_freeze_preflight(gates, "全部冻结门禁及临时目录特征质控已完成；仅在全部通过后提升正式目录。"):
         return False
-    os.replace(MAPS_STAGING, MAPS)
-    os.replace(FEATURES_STAGING, FEATURES)
     dictionary = [
         "# M1主特征字典", "",
         "## 冻结状态", "",
@@ -1072,14 +1087,14 @@ def stage7_freeze(structural=None):
         "",
         "`habitat_entropy`与`H_high_component_density`保留为描述性候选，不纳入当前主预测块。表型内纹理在相应表型不存在时保持未定义，不填0。嵌套内部验证必须在每个外层训练折内重新拟合中心并生成验证折特征。", "",
     ]
-    write_text(os.path.join(HAB, "feature_dictionary.md"), "\n".join(dictionary))
+    write_text(FEATURE_DICTIONARY_STAGING, "\n".join(dictionary))
     pd.DataFrame([{"freeze_pass": 1, "baseline_pass": 1,
                    "bootstrap_pass": 1, "center_reproducibility_pass": 1,
                    "technical_robustness_pass": 1, "main_features_all_finite": 1,
                    "strict_A137_sensitivity_present": 1,
                    "n_cases": len(features), "n_hard_technical_failures": 0,
                    "outcome_columns_read": False, "B_data_read": False}]).to_csv(
-                   os.path.join(FEATURES, "freeze_qc.csv"), index=False, encoding="utf-8-sig")
+                   os.path.join(FEATURES_STAGING, "freeze_qc.csv"), index=False, encoding="utf-8-sig")
     technical_dir = os.path.join(OUT, "technical_cohort_manifest")
     a393_path = os.path.join(technical_dir, "cohort_A_lenient.csv")
     a137_path = os.path.join(technical_dir, "cohort_A_strict.csv")
@@ -1121,11 +1136,27 @@ def stage7_freeze(structural=None):
         "formal_eligible": int(float(formal_summary["formal_eligible"])),
         "bootstrap_summary_hash": file_sha256(formal_summary_path),
         "technical_failure_case_hash": id_hash(failures),
-        "main_feature_dictionary_hash": file_sha256(os.path.join(HAB, "feature_dictionary.md")),
+        "main_feature_dictionary_hash": file_sha256(FEATURE_DICTIONARY_STAGING),
         "outcome_columns_read": False, "B_data_read": False,
         "freeze_timestamp": utc_now(),
     }
-    atomic_write_json(os.path.join(HAB, "freeze_lock.json"), lock)
+    atomic_write_json(FREEZE_LOCK_STAGING, lock)
+    validate_freeze_lock(FREEZE_LOCK_STAGING)
+    promoted = []
+    try:
+        for source, destination in [
+            (MAPS_STAGING, MAPS),
+            (FEATURES_STAGING, FEATURES),
+            (FEATURE_DICTIONARY_STAGING, FEATURE_DICTIONARY),
+            (FREEZE_LOCK_STAGING, FREEZE_LOCK),
+        ]:
+            os.replace(source, destination)
+            promoted.append((source, destination))
+    except Exception:
+        for source, destination in reversed(promoted):
+            if os.path.exists(destination) and not os.path.exists(source):
+                os.replace(destination, source)
+        raise
     return True
 
 
