@@ -1,69 +1,77 @@
-﻿# 三十二、具体执行工作流：从formal PASS至A-only model freeze
+# 三十二、具体执行工作流：从 formal PASS 至 A-only model freeze
 
-本节替代此前仅列出步骤名称的“近期执行顺序”。
+本文件是从 formal technical stability PASS 到 A-only final model freeze 的唯一正式执行顺序。
 
-整个流程分为三个阶段：
+本版根据 2026-08-31 代码审阅结果修订，新增 **W00R 冻结前代码安全整改**，并强化 W01、W05、W13 的 fail-closed 规则。
+
+整个流程分为三阶段：
 
 ```text
-阶段 I：技术冻结前最后准备
+阶段 I：技术冻结前代码安全整改 + technical freeze + outcome-blind方法冻结
     ↓
-阶段 II：A-only outcome analysis + nested internal validation
+阶段 II：A-only outcome analysis + repeated nested internal validation
     ↓
 阶段 III：A-only final refit + model freeze
 ```
 
-在第三阶段完成并生成`model_freeze_lock.json`之前：
+在第三阶段完成并生成 `prognosis_analysis/model_freeze_lock.json` 之前：
 
-> **B集始终不可读取。**
+> **B 集临床、结局、habitat、radiomics、missingness 和模型性能始终不可读取。**
+
+这里的“不可读取”不是“读取后不使用”，而是正式分析代码不得打开/载入含 B 数据的源资产。
 
 ---
 
-# Workflow总览
+# Workflow 总览
 
 ```text
-W00  formal结果归档与仓库状态同步
+W00   formal结果归档与仓库状态同步
  ↓
-W01  technical freeze / freeze_lock.json
+W00R  冻结前代码安全整改与回归门禁
  ↓
-W02  H-low/H-high Original radiomics结局盲态提取框架
+W01   technical freeze / strict freeze_lock.json
  ↓
-W03  habitat radiomics ICC与技术候选池冻结
+W02   H-low/H-high Original radiomics结局盲态提取框架
  ↓
-W04  建模协议 modeling_protocol 冻结
+W03   habitat radiomics ICC与技术候选池冻结
  ↓
-W05  A-only数据访问改造
+W04   modeling_protocol冻结
  ↓
-W06  首次读取A结局 + endpoint QC
+W05   真正A-only数据访问 + B源级隔离
  ↓
-W07  冻结A建模人口及CV splits
+W06   首次读取A结局 + endpoint QC
  ↓
-W08  repeated nested CV：
-      fold-specific habitat → G → R_low/R_high → models
+W07   冻结A modeling population与CV splits
  ↓
-W09  A集模型比较与稳定性评价
+W08   repeated nested CV：
+       fold-specific habitat → G → R_low/R_high → models
  ↓
-W10  A137及tumor-volume等预设敏感性分析
+W09   A集模型比较与稳定性评价
  ↓
-W11  根据预设层级确定final A model architecture
+W10   A137、tumor-volume、dual-habitat等预设敏感性
  ↓
-W12  full-A refit
+W11   按预设层级确定final A model architecture
  ↓
-W13  A-only model freeze / model_freeze_lock.json
+W12   full-A refit / deployment artifacts
+ ↓
+W13   A-only model freeze / model_freeze_lock.json
+ ↓
+后续  B一次性外部验证
 ```
 
-只有W13完成之后：
+任何前序硬门禁未通过：
 
-> 才进入后续B集一次性验证阶段。
+> 后序任务不得运行。
 
 ---
 
-# W00 — formal结果归档与仓库状态同步
+# W00 — formal 结果归档与状态同步
 
 ## 目标
 
-正式关闭technical bootstrap阶段。
+正式关闭 technical bootstrap 阶段。
 
-## 已确认formal结果
+## 已确认 formal 结果
 
 - requested=1000；
 - completed=1000；
@@ -85,47 +93,220 @@ W13  A-only model freeze / model_freeze_lock.json
 
 > **FORMAL PASS**
 
----
+## 必须保持
 
-## 必须更新
-
-### `PROJECT_STATUS.md`
-
-标记：
-
-> formal完成，进入technical freeze。
-
-### `habitat_analysis/analysis_freeze.md`
-
-将可能存在的旧状态：
-
-> formal未运行
-
-修改为：
-
-> formal=1000 complete / FORMAL PASS。
+- 不追加 bootstrap 寻找更漂亮结果；
+- 不调整 0.1%；
+- 不调整 SLIC；
+- 不调整 K；
+- 不调整 normalization；
+- 不重新比较 M1/M2/M3。
 
 ---
 
-## 禁止
+# W00R — 冻结前代码安全整改与回归门禁
 
-此阶段不得：
+该阶段是本版新增的**强制前置门禁**。
 
-- 再运行额外bootstrap寻找更漂亮结果；
-- 调整0.1%；
-- 调整SLIC；
-- 调整K；
-- 调整normalization；
-- 重新比较M1/M2/M3。
+在 W00R 全部通过前：
+
+> **不得执行正式 W01 `stage7_freeze`，不得生成第一把正式 freeze lock。**
+
+## W00R.1 修复 stage7 的确定性运行错误
+
+当前 `habitat_analysis/scripts/revised_workflow_technical.py` 必须确认显式导入：
+
+```python
+validate_freeze_lock
+```
+
+因为 `stage7_freeze()` 在 staging lock 写入后会调用该函数。
+
+修复后必须通过：
+
+```text
+import module
+→ construct staging lock
+→ validate staging lock
+```
+
+的真实执行路径。
+
+## W00R.2 增加 stage7 synthetic integration test
+
+必须新增不含真实患者数据的测试，覆盖：
+
+```text
+mock/synthetic staged habitat assets
+↓
+freeze preflight pass
+↓
+staging feature/QC/dictionary/map manifest
+↓
+staging freeze lock
+↓
+validate_freeze_lock
+↓
+formal promotion commit point
+```
+
+测试至少验证：
+
+- 缺少 `validate_freeze_lock` 或 lock 字段时 hard fail；
+- 某个正式 artifact hash 改变时 lock validation fail；
+- promotion 未完成时不能产生“合法冻结”状态。
+
+`compileall` 不能替代该集成测试。
+
+## W00R.3 升级第一阶段 lock schema
+
+`freeze_lock.py` 必须定义并严格验证版本化 schema。
+
+最少要求：
+
+```text
+freeze_schema_version = 1
+habitat_technical_freeze = true
+A_outcome_unlock = true
+B_unlock = false
+outcome_columns_read = false
+B_data_read = false
+bootstrap_mode = formal
+bootstrap_requested = 1000
+bootstrap_completed = 1000
+bootstrap_completion_status = complete
+bootstrap_operational_pass = 1
+formal_eligible = 1
+eligibility_threshold_fraction = 0.001
+eligibility_threshold_role = minimum_imaging_presence
+threshold_selection_performed = false
+threshold_audit_conclusion = NEUTRAL_WITH_TECHNICAL_CAUTION
+```
+
+缺字段、类型错误、未知 schema version、关键值错误均必须 fail closed。
+
+## W00R.4 lock 必须绑定正式冻结输出
+
+正式 `freeze_lock.json` 至少绑定：
+
+- A393 ID hash；
+- A137 ID hash；
+- manifest hash；
+- scanner map hash；
+- preprocessing config hash；
+- SLIC config hash；
+- formal bootstrap summary hash；
+- threshold audit hash；
+- threshold confounding audit hash；
+- `global_descriptors_full_A.csv` hash；
+- `feature_qc.csv` hash；
+- `feature_dictionary.md` hash；
+- habitat maps manifest hash；
+- global centers；
+- boundary；
+- source git commit。
+
+必须生成：
+
+```text
+habitat_analysis/output/habitat_maps_A/habitat_maps_manifest.csv
+```
+
+或等效 manifest，逐例记录匿名 ID、正式 map 文件名与 SHA-256。
+
+禁止只检查审计文件“存在”而不绑定其内容 hash。
+
+## W00R.5 冻结 promotion 改为单一可恢复 commit point
+
+推荐结构：
+
+```text
+freeze_bundles/
+  freeze_<bundle_hash>/
+      maps/
+      features/
+      feature_dictionary.md
+      habitat_maps_manifest.csv
+      freeze_lock.json
+
+CURRENT_FREEZE.json
+```
+
+全部 staging 与 QC 验证完后，只原子切换：
+
+```text
+CURRENT_FREEZE.json
+```
+
+如果暂不采用 bundle，必须实现等价的 crash-recoverable transaction/commit marker，并有恢复测试。
+
+仅在 Python exception 时做 rollback 不足以覆盖进程 kill/断电。
+
+## W00R.6 legacy outcome builder 临时 fail closed
+
+在 W05 真正改造成 A-only 之前，当前旧版：
+
+```text
+prognosis_analysis/scripts/build_model_dataset.py
+```
+
+如果仍会读取全量临床/预后表、B rows 或生成 B dataset，则必须：
+
+- 暂时显式拒绝正式运行；或
+- 从正式工作流入口移除。
+
+不得依赖操作者“记住不要运行”。
+
+## W00R.7 统一 split resolver
+
+正式 A/B 定义只允许有一个实现，例如：
+
+```text
+resolve_cohort_membership()
+```
+
+A 定义固定为：
+
+```text
+GE MEDICAL SYSTEMS
++ DISCOVERY MR750
++ 3.0 T
+```
+
+以下脚本不得各自重写该规则：
+
+- whole-tumor QC；
+- habitat technical cohort；
+- outcome builder；
+- B validator；
+- 后续 validation scripts。
+
+## W00R.8 回归检查
+
+至少运行：
+
+```text
+compileall
+unit tests
+stage7 integration test
+freeze artifact tamper test
+```
+
+W00R 通过后，在项目状态中记录：
+
+> `PRE_FREEZE_CODE_GATE = PASS`
+
+然后才进入 W01。
 
 ---
 
-# W01 — 执行正式technical freeze
+# W01 — 正式 technical freeze
 
-## 输入
+## W01.1 输入门禁
 
-必须核验：
+核验：
 
+- W00R PASS；
 - A393 technical cohort；
 - A137 strict cohort；
 - manifest；
@@ -139,27 +320,23 @@ W13  A-only model freeze / model_freeze_lock.json
 - threshold audit；
 - threshold confounding audit。
 
----
+## W01.2 运行
 
-## 运行
+执行正式 `stage7_freeze` 或重构后的等效 freeze command。
 
-执行：
-
-> `stage7_freeze`
-
-生成正式：
+生成：
 
 - habitat maps；
 - global descriptors；
 - feature QC；
 - feature dictionary；
-- freeze lock。
+- habitat maps manifest；
+- strict `freeze_lock.json`；
+- freeze bundle/commit marker。
 
----
+## W01.3 主低维 G
 
-## 主低维global habitat block G
-
-固定为：
+固定：
 
 1. `H_high_fraction`
 2. `sv_median_minus_boundary`
@@ -168,110 +345,82 @@ W13  A-only model freeze / model_freeze_lock.json
 5. `H_high_largest_component_tumor_fraction`
 6. `H_high_radial_burden`
 
----
-
-## technical freeze必须核验
+## W01.4 technical freeze QC
 
 A393：
 
 - exact n=393；
 - unique ID=393；
 - hard technical failures=0；
-- 六个G特征全部finite；
-- H-low + H-high voxel conservation成立。
+- 六个 G 全部 finite；
+- H-low + H-high voxel conservation 成立。
 
 A137：
 
 - exact n=137；
-- strict⊂lenient。
+- strict ⊂ lenient。
 
----
+正式 maps：
 
-## `freeze_lock.json`
+- map manifest exact n=393；
+- map files all present；
+- map hashes complete；
+- manifest hash 与 lock 一致。
 
-至少记录：
+## W01.5 第一把锁的含义
+
+第一把锁生成后：
 
 ```text
 habitat_technical_freeze = true
-
 A_outcome_unlock = true
-
 B_unlock = false
-
-eligibility_threshold_fraction = 0.001
-
-eligibility_threshold_role =
-minimum_imaging_presence
-
-threshold_selection_performed = false
-
-threshold_audit_conclusion =
-NEUTRAL_WITH_TECHNICAL_CAUTION
 ```
 
-以及所有关键：
+但这里的 `A_outcome_unlock=true` 仅表示：
 
-- patient ID hashes；
-- config hashes；
-- formal bootstrap hash；
-- feature dictionary hash；
-- audit provenance hashes；
-- centers；
-- boundary。
+> technical prerequisite 已满足。
+
+仍必须完成 W02、W03、W04、W05 后，Gate B 全部通过，W06 才能真正首次打开 A outcome 数据。
+
+## W01.6 W01 后冻结资产不可变
+
+任何以下文件改变：
+
+-正式 habitat map；
+- global descriptors；
+- feature QC；
+- feature dictionary；
+- audit；
+- technical cohort；
+- config；
+
+都会使原 lock 失效。
+
+不得修改后继续沿用旧 lock。
 
 ---
 
-## 原子性要求
-
-正式目录必须采用：
-
-```text
-staging
-↓
-全部QC
-↓
-lock材料全部准备
-↓
-atomic promotion
-```
-
-避免形成：
-
-> maps/features已经晋升，但freeze lock写入失败
-
-的半冻结状态。
-
----
-
-# W02 — 建立H-low/H-high Original radiomics提取工作流
+# W02 — H-low/H-high Original radiomics 结局盲态提取框架
 
 该步骤仍然：
 
 > **outcome blind。**
 
-目的是在首次读取DFS之前，把habitat-specific radiomics的方法定义冻结。
+## W02.1 输入
 
----
-
-# W02.1 输入影像
-
-使用与主habitat完全一致的：
+使用与主 habitat 相同的：
 
 - muscle-normalized T2WI；
 - `[1,1,2] mm`；
-- 无N4；
+- 无 N4；
 - tumor ROI；
-- SLIC supervoxel labels。
+- SLIC supervoxel labels；
+- frozen technical method。
 
-不重新：
+不重新 normalize/resample，不重新计算 binWidth。
 
-- normalize；
-- resample；
-- 计算新的binWidth。
-
----
-
-# W02.2 habitat Original参数
+## W02.2 参数
 
 固定：
 
@@ -282,20 +431,11 @@ PyRadiomics normalize = false
 PyRadiomics resample = false
 ```
 
-不得为：
+H-low/H-high 使用同一灰度标尺。
 
-- H-low；
-- H-high
+## W02.3 完整提取类别
 
-分别计算不同binWidth。
-
-两种habitat必须使用同一灰度标尺。
-
----
-
-# W02.3 提取完整Original特征
-
-每种habitat提取：
+每种 habitat 提取：
 
 - firstorder；
 - shape；
@@ -305,188 +445,67 @@ PyRadiomics resample = false
 - GLDM；
 - NGTDM。
 
-保存完整特征用于：
+## W02.4 正式候选层级
 
-- QC；
--重复性；
--探索性分析。
+Main：
 
----
+> Original texture（GLCM/GLRLM/GLSZM/GLDM/NGTDM）。
 
-# W02.4 主habitat-radiomics候选范围
-
-正式预测候选优先限定为：
-
-> **Original texture features**
-
-即：
-
-- GLCM；
-- GLRLM；
-- GLSZM；
-- GLDM；
-- NGTDM。
-
-原因：
-
-H-low/H-high本身通过信号强度聚类定义。
-
-因此：
-
-- Mean；
-- Median；
-- Percentile等first-order指标
-
-与habitat定义具有部分数学耦合。
-
-Shape又与：
-
-- H-high fraction；
-- largest component；
-- interface；
-- radial burden
-
-存在明显概念重叠。
-
-因此：
-
-### Main habitat-radiomics pool
-
-> texture。
-
-### Secondary
+Secondary：
 
 > first-order。
 
-### Exploratory
+Exploratory：
 
 > shape。
 
----
-
-# W02.5 生成两个完全对称的特征块
+## W02.5 对称特征块
 
 ```text
-R_low =
-H-low Original texture radiomics
-
-R_high =
-H-high Original texture radiomics
+R_low  = H-low Original texture
+R_high = H-high Original texture
 ```
 
-H-low和H-high：
+两者方法地位完全相同。
 
-> 方法地位完全相同。
+## W02.6 结构性不存在
 
-不得预先认定：
+single-H-low：
 
-> 哪个更重要。
+> `R_high = structurally undefined`
 
----
+single-H-high：
 
-# W02.6 结构性不存在
+> `R_low = structurally undefined`
 
-如果患者为：
+禁止填 0。
 
-### single-H-low
+## W02.7 availability 状态
 
-则：
-
-> R_high = structurally undefined。
-
-### single-H-high
-
-则：
-
-> R_low = structurally undefined。
-
-不能填：
-
-> 0。
-
----
-
-# W02.7 habitat-radiomics分析人口定义
-
-由于habitat-internal radiomics只有habitat真实存在时才有物理含义，因此不把结构性不存在通过人工插补强行变成“纹理正常值”。
-
-分别定义：
-
-## Low-radiomics eligible cohort
-
-存在H-low并满足PyRadiomics最低ROI要求。
-
-## High-radiomics eligible cohort
-
-存在H-high并满足最低ROI要求。
-
-## Dual-radiomics eligible cohort
-
-同时满足：
-
-- H-low radiomics available；
-- H-high radiomics available。
-
----
-
-# W02.8 保存技术availability状态
-
-每例至少记录：
+每例至少保存：
 
 ```text
 H_low_present
 H_high_present
-
 R_low_extractable
 R_high_extractable
-
 R_low_failure_reason
 R_high_failure_reason
 ```
 
-明确区分：
-
-### Structural absence
-
-habitat不存在。
-
-### Technical failure
-
-habitat存在，但特征提取失败。
-
-两者不得混合。
+必须区分 structural absence 与 technical failure。
 
 ---
 
-# W03 — habitat-specific radiomics结局盲态QC
+# W03 — habitat-specific radiomics outcome-blind QC 与候选池冻结
 
-该步骤必须在读取DFS前完成。
+W03 必须在首次读取 DFS 前完成。
 
----
+## W03.1 R1/R2 重复性
 
-# W03.1 R1/R2重复性
+每一读者独立经过同一固定技术流程，然后生成 H-low/H-high 并提取 Original radiomics。
 
-使用已有A集双读者病例。
-
-对R1和R2：
-
-分别使用相同：
-
-- preprocessing；
-- SLIC规则；
-- frozen technical boundary；
-- Original radiomics parameters。
-
-然后分别生成：
-
-- H-low；
-- H-high；
-
-并提取radiomics。
-
----
-
-# W03.2 ICC
+## W03.2 ICC
 
 分别计算：
 
@@ -499,500 +518,267 @@ R_high ICC(2,1)
 
 ```text
 ICC > 0.75
+n_valid_pairs >= 预设最低值（建议10）
 ```
 
-另外要求：
+## W03.3 availability
 
-> 有效成对病例数必须达到预设最低样本要求。
+在 A/R1 中，对相应 habitat 存在病例计算 finite feature rate。
 
-建议：
-
-```text
-n_valid_pairs >= 10
-```
-
-否则标记：
-
-> insufficient reproducibility sample
-
-而不是判定为稳定。
-
----
-
-# W03.3 availability
-
-在A/R1中对habitat存在病例计算：
-
-```text
-finite feature rate
-```
-
-建议结局盲态技术候选要求：
+建议候选要求：
 
 ```text
 finite rate >= 95%
 ```
 
-低于该值的特征：
+## W03.4 禁止 outcome-driven filtering
 
-> 不进入正式R_low/R_high预测池。
+不得进行：
 
----
-
-# W03.4 不能在这里进行
-
-- near-zero variance prediction filtering；
-- outcome correlation；
 - univariate Cox；
-- LASSO；
 - DFS association；
-- feature importance。
+- outcome correlation；
+- LASSO；
+- prediction feature importance；
+- 根据结果修改 ICC 阈值。
 
-这些全部属于后续nested training fold。
+## W03.5 输出与候选池 hash
 
----
-
-# W03.5 输出
-
-建议：
+保存：
 
 ```text
-prognosis_analysis/output/qc/habitat_radiomics/
-    H_low_original_icc.csv
-    H_high_original_icc.csv
-
-    H_low_candidate_features.csv
-    H_high_candidate_features.csv
-
-    availability_summary.csv
-    extraction_failures.csv
-    report.md
-    provenance.json
+H_low_original_icc.csv
+H_high_original_icc.csv
+H_low_candidate_features.csv
+H_high_candidate_features.csv
+availability_summary.csv
+extraction_failures.csv
+provenance.json
 ```
 
----
-
-# W03.6 候选池冻结
-
-最终保存：
+冻结：
 
 ```text
 R_low_candidate_hash
 R_high_candidate_hash
 ```
 
-从此以后：
-
-> 不根据DFS重新修改ICC阈值或候选池定义。
-
 ---
 
-# W04 — 冻结正式modeling protocol
+# W04 — modeling protocol 冻结
 
-在首次读取A DFS之前生成：
+首次读取 A DFS 前生成：
 
 ```text
 prognosis_analysis/modeling_protocol.json
-```
-
-以及可读版：
-
-```text
 prognosis_analysis/modeling_protocol.md
 ```
 
----
+至少固定：
 
-# W04.1 固定科学问题
+- 科学问题；
+- endpoint；
+- C/G/R_low/R_high/W 定义；
+- M0–M5；
+- eligible population 规则；
+- structural absence 处理；
+- nested CV；
+- split seed policy；
+- inner tuning；
+- paired comparison；
+- primary/secondary performance metrics；
+- final architecture 决策层级。
 
-明确记录：
-
-> 不预设H-low或H-high哪个更重要。
-
-核心问题：
-
-> whole-tumor averaging是否掩盖了habitat-specific prognostic information？
-
----
-
-# W04.2 固定模型
-
-## M0
-
-```text
-Clinical
-C
-```
-
----
-
-## M1
+## W04.1 模型
 
 ```text
-Clinical + H_high_fraction
-C + F
+M0  C
+M1  C + H_high_fraction
+M2  C + G
+M3L C + G + R_low
+M3H C + G + R_high
+M4  C + G + R_low + R_high
+M5  C + W
 ```
 
-其中：
+M4 仅在 dual-radiomics eligible cohort。
+
+## W04.2 比较层级
 
 ```text
-F = H_high_fraction
+M0 → M1
+M1 → M2
+M2 → M3L
+M2 → M3H
+M3L vs M3H
+M2 → M4
+M0 → M5
 ```
 
----
-
-## M2
-
-```text
-Clinical + Global Habitat
-C + G
-```
-
----
-
-## M3L
-
-```text
-Clinical + Global Habitat + H-low Radiomics
-C + G + R_low
-```
-
----
-
-## M3H
-
-```text
-Clinical + Global Habitat + H-high Radiomics
-C + G + R_high
-```
-
----
-
-## M4
-
-```text
-Clinical + Global Habitat
-+ H-low Radiomics
-+ H-high Radiomics
-
-C + G + R_low + R_high
-```
-
-仅在dual-radiomics eligible cohort中评价。
-
----
-
-## M5
-
-```text
-Clinical + Whole-tumor Radiomics
-C + W
-```
-
-定位：
-
-> reference comparator。
-
-不作为主要方法开发目标。
-
----
-
-# W04.3 模型比较层级
+## W04.3 CV
 
 正式固定：
 
 ```text
-M0 → M1
+Outer CV = 5-fold × 10 repeats
+Inner CV = 5-fold
 ```
 
-回答：
-
-> high-signal burden。
-
----
+outer repeat seed：
 
 ```text
-M1 → M2
-```
-
-回答：
-
-> macro-habitat spatial organization。
-
----
-
-```text
-M2 → M3L
-```
-
-回答：
-
-> H-low texture。
-
----
-
-```text
-M2 → M3H
-```
-
-回答：
-
-> H-high texture。
-
----
-
-```text
-M3L vs M3H
-```
-
-回答：
-
-> 哪个habitat表现出更稳定的prognostic information。
-
----
-
-```text
-M2 → M4
-```
-
-回答：
-
-> 双habitat纹理联合。
-
----
-
-```text
-M0 → M5
-```
-
-回答：
-
-> whole-tumor radiomics在当前A393中的增量价值。
-
----
-
-# W04.4 不允许增加大量排列组合
-
-在DFS解锁后不得临时新增：
-
-```text
-C + W + R_low
-C + W + R_high
-C + W + G + R_low
-C + W + G + R_high
-C + W + G + R_low + R_high
-```
-
-除非明确作为：
-
-> post-hoc exploratory analysis。
-
-它们不能用于final model选择。
-
----
-
-# W04.5 主结局
-
-固定：
-
-> DFS。
-
-主要时间点：
-
-- 3年；
-- 5年。
-
----
-
-# W04.6 内部验证结构
-
-建议固定为：
-
-```text
-Outer CV:
-5-fold × 10 repeats
-
-Inner CV:
-5-fold
-```
-
-即：
-
-> 50个outer validation folds。
-
-seed规则：
-
-```text
-outer_repeat_seed =
 12345 + repeat_index
 ```
 
----
+按 DFS event 分层；每个 training/validation fold 必须有 event。
 
-# W04.7 fold stratification
+## W04.4 penalized Cox
 
-根据：
+Radiomics：Elastic Net Cox 优先。
 
-> DFS event status
-
-分层。
-
-要求：
-
-- 每个outer validation fold必须有event；
-- 每个outer training fold必须有event。
-
-如果固定seed产生无event fold：
-
-> 使用预设seed序列继续生成下一个合法split。
-
-不得改变：
-
-> 5-fold本身。
-
----
-
-# W04.8 inner tuning
-
-Radiomics模型采用：
-
-> penalized Cox。
-
-优先：
-
-> Elastic Net Cox。
-
-预设alpha候选：
+预设 alpha：
 
 ```text
-0.1
-0.5
-0.9
-1.0
+0.1, 0.5, 0.9, 1.0
 ```
 
-lambda：
+lambda 由 training-only inner CV 决定。
 
-> 由训练折inner CV确定。
-
-inner selection metric：
-
-> partial-likelihood deviance。
-
-不得用outer validation performance调参。
+outer validation 不得参与调参。
 
 ---
 
-# W05 — 修改为真正A-only数据访问
+# W05 — 真正 A-only 数据访问 + B 源级隔离
 
-在读取临床表前必须先修改：
+这是首次读取 A DFS 前最后一个硬门禁。
+
+## W05.1 不允许“先读全表再筛 A”
+
+正式 outcome 分析不得：
+
+```python
+clinical = read_excel(full_A_B_table)
+clinical = clinical[clinical.split == "A"]
+```
+
+因为此时 B outcome 已经被正式分析进程读取。
+
+同样禁止：
+
+- 先载入全量 whole-tumor feature table 后再筛 A；
+- 先载入 B habitat 后不用；
+- 生成 `dataset_*_B.csv`；
+- 统计 B 样本数、missingness 或 feature availability。
+
+## W05.2 建立 A-only 源资产
+
+在本地受控环境中，由数据隔离步骤生成只包含 A ID 的：
 
 ```text
-build_model_dataset.py
+prognosis_analysis/data/A_clinical_outcomes.*
 ```
 
----
+或等效路径。
 
-# W05.1 A模式
+该资产必须：
 
-要求：
+- 只含 A technical cohort 合法 ID；
+- 不含任意 B row；
+- ID hash 与第一把锁/technical cohort 对齐；
+- 生成过程不进入模型选择逻辑；
+- B 原始临床/预后资产继续保持不可由正式分析路径访问。
+
+建议 B 数据位于未挂载、独立权限或独立目录，并在 W13 前不暴露给正式脚本。
+
+## W05.3 A-only builder
+
+正式 builder 使用：
 
 ```text
 --split A
 ```
 
-只允许：
+或更严格地完全不提供 B/all 模式。
 
-- A393；
-- A137；
-- A临床变量；
-- A结局。
+它只允许读取：
 
-merge clinical表之前：
+- A393/A modeling population；
+- A137 membership；
+- A clinical variables；
+- A outcomes；
+- A whole-tumor candidates；
+- A technical/frozen assets。
 
-> 先根据technical cohort限制patient IDs。
+## W05.4 A raw dataset
 
----
-
-# W05.2 A-mode不得产生
-
-```text
-dataset_*_B.csv
-```
-
-也不得：
-
-- 统计B数量；
-- 输出B missingness；
-- 读取B outcome；
-- 加载B habitat；
-- 查看B radiomics。
-
----
-
-# W05.3 A raw dataset
-
-输出：
+生成：
 
 ```text
 dataset_primary_raw_A.csv
 ```
 
-包括：
+可包含：
 
 - patient ID；
 - DFS；
 - C；
 - full-A descriptive G；
-- whole-tumor W candidate fields；
+- W candidate fields；
 - descriptive variables。
 
 注意：
 
-> full-A G只用于描述和final refit。
+> full-A G 只用于描述/final refit；nested CV 性能必须重新计算 fold-specific G。
 
-nested CV性能必须重新计算：
+## W05.5 habitat radiomics 不进入静态 full-A wide table用于内部CV
 
-> fold-specific G。
+R_low/R_high 依赖 fold-specific boundary。
+
+nested modeling 通过 fold-specific asset/cache 读取，不能直接使用 full-A frozen mask 提取的 R_low/R_high 来估计内部验证性能。
+
+## W05.6 建立 outcome access guard
+
+建议提供三个不同权限入口：
+
+```text
+read_technical_A()      # 不需要outcome lock
+read_A_outcomes()       # 需要第一把lock + Gate B
+read_B_validation()     # 需要第二把model lock
+```
+
+不得把安全责任留给每个脚本自行记得调用 `select_split()`。
+
+## W05.7 单一 cohort resolver
+
+A/B membership 必须复用 W00R 冻结的 resolver；builder 不得自行重新实现厂商/机型/场强判定。
+
+## W05.8 Gate B
+
+只有以下全部成立才可进入 W06：
+
+- W01 strict freeze lock 有效；
+- W03 candidate pools 已冻结；
+- W04 modeling protocol 已冻结；
+- A-only source asset 已建立并 hash 核验；
+- legacy full A/B builder 已不能绕过；
+- B source 对正式分析代码不可达；
+- B builder 在 model lock 不存在时 hard fail。
+
+否则：
+
+> **不读取 DFS。**
 
 ---
 
-# W05.4 habitat-radiomics不要直接并入静态wide table用于CV
+# W06 — 正式首次读取 A DFS
 
-原因：
+W06 是整个项目第一次允许 outcome-aware 分析。
 
-R_low/R_high依赖：
-
-> fold-specific clustering boundary。
-
-因此nested modeling必须通过：
-
-> fold-specific feature cache
-
-读取。
-
-不能把full-A frozen masks提取出的R_low/R_high直接用于内部CV性能估计。
-
----
-
-# W06 — 正式首次读取A DFS
-
-只有：
-
-- W01 technical freeze；
-- W03 habitat-radiomics candidate freeze；
-- W04 modeling protocol freeze；
-- W05 A/B访问隔离
-
-全部通过后执行。
-
----
-
-# W06.1 endpoint QC
+## W06.1 endpoint QC
 
 报告：
 
-- A393总人数；
+- A 总人数；
 - DFS event count；
 - censor count；
 - follow-up；
@@ -1005,24 +791,21 @@ R_low/R_high依赖：
 - event/time conflict；
 - missing outcome。
 
----
+## W06.2 允许修改的内容
 
-# W06.2 此阶段允许修改什么
-
-只允许修正：
+仅允许修正：
 
 > 可追溯的原始数据错误。
 
-不得根据影像结果改变：
+不得根据影像/模型结果改变：
 
 - DFS definition；
 - censor date；
 - follow-up cutoff；
-- eligibility。
+- eligibility；
+- A393/A137 technical definition。
 
----
-
-# W06.3 冻结最终A modeling population
+## W06.3 冻结 A modeling population
 
 生成：
 
@@ -1030,27 +813,21 @@ R_low/R_high依赖：
 A_modeling_population.csv
 ```
 
-患者排除原因只能是：
+排除原因只允许：
 
-- 已冻结technical exclusion；
-- outcome不可用；
+- 已冻结 technical exclusion；
+- outcome 不可用；
 - 明确数据错误且无法修复。
 
-不得：
-
-> 因模型表现不好排除病例。
+生成 ID hash 并纳入后续 model lock。
 
 ---
 
-# W07 — 建立并冻结CV split plan
+# W07 — 冻结 CV split plan
 
-正式建模前生成：
+正式建模前生成固定 split files。
 
-```text
-outer_splits_A.csv
-```
-
-字段至少：
+最少字段：
 
 ```text
 影像号
@@ -1060,99 +837,35 @@ role
 seed
 ```
 
----
+## W07.1 Main split plan
 
-# W07.1 Main A split plan
+用于 M0/M1/M2/M5。
 
-用于：
+## W07.2 R_low plan
 
-- M0；
-- M1；
-- M2；
-- M5。
+在 R_low-eligible population 的相同 splits 中 paired 比较 M2 vs M3L。
 
-目标人群：
+## W07.3 R_high plan
 
-> A393中具有有效DFS的人群。
+在 R_high-eligible population 的相同 splits 中 paired 比较 M2 vs M3H。
 
----
+## W07.4 dual plan
 
-# W07.2 R_low split plan
-
-对：
-
-> R_low-eligible cohort
-
-建立固定splits。
-
-在这些完全相同splits中比较：
+在 dual-radiomics eligible population 中用相同 splits 比较：
 
 ```text
-M2
-vs
-M3L
+M2, M3L, M3H, M4
 ```
 
-因此增量比较是paired。
+split files 全部生成 hash，后续不得重新抽 splits 寻找更好结果。
 
 ---
 
-# W07.3 R_high split plan
+# W08 — repeated nested CV
 
-对：
+每个 `repeat × outer fold` 完整执行以下流程。
 
-> R_high-eligible cohort
-
-建立固定splits。
-
-比较：
-
-```text
-M2
-vs
-M3H
-```
-
----
-
-# W07.4 dual split plan
-
-对：
-
-> dual-radiomics eligible cohort
-
-建立固定splits。
-
-用于：
-
-```text
-M2
-M3L
-M3H
-M4
-```
-
-进行真正的：
-
-> H-low vs H-high head-to-head comparison。
-
----
-
-# W08 — 正式repeated nested CV
-
-这是整个A-only分析的核心。
-
-每一个：
-
-```text
-repeat × outer fold
-```
-
-都完整执行以下流程。
-
----
-
-# W08.1 划分outer training / validation
+## W08.1 Outer split
 
 取得：
 
@@ -1161,36 +874,19 @@ Train_outer
 Validation_outer
 ```
 
-从这一刻开始：
+Validation_outer 不参与任何参数估计。
 
-> Validation_outer不得参与任何参数估计。
+## W08.2 Training-only global habitat centers
 
----
+读取预缓存 SLIC labels 与 supervoxel means。
 
-# W08.2 只用Train_outer重新拟合global habitat centers
-
-读取预缓存：
-
-- SLIC labels；
-- supervoxel Means。
-
-只使用：
-
-> Train_outer patients。
-
-患者等权：
+只用 Train_outer，患者等权：
 
 ```text
-sum of supervoxel weights per patient = 1
+sum(supervoxel weights per patient) = 1
 ```
 
-重新拟合：
-
-```text
-K=2
-```
-
-得到：
+拟合 K=2 得到：
 
 ```text
 C_low_train
@@ -1198,509 +894,157 @@ C_high_train
 b_train
 ```
 
----
+## W08.3 应用 training boundary
 
-# W08.3 应用train boundary
+Train_outer 和 Validation_outer 均使用同一个 `b_train` 生成 fold-specific habitat masks。
 
-分别应用于：
+Validation_outer 不参与 boundary fitting。
 
-### Train_outer
+## W08.4 fold-specific G
 
-生成training habitat masks。
+根据 fold-specific masks 重新计算六个 G。
 
-### Validation_outer
+禁止直接拿 full-A G 作为 outer validation feature。
 
-使用完全相同的：
+## W08.5 fold-specific R_low/R_high
 
-```text
-b_train
-```
+从 training/validation 各自 fold-specific habitat masks 提取 Original radiomics，只保留 W03 冻结的 candidate pools。
 
-生成validation masks。
+## W08.6 fold asset provenance
 
-Validation_outer：
-
-> 不参与boundary估计。
-
----
-
-# W08.4 生成fold-specific G
-
-根据：
-
-> fold-specific habitat masks
-
-重新计算六个G变量。
-
-因此：
-
-> CV中的G不能直接使用full-A frozen G。
-
----
-
-# W08.5 提取fold-specific R_low/R_high
-
-对training和validation分别：
-
-- H-low mask；
-- H-high mask；
-
-提取：
-
-> Original radiomics。
-
-只保留W03预先冻结的：
-
-- R_low candidate pool；
-- R_high candidate pool。
-
----
-
-# W08.6 缓存fold-specific特征
-
-建议：
+每 fold 至少保存：
 
 ```text
-prognosis_analysis/output/nested_cv/fold_assets/
-    repeat_00/
-        fold_0/
-            centers.json
-            train_global_habitat.csv
-            validation_global_habitat.csv
-            train_R_low.csv
-            validation_R_low.csv
-            train_R_high.csv
-            validation_R_high.csv
-            provenance.json
+centers.json
+train_global_habitat.csv
+validation_global_habitat.csv
+train_R_low.csv
+validation_R_low.csv
+train_R_high.csv
+validation_R_high.csv
+provenance.json
 ```
 
-每个fold必须记录：
+并记录：
 
-- training IDs hash；
-- validation IDs hash；
-- centers；
-- boundary；
-- feature candidate hashes。
+- train ID hash；
+- validation ID hash；
+- centers/boundary；
+- candidate hashes；
+- code/config hashes。
 
----
+## W08.7 Clinical preprocessing
 
-# W08.7 Clinical preprocessing
+imputation 参数只在 Train_outer 拟合，再应用 Validation_outer。
 
-所有缺失处理只在：
+## W08.8 G preprocessing
 
-> Train_outer
+G 应完整 finite；标准化只用 Train_outer。
 
-拟合。
+## W08.9 W preprocessing
 
-例如：
+Train_outer 内：
 
-### Continuous
+1. near-zero variance；
+2. correlation reduction（预设 `|rho| > 0.90`）；
+3. standardization；
+4. Elastic Net tuning/selection。
 
-training median imputation。
+## W08.10 R_low/R_high preprocessing
 
-### Categorical
+采用与 W 相同的 training-only 规则。
 
-training mode或预设category imputation。
+结构性 absence 的处理必须遵循 W04 预先冻结策略。
 
-然后应用：
-
-> Validation_outer。
-
----
-
-# W08.8 G preprocessing
-
-G原则上应完整finite。
-
-标准化参数：
-
-> 只用Train_outer。
-
----
-
-# W08.9 Whole-tumor W preprocessing
-
-W已经通过outcome-blind ICC候选筛选。
-
-在Train_outer内部继续：
-
-### Step 1
-
-near-zero variance filtering。
-
-### Step 2
-
-高相关去重。
-
-建议：
+## W08.11–W08.17 模型
 
 ```text
-|rho| > 0.90
+M0  C
+M1  C + H_high_fraction
+M2  C + G
+M3L C + G + penalized R_low
+M3H C + G + penalized R_high
+M4  C + G + penalized (R_low + R_high)
+M5  C + penalized W
 ```
 
-相关组代表变量选择不得看validation outcome。
+C/G 不做 outcome-based univariate screening。
 
-可根据：
+## W08.18 Outer prediction
 
-- training ICC；
-- feature ordering
+inner CV 完成后用最佳训练参数 refit 完整 Train_outer，然后 Validation_outer 只做 transform/prediction。
 
-预设选择。
+不得在 Validation_outer 上重新：
 
-### Step 3
-
-training-only standardization。
-
-### Step 4
-
-Elastic Net feature selection/tuning。
-
----
-
-# W08.10 R_low/R_high preprocessing
-
-采用与W一致的规则：
-
-- near-zero variance；
+- scaling；
 - correlation filtering；
-- scaling；
-- Elastic Net。
-
-全部：
-
-> Train_outer only。
-
----
-
-# W08.11 M0
-
-```text
-C
-```
-
-9个clinical/MRI变量全部固定。
-
-不进行univariate P screening。
-
----
-
-# W08.12 M1
-
-```text
-C + H_high_fraction
-```
-
-全部固定进入。
-
----
-
-# W08.13 M2
-
-```text
-C + six G features
-```
-
-不根据univariable P筛选G。
-
----
-
-# W08.14 M3L
-
-```text
-C + G
-```
-
-强制保留。
-
-```text
-R_low
-```
-
-进入penalized selection。
-
----
-
-# W08.15 M3H
-
-```text
-C + G
-```
-
-强制保留。
-
-```text
-R_high
-```
-
-进入penalized selection。
-
----
-
-# W08.16 M4
-
-```text
-C + G
-```
-
-固定。
-
-```text
-R_low + R_high
-```
-
-联合进入penalized selection。
-
-只在：
-
-> dual-radiomics eligible cohort
-
-运行。
-
----
-
-# W08.17 M5
-
-```text
-C
-```
-
-固定。
-
-```text
-W
-```
-
-进入penalized selection。
-
-M5用于：
-
-> whole-tumor comparator。
-
----
-
-# W08.18 outer validation prediction
-
-inner CV完成后：
-
-使用最佳训练参数：
-
-> refit完整Train_outer。
-
-然后对：
-
-> Validation_outer
-
-仅执行transform和prediction。
-
-不得重新：
-
-- scaling；
 - feature selection；
-- lambda tuning；
-- boundary fitting。
+- alpha/lambda tuning；
+- boundary fitting；
+- imputation fitting。
 
 ---
 
-# W09 — A集内部验证结果汇总
+# W09 — A 内部验证结果汇总
 
-所有结果均来自：
+所有性能必须来自 held-out outer validation predictions。
 
-> held-out outer validation predictions。
-
----
-
-# W09.1 Primary discrimination
+## W09.1 discrimination
 
 报告：
 
 - Harrell C-index；
 - Uno C-index。
 
-其中预先指定一个作为：
+建议 Harrell 作为主 discrimination，Uno 为 censoring-robust 补充。
 
-> primary discrimination metric。
-
-建议：
-
-> Harrell C-index作为主报告；
-
-Uno作为censoring-robust补充。
-
----
-
-# W09.2 Time-dependent discrimination
-
-报告：
+## W09.2 time-dependent metrics
 
 - 3-year AUC；
 - 5-year AUC。
 
----
+## W09.3 calibration
 
-# W09.3 Calibration
-
-报告：
-
-- 3-year calibration；
-- 5-year calibration；
-- calibration slope；
+- 3-year/5-year calibration；
+- slope；
 - calibration-in-the-large。
 
----
+## W09.4 prediction error
 
-# W09.4 Prediction error
+- 3-year/5-year Brier；
+- integrated Brier score（实现稳定时）。
 
-报告：
+## W09.5 paired comparison
 
-- 3-year Brier；
-- 5-year Brier；
-- integrated Brier score，如实现稳定。
+M2 vs M3L、M2 vs M3H、M3L vs M3H 必须在相同 eligible patients + 相同 outer splits 中 paired evaluation。
 
----
+## W09.6 selection stability
 
-# W09.5 模型比较必须paired
+对每个 R_low/R_high/W feature 报告 selection frequency。
 
-例如：
-
-```text
-M2 vs M3L
-```
-
-必须：
-
-> 来自同一R_low eligible patients + 同一outer splits。
-
----
-
-```text
-M2 vs M3H
-```
-
-同理。
-
----
-
-# W09.6 H-low vs H-high
-
-正式head-to-head：
-
-> dual-radiomics cohort。
-
-比较：
-
-```text
-M3L vs M3H
-```
-
-重点报告：
-
-- paired ΔC-index；
-- paired ΔAUC；
-- calibration；
-- selected-feature stability。
-
----
-
-# W09.7 不能仅根据P值决定
-
-不使用：
-
-> 某模型P<0.05所以有效。
-
-重点看：
-
-- effect size；
-- prediction improvement；
-- consistency；
-- calibration；
-- fold/repeat stability。
-
----
-
-# W09.8 radiomics selection stability
-
-对每个R_low/R_high/W feature报告：
-
-```text
-selection frequency
-```
-
-即：
-
-> 在多少outer folds中进入最终模型。
-
-这是判断：
-
-> H-low/H-high哪个habitat携带稳定信号
-
-的重要证据。
+不能以单个 P 值决定“有效/无效”；重点看 effect size、incremental prediction、calibration、repeat/fold stability。
 
 ---
 
 # W10 — 预设敏感性分析
 
----
+## W10.1 A137 strict
 
-# W10.1 A137 strict sensitivity
+A137 不是新的方法开发集。
 
-A137：
+优先在原 A outer split 框架下评价 strict subset held-out predictions。
 
-> 不单独作为新的方法开发集。
+重点 M0/M1/M2/M3L/M3H，M4 为补充。
 
-最优方式是：
+## W10.2 Tumor-volume sensitivity
 
-在原A393 outer splits中：
-
-- centers仍只由outer training A患者估计；
-- validation中的A137患者完全held-out。
-
-然后：
-
-> 只提取A137 validation patients的预测结果。
-
-这样评价：
-
-> 主A方法在strict phenotype中的表现。
-
-避免：
-
-> A137重新聚类并开发另一套方法。
-
----
-
-# W10.2 A137重点评价
-
-优先：
-
-- M0；
-- M1；
-- M2；
-- M3L；
-- M3H。
-
-M4因样本量更小：
-
-> 作为补充。
-
----
-
-# W10.3 Tumor-volume sensitivity
-
-预设增加：
+在相同 outer splits 中加入：
 
 ```text
 log(tumor_volume)
 ```
 
-对以下模型：
-
-```text
-M2
-M3L
-M3H
-```
-
-分别形成：
+形成：
 
 ```text
 M2-V
@@ -1708,64 +1052,21 @@ M3L-V
 M3H-V
 ```
 
-全部在相同outer splits重新拟合。
+## W10.3 dual-habitat-only
+
+在 dual-radiomics eligible cohort 比较 M2/M3L/M3H/M4。
+
+## W10.4 Whole-tumor comparator
+
+M5 优于或不优于 M0 都接受，不因结果与既往不同修改当前技术 pipeline。
 
 ---
 
-## 目的
+# W11 — A-only final model architecture
 
-回答：
+B 仍完全不可见。
 
-> habitat signal是否主要为tumor burden proxy。
-
----
-
-# W10.4 dual-habitat-only sensitivity
-
-只使用：
-
-> dual-radiomics eligible cohort。
-
-比较：
-
-- M2；
-- M3L；
-- M3H；
-- M4。
-
-排除：
-
-> structural single-habitat对结果的影响。
-
----
-
-# W10.5 Whole-tumor comparator interpretation
-
-M5如果再次低于：
-
-> M0 Clinical
-
-应解释为：
-
-> 当前high-signal-selected cohort中仍未观察到whole-tumor radiomics明显增量价值。
-
-如果M5此次优于M0：
-
-> 同样接受。
-
-不得因为和既往研究不同而修改当前队列或radiomics pipeline。
-
----
-
-# W11 — A-only final model architecture决定
-
-在B仍然完全不可见的情况下完成。
-
----
-
-# W11.1 Final model不是一定包含radiomics
-
-可能最终是：
+final model 可以是：
 
 - M0；
 - M1；
@@ -1774,137 +1075,38 @@ M5如果再次低于：
 - M3H；
 - M4。
 
-任何一种都允许。
+M5 为 comparator，除非出现明确、稳定、可重复优势，否则不因高维特征更多优先选择。
 
----
-
-# W11.2 决策原则
-
-采用：
-
-> hierarchy + incremental evidence + parsimony + stability。
-
-而不是：
-
-> 最高一次C-index。
-
----
-
-# W11.3 层级逻辑
-
-### Step A
-
-首先评价：
+## 决策原则
 
 ```text
-M0 → M1 → M2
+hierarchy
++ incremental evidence
++ parsimony
++ stability
 ```
 
-判断macro-habitat是否具有增量价值。
+而不是最高一次 C-index。
 
----
+顺序：
 
-### Step B
+1. M0 → M1 → M2；
+2. 若 M2 有合理基础，再评价 M3L/M3H；
+3. 若一个 habitat 稳定增量，优先单 habitat；
+4. 两个均有稳定信号时再评价 M4；
+5. 若 habitat 模型均不改善 clinical，允许 M0 成为 final model。
 
-如果M2具有合理预测基础，则评价：
-
-```text
-M2 → M3L
-M2 → M3H
-```
-
----
-
-### Step C
-
-如果只有一个habitat表现出稳定增量：
-
-例如：
-
-> M3L明显更稳定，
-
-则优先选择：
-
-> M3L
-
-而不是为了完整性强行加入R_high。
-
----
-
-### Step D
-
-如果H-low和H-high均表现出稳定信号：
-
-进一步评价：
-
-> M4。
-
-只有M4提供进一步、稳定的增量时：
-
-> 才采用双habitat radiomics模型。
-
-否则：
-
-> 优先更简洁的单habitat模型。
-
----
-
-# W11.4 如果所有habitat模型均不改善Clinical
-
-允许最终：
-
-> M0 Clinical
-
-成为final model。
-
-这不是分析失败。
-
-它意味着：
-
-> technical habitat reproducibility并未转化为prognostic utility。
-
-不得因此：
-
-- 改0.1%；
-- 改SLIC；
-- 改K；
-- 增加Wavelet/LoG寻找阳性结果。
-
----
-
-# W11.5 Whole-tumor W不主导final selection
-
-M5主要是：
-
-> reference comparator。
-
-除非M5在当前A393中出现明确、稳定、可重复的优势，
-
-否则不因为：
-
-> feature数量更多
-
-优先选择M5。
+不得因阴性结果回头改 0.1%、SLIC、K 或增加 Wavelet/LoG 寻找阳性。
 
 ---
 
 # W12 — Full-A final refit
 
-完成模型architecture决定之后执行。
+使用全部 A modeling patients。
 
-此步骤使用：
+## W12.1 deployment habitat
 
-> 全部A modeling patients。
-
----
-
-# W12.1 Final habitat centers
-
-正式deployment model使用：
-
-> full-A frozen technical centers。
-
-即：
+使用 full-A frozen technical centers：
 
 ```text
 H-low = 2.101717
@@ -1912,185 +1114,112 @@ H-high = 3.519630
 boundary = 2.810674
 ```
 
-无需再寻找新的centers。
+## W12.2 Final G
 
----
+使用 W01 锁定的正式 full-A global descriptors，或重新计算后要求 bitwise/数值规则一致并通过 hash/QA。
 
-# W12.2 Final habitat masks
+## W12.3 Final R_low/R_high
 
-使用full-A frozen boundary重新确认：
-
-- H-low；
-- H-high。
-
-生成deployment habitat representation。
-
----
-
-# W12.3 Final G
-
-使用正式冻结：
-
-> `global_descriptors_full_A.csv`
-
-或重新校验相同结果。
-
----
-
-# W12.4 Final R_low/R_high
-
-如果final model使用habitat radiomics：
-
-使用：
+若 final model 使用 habitat radiomics：
 
 - full-A frozen masks；
 - fixed Original parameters；
-- fixed candidate pool。
+- fixed candidate pools。
 
-提取最终：
+## W12.4 Final W
 
-> R_low / R_high。
+若 final model 使用 W，采用既有冻结的 main `muscle_f0.25` candidate pool。
 
----
+## W12.5 Final preprocessing/tuning
 
-# W12.5 Final W
+imputation、scaling、correlation reduction、alpha、lambda 仅使用 full A，并采用与 nested CV 一致的 tuning rule。
 
-如果final model使用whole-tumor W：
+## W12.6 保存 deployment artifacts
 
-使用：
-
-> 既有main `muscle_f0.25` candidate pool。
-
----
-
-# W12.6 Final preprocessing
-
-最终：
-
-- imputation；
-- scaling；
-- correlation reduction；
-- Elastic Net alpha；
-- lambda；
-
-只使用：
-
-> full A。
-
-这一步得到：
-
-> deployment parameters。
-
----
-
-# W12.7 Hyperparameter确定
-
-按照与nested CV相同的：
-
-> inner CV tuning rule
-
-在full A内部确定。
-
-不得：
-
-> 根据B结果调整。
-
----
-
-# W12.8 最终radiomics feature list
-
-保存：
+至少：
 
 ```text
 final_selected_features.csv
+preprocessing.json
+model_parameters.json
+baseline_survival.csv
+final_model_report.md
 ```
 
 记录：
 
-- feature name；
-- source；
-- habitat；
-- coefficient；
-- selection class。
+- final feature list；
+- coefficients；
+- imputation/scaling；
+- correlation policy；
+- alpha/lambda；
+- baseline cumulative hazard/survival；
+- 3-year/5-year prediction mapping。
 
----
+## W12.7 A performance 引用
 
-# W12.9 最终模型参数
+论文中的 A internal performance 必须来自 W08/W09 held-out predictions。
 
-保存：
-
-- Cox coefficients；
-- baseline cumulative hazard / survival；
-- scaling parameters；
-- imputation parameters；
-- selected radiomics；
-- alpha；
-- lambda；
-- 3-year prediction mapping；
-- 5-year prediction mapping。
-
----
-
-# W12.10 A internal performance的正确引用
-
-必须明确：
-
-> full-A refit的训练性能不能作为A内部验证性能。
-
-论文报告的A performance：
-
-> 必须来自W08/W09 nested outer validation。
-
-Full-A fit只用于：
-
-> deployment / B prediction。
+full-A refit training performance 不能作为内部验证性能。
 
 ---
 
 # W13 — A-only model freeze
 
-完成全部A分析后生成：
+生成唯一正式第二把锁：
 
 ```text
 prognosis_analysis/model_freeze_lock.json
 ```
 
----
+## W13.1 严格 schema
 
-# W13.1 必须记录cohort
+建议：
+
+```text
+model_freeze_schema_version = 1
+A_model_development_complete = true
+A_model_frozen = true
+B_data_read = false
+B_validation_unlocked = true
+```
+
+缺任一必需字段或 artifact hash 不匹配时 B 仍锁定。
+
+## W13.2 cohort dependency
+
+记录：
 
 - A modeling population hash；
 - A393 hash；
-- A137 hash。
+- A137 hash；
+- eligible population definitions。
 
----
+## W13.3 technical dependency
 
-# W13.2 technical dependency
+记录：
 
 - `freeze_lock.json` hash；
-- habitat center；
-- boundary；
+- freeze bundle/manifest hash；
+- full-A centers/boundary；
 - SLIC config hash；
 - preprocessing config hash。
 
----
+## W13.4 modeling protocol
 
-# W13.3 modeling protocol
+记录：
 
-保存：
-
-- `modeling_protocol.json` hash；
-- outer split hash；
+- modeling protocol hash；
+- outer splits hash；
 - inner CV policy；
 - outcome definition；
-- endpoint cutoff；
-- model hierarchy。
+- endpoint horizons；
+- model hierarchy；
+- final architecture decision record。
 
----
+## W13.5 feature definitions
 
-# W13.4 feature definitions
-
-保存：
+记录：
 
 ```text
 Clinical variables
@@ -2100,59 +1229,84 @@ R_high candidate hash
 W candidate hash
 ```
 
----
+## W13.6 final model artifacts
 
-# W13.5 final model
-
-保存：
+记录：
 
 ```text
 final_model_id
 final_model_family
-final_model_feature_list
+final_model_feature_list/hash
 final_model_coefficients_hash
 preprocessing_parameter_hash
 baseline_survival_hash
+final_selected_features_hash
+source_git_commit
 ```
 
----
+## W13.7 第二把锁是唯一 B unlock
 
-# W13.6 必须声明
+正式代码中必须移除/禁用任何平行 unlock：
 
 ```text
-A_model_development_complete = true
-
-A_model_frozen = true
-
-B_data_read = false
-
-B_validation_unlocked = true
+b_validation_unlock.json
 ```
 
-生成lock时：
+不得存在：
 
-> `B_data_read`必须仍为false。
+```text
+if old_unlock_exists: allow_B
+```
 
----
+所有 B 入口统一：
 
-# W13.7 Freeze后禁止修改
+```text
+validate_model_freeze_lock()
+```
 
-一旦`model_freeze_lock.json`生成：
+只有严格验证通过才允许打开 B 数据源。
 
-不得根据B：
+## W13.8 B source mount/permission 切换
 
-- 改final model；
-- 改H-low/H-high选择；
-- 改radiomics features；
-- 改lambda；
-- 改clinical variables；
-- 改habitat；
-- 改0.1%；
-- 重新校准primary model。
+第二把锁成功生成并验证后，才允许将 B 临床/结局/feature 数据源挂载或开放给验证脚本。
+
+在 mount/unlock 之前再次记录：
+
+```text
+B_data_read = false
+```
+
+## W13.9 Freeze 后禁止修改
+
+不得根据 B：
+
+- 改 final model；
+- 改 H-low/H-high 选择；
+- 改 radiomics features；
+- 改 alpha/lambda；
+- 改 clinical variables；
+- 改 habitat；
+- 改 0.1%；
+- 改 missingness strategy；
+- 重校 primary model。
+
+B 只执行一次预先定义的外部验证。
 
 ---
 
 # 三十三、每阶段硬门禁
+
+## Gate 0 — pre-freeze code safety
+
+必须：
+
+- stage7 import bug 修复；
+- stage7 integration test PASS；
+- strict freeze schema PASS；
+- artifact tamper test PASS；
+- crash-safe/transactional promotion 方案完成；
+- legacy outcome builder fail closed；
+- split resolver 单一化。
 
 ## Gate A — technical freeze
 
@@ -2161,10 +1315,9 @@ B_validation_unlocked = true
 - formal PASS；
 - A393 exact；
 - A137 exact；
-- feature QC pass；
-- `freeze_lock.json`有效。
-
----
+- feature QC PASS；
+- map manifest 完整；
+- strict `freeze_lock.json` 有效且绑定所有正式资产。
 
 ## Gate B — outcome unlock
 
@@ -2173,212 +1326,205 @@ B_validation_unlocked = true
 - habitat radiomics方法冻结；
 - R_low/R_high候选池冻结；
 - modeling protocol冻结；
-- A/B代码隔离完成。
+- A-only source asset 已物理隔离；
+- legacy full A/B 读取路径不可绕过；
+- B source 对正式分析不可达。
 
-否则：
-
-> 不读取DFS。
-
----
+否则不读取 DFS。
 
 ## Gate C — nested validation
 
 必须：
 
-- A outcome QC完成；
-- modeling population冻结；
-- split files冻结。
-
----
+- A endpoint QC 完成；
+- A modeling population 冻结；
+- split files 冻结并 hash。
 
 ## Gate D — final model selection
 
 必须：
 
-- 所有预设M0–M5分析完成；
-- 所有主要paired comparisons完成；
-- strict sensitivity完成；
-- volume sensitivity完成。
-
----
+- 预设 M0–M5 分析完成；
+- 主要 paired comparisons 完成；
+- strict sensitivity 完成；
+- volume sensitivity 完成；
+- dual-habitat sensitivity 按计划完成。
 
 ## Gate E — A-only model freeze
 
 必须：
 
-- final architecture确定；
-- full-A refit完成；
-- final model artifacts完整；
-- hashes一致；
-- B仍未读取。
+- final architecture 确定；
+- full-A refit 完成；
+- final artifacts 完整；
+- `model_freeze_lock.json` 严格验证通过；
+- 旧 B unlock 路径禁用；
+- B 仍未读取。
 
 ---
 
 # 三十四、建议输出目录
 
 ```text
-prognosis_analysis/output/
+habitat_analysis/
+├── freeze_bundles/                 # 若采用bundle方案
+├── CURRENT_FREEZE.json             # 单一commit point
+├── freeze_lock.json
+└── output/
+    ├── habitat_maps_A/
+    │   └── habitat_maps_manifest.csv
+    └── habitat_features_A/
+        ├── global_descriptors_full_A.csv
+        └── feature_qc.csv
 
-├── pre_outcome/
-│   ├── habitat_radiomics_qc/
-│   └── modeling_protocol/
-
-├── A_endpoint_qc/
-
-├── A_modeling/
-│   ├── population/
-│   └── splits/
-
-├── nested_cv/
-│   ├── fold_assets/
-│   ├── M0_clinical/
-│   ├── M1_burden/
-│   ├── M2_global_habitat/
-│   ├── M3L_Hlow/
-│   ├── M3H_Hhigh/
-│   ├── M4_dual_habitat/
-│   └── M5_whole_tumor/
-
-├── sensitivity/
-│   ├── strict_A137/
-│   ├── tumor_volume/
-│   └── dual_habitat_only/
-
-├── A_model_comparison/
-
-└── final_model_A/
-    ├── final_selected_features.csv
-    ├── preprocessing.json
-    ├── model_parameters.json
-    ├── baseline_survival.csv
-    ├── final_model_report.md
-    └── model_freeze_lock.json
+prognosis_analysis/
+├── modeling_protocol.json
+├── modeling_protocol.md
+├── model_freeze_lock.json
+└── output/
+    ├── pre_outcome/
+    │   ├── habitat_radiomics_qc/
+    │   └── access_guard/
+    ├── A_endpoint_qc/
+    ├── A_modeling/
+    │   ├── population/
+    │   └── splits/
+    ├── nested_cv/
+    │   ├── fold_assets/
+    │   ├── M0_clinical/
+    │   ├── M1_burden/
+    │   ├── M2_global_habitat/
+    │   ├── M3L_Hlow/
+    │   ├── M3H_Hhigh/
+    │   ├── M4_dual_habitat/
+    │   └── M5_whole_tumor/
+    ├── sensitivity/
+    │   ├── strict_A137/
+    │   ├── tumor_volume/
+    │   └── dual_habitat_only/
+    ├── A_model_comparison/
+    └── final_model_A/
+        ├── final_selected_features.csv
+        ├── preprocessing.json
+        ├── model_parameters.json
+        ├── baseline_survival.csv
+        └── final_model_report.md
 ```
 
----
-
-# 三十五、建议关键回归测试
-
-在正式A modeling前增加：
-
-## 1. Test validation-patient exclusion
-
-验证：
-
-> outer validation ID绝不进入K-means center fitting。
+患者级输出仍只保存在本地受控环境，不提交 GitHub。
 
 ---
 
-## 2. Test fold-specific habitat
+# 三十五、关键回归测试
 
-同一患者在不同outer fold中：
+在正式 A modeling 前至少具备以下测试。
 
-> 允许因training boundary不同产生不同habitat assignment。
+## 1. Stage7 runtime/integration
 
-证明代码没有错误使用：
+真实覆盖 staging lock validation 与 promotion；防止只通过 compileall。
 
-> full-A boundary。
+## 2. Freeze artifact tamper
 
----
+修改 global descriptors、map manifest、audit 或 dictionary 任一内容后：
 
-## 3. Test R_low/R_high symmetry
+> 原 freeze lock 必须失效。
 
-相同：
+## 3. Validation-patient exclusion
 
-- extraction；
-- ICC；
-- preprocessing；
-- model selection
+outer validation ID 绝不进入 K-means center fitting。
 
-规则同时适用于H-low和H-high。
+## 4. Fold-specific habitat
 
----
+验证不同 outer fold 中同一患者允许因 training boundary 不同产生不同 habitat assignment，证明未误用 full-A boundary。
 
-## 4. Test structural absence
+## 5. R_low/R_high symmetry
 
-single-H-low：
+extraction、ICC、preprocessing、model selection 规则对称。
 
-> R_high必须NA/undefined。
+## 6. Structural absence
 
-single-H-high：
+single-H-low → R_high undefined；single-H-high → R_low undefined；禁止自动填 0。
 
-> R_low必须NA/undefined。
+## 7. Training-only scaler/imputer
 
-不能自动填0。
+Validation 只能使用 training 参数。
 
----
+## 8. Training-only correlation filter
 
-## 5. Test training-only scaler
+Validation 不参与相关矩阵。
 
-validation feature scaling：
+## 9. Training-only Elastic Net tuning
 
-> 只能使用training mean/SD。
+Outer validation 不参与 alpha/lambda 选择。
 
----
+## 10. A outcome lock
 
-## 6. Test training-only correlation filter
+第一把 lock 不存在或 Gate B 不通过时：
 
-validation数据：
+> `read_A_outcomes()` hard fail。
 
-> 不参与相关性矩阵。
+## 11. B source read guard
 
----
+第二把 lock 不存在时：
 
-## 7. Test training-only Elastic Net tuning
+- B builder hard fail；
+- B file open/read function 不应被调用；
+- 不能通过 `all` 模式绕过。
 
-outer validation：
+## 12. Single B unlock mechanism
 
-> 不参与alpha/lambda选择。
+即使伪造/遗留 `b_validation_unlock.json`，只要 `model_freeze_lock.json` 不存在或无效：
 
----
+> B 仍 hard fail。
 
-## 8. Test B lock
+## 13. Cohort resolver consistency
 
-在`model_freeze_lock.json`不存在时：
-
-> 任意B builder hard fail。
+所有正式脚本对同一 synthetic scanner table 得到完全相同 A/B membership。
 
 ---
 
-# 三十六、A-only阶段完成标志
+# 三十六、A-only 阶段完成标志
 
-在进入B验证前，必须同时存在：
+进入 B 验证前必须同时存在并验证：
 
 ```text
+PRE_FREEZE_CODE_GATE = PASS
 habitat_analysis/freeze_lock.json
-
+habitat map manifest / freeze bundle integrity PASS
 prognosis_analysis/modeling_protocol.json
-
+A-only source access guard PASS
 prognosis_analysis/output/A_endpoint_qc/
-
+prognosis_analysis/output/A_modeling/splits/
 prognosis_analysis/output/nested_cv/
-
 prognosis_analysis/output/A_model_comparison/
-
 prognosis_analysis/output/final_model_A/
-
 prognosis_analysis/model_freeze_lock.json
 ```
 
-并且能够回答：
+必须能够回答：
 
-- H-high burden是否增加clinical模型信息？
-- macro-habitat是否增加信息？
-- H-low内部texture是否增加信息？
-- H-high内部texture是否增加信息？
-- H-low与H-high哪个更稳定？
-- 双habitat联合是否进一步改善？
-- whole-tumor radiomics在当前A393是否仍缺乏增量价值？
-- 这些发现是否对A137稳健？
-- 是否主要由tumor volume解释？
-- final A model由哪些变量组成？
-- final model的全部参数是否已冻结？
-- B是否从未参与上述任何决定？
+- H-high burden 是否增加 clinical 模型信息？
+- macro-habitat 是否增加信息？
+- H-low texture 是否增加信息？
+- H-high texture 是否增加信息？
+- H-low 与 H-high 哪个更稳定？
+- 双 habitat 联合是否进一步改善？
+- whole-tumor radiomics 在当前 A393 的增量价值如何？
+- 发现是否对 A137 稳健？
+- 是否主要由 tumor volume 解释？
+- final A model 由哪些变量组成？
+- final deployment 参数是否全部冻结并 hash？
+- B 是否从未参与任何技术、特征、模型或缺失处理决定？
+- 第二把锁之前是否不存在任何 B 数据源读取？
 
 全部满足后：
 
 > **A-only model development complete。**
 
-此时才允许：
+此时由 `model_freeze_lock.json` 唯一声明：
 
-> `B_validation_unlocked=true`。
+```text
+B_validation_unlocked = true
+```
+
+然后才进入 B 一次性外部验证。
