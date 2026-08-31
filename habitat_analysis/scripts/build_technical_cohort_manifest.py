@@ -23,6 +23,10 @@ OLD_A = os.path.join(HAB, "output", "feasibility_A_patient_balanced_post_slic_fi
 
 sys.path.insert(0, HERE)
 from freeze_lock import atomic_write_json, file_sha256, id_hash, utc_now  # noqa: E402
+FEATURE_SCRIPTS = os.path.join(FEAT, "scripts")
+if FEATURE_SCRIPTS not in sys.path:
+    sys.path.insert(0, FEATURE_SCRIPTS)
+from data_split_guard import resolve_cohort_membership  # noqa: E402
 
 
 def normalized_ids(frame, column):
@@ -35,28 +39,7 @@ def normalized_ids(frame, column):
 
 
 def merge_manifest_scanner(manifest, scanner):
-    manifest = manifest.copy()
-    scanner = scanner.copy()
-    manifest["影像号"] = normalized_ids(manifest, "影像号")
-    scanner["影像号"] = normalized_ids(scanner, "影像号")
-    required = ["影像号", "R1厂商", "R1机型", "R1场强"]
-    missing = [name for name in required if name not in scanner.columns]
-    if missing:
-        raise AssertionError("scanner map missing columns: %s" % missing)
-    merged = manifest.merge(scanner[required], on="影像号", how="left",
-                            validate="one_to_one", indicator=True)
-    target = merged["排除"].fillna("0").astype(str) != "1" if "排除" in merged else pd.Series(True, index=merged.index)
-    unmatched = merged.loc[target & merged["_merge"].ne("both"), "影像号"].tolist()
-    if unmatched:
-        raise AssertionError("target cases missing scanner mapping: %s" % unmatched[:5])
-    merged = merged.drop(columns=["_merge"])
-    field = pd.to_numeric(merged["R1场强"], errors="coerce")
-    merged["split"] = "B"
-    is_a = ((merged["R1厂商"] == "GE MEDICAL SYSTEMS") &
-            (merged["R1机型"] == "DISCOVERY MR750") &
-            (field.round(1) == 3.0))
-    merged.loc[is_a, "split"] = "A"
-    return merged
+    return resolve_cohort_membership(manifest, scanner)
 
 
 def selected_ids(path, pass_column):

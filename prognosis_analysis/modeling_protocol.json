@@ -81,7 +81,7 @@
     },
     "whole_tumor_technical_schema": {
       "path": "prognosis_analysis/scripts/stage6_qc.py",
-      "sha256": "55c94a35f1baa24af16918973298343a4ba9fb4e01b28884ebed6d9d1c277fd4"
+      "sha256": "daba75c3f0eaeb85da208bcf06a9d3b7f9af775feb799091fcf22c74f173c521"
     }
   },
   "software_environment": {

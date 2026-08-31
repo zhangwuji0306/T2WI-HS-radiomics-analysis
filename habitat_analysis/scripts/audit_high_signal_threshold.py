@@ -10,6 +10,7 @@ import json
 import math
 import os
 import subprocess
+import sys
 from datetime import datetime
 
 import numpy as np
@@ -17,11 +18,15 @@ import pandas as pd
 from scipy.stats import chi2_contingency, spearmanr
 from sklearn.metrics import cohen_kappa_score
 
-
 HERE = os.path.dirname(os.path.abspath(__file__))
 HAB = os.path.dirname(HERE)
 ROOT = os.path.dirname(HAB)
 FEAT = os.path.join(ROOT, "feature_extract")
+FEATURE_SCRIPTS = os.path.join(FEAT, "scripts")
+if FEATURE_SCRIPTS not in sys.path:
+    sys.path.insert(0, FEATURE_SCRIPTS)
+from data_split_guard import resolve_cohort_membership  # noqa: E402
+
 MANIFEST = os.path.join(FEAT, "output", "manifest.csv")
 SCANNER = os.path.join(FEAT, "output", "scanner_map.csv")
 PATIENT_FEATURES = os.path.join(HAB, "output", "high_signal_eligibility_audit",
@@ -130,28 +135,17 @@ def normalized_ids(frame, column):
 
 
 def scanner_split(manifest, scanner):
-    manifest = manifest.copy()
-    scanner = scanner.copy()
-    manifest["影像号"] = normalized_ids(manifest, "影像号")
-    scanner["影像号"] = normalized_ids(scanner, "影像号")
-    fields = ["影像号", "R1厂商", "R1机型", "R1场强", "R1系列", "R1行",
-              "R1列", "R1面内间距", "R1层厚", "R1层数"]
-    missing = [name for name in fields if name not in scanner.columns]
+    merged = resolve_cohort_membership(manifest, scanner)
+    extra = ["R1系列", "R1行", "R1列", "R1面内间距", "R1层厚", "R1层数"]
+    missing = [name for name in extra if name not in scanner.columns]
     if missing:
         raise AssertionError("scanner map missing columns: %s" % missing)
-    merged = manifest.merge(scanner[fields], on="影像号", how="left",
-                            validate="one_to_one", indicator=True)
-    target = merged["排除"].fillna("0").astype(str).ne("1") if "排除" in merged else pd.Series(True, index=merged.index)
-    if merged.loc[target, "_merge"].ne("both").any():
-        raise AssertionError("eligible manifest rows missing scanner mapping")
-    merged = merged.drop(columns=["_merge"])
-    field = numeric(merged["R1场强"])
-    merged["split_from_scanner"] = "B"
-    is_a = ((merged["R1厂商"] == "GE MEDICAL SYSTEMS") &
-            (merged["R1机型"] == "DISCOVERY MR750") &
-            (field.round(1) == 3.0))
-    merged.loc[is_a, "split_from_scanner"] = "A"
-    return merged[merged.get("排除", "0").fillna("0").astype(str).ne("1")].copy()
+    merged = merged.merge(scanner[["影像号"] + extra], on="影像号",
+                          how="left", validate="one_to_one")
+    merged["split_from_scanner"] = merged["split"]
+    if "排除" in merged.columns:
+        merged = merged[merged["排除"].fillna("0").astype(str).ne("1")].copy()
+    return merged
 
 
 def build_screening_universe():

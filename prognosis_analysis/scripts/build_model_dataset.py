@@ -11,10 +11,7 @@ thickness、EID、活检病理非腺癌。性别、length、distance 不进入�
 """
 from __future__ import annotations
 
-import argparse
-import json
 import os
-import shutil
 import sys
 
 import pandas as pd
@@ -31,15 +28,10 @@ FEATURES = os.path.join(EX_ROOT, "output", "features_v2")
 SCREEN_ROOT = os.path.join(ROOT, "..", "habitat_analysis", "output", "high_signal_eligibility_audit")
 HABITAT_ROOT = os.path.join(PROJECT_ROOT, "habitat_analysis")
 HABITAT_SCRIPTS = os.path.join(HABITAT_ROOT, "scripts")
-if HABITAT_SCRIPTS not in sys.path:
-    sys.path.insert(0, HABITAT_SCRIPTS)
-from freeze_lock import file_sha256, files_sha256, id_hash, validate_freeze_lock  # noqa: E402
 FEATURE_SCRIPTS = os.path.join(EX_ROOT, "scripts")
 if FEATURE_SCRIPTS not in sys.path:
     sys.path.insert(0, FEATURE_SCRIPTS)
-from data_split_guard import (  # noqa: E402
-    read_b_excel, require_b_unlock, resolve_cohort_membership,
-)
+from data_split_guard import require_b_unlock, resolve_cohort_membership  # noqa: E402
 
 TECHNICAL_COHORT = os.path.join(HABITAT_ROOT, "output", "technical_cohort_manifest")
 TECHNICAL_A393 = os.path.join(TECHNICAL_COHORT, "cohort_A_lenient.csv")
@@ -108,144 +100,22 @@ def cohort_table(screen: str) -> pd.DataFrame:
 
 
 def validate_outcome_unlock() -> dict:
-    required = [TECHNICAL_A393, TECHNICAL_A137, MANIFEST, SCANNER,
-                HABITAT_CONFIG, PREPROCESSING_CONFIG]
-    missing = [path for path in required if not os.path.exists(path)]
-    if missing:
-        raise RuntimeError("outcome unlock inputs missing: %s" % missing)
-    a393 = pd.read_csv(TECHNICAL_A393, encoding="utf-8-sig", dtype=str)
-    a137 = pd.read_csv(TECHNICAL_A137, encoding="utf-8-sig", dtype=str)
-    screen_paths = [os.path.join(SCREEN_ROOT, SCREEN_FILES[name][0])
-                    for name in ("lenient", "strict")]
-    expected = {
-        "A393_id_hash": id_hash(a393["影像号"]),
-        "A137_id_hash": id_hash(a137["影像号"]),
-        "manifest_hash": file_sha256(MANIFEST),
-        "scanner_map_hash": file_sha256(SCANNER),
-        "high_signal_screen_hash": files_sha256(screen_paths),
-        "preprocessing_config_hash": file_sha256(PREPROCESSING_CONFIG),
-        "slic_config_hash": file_sha256(HABITAT_CONFIG),
-    }
-    return validate_freeze_lock(FREEZE_LOCK, expected)
+    raise RuntimeError("legacy builder is disabled; no outcome source may be opened")
 
 
-def load_features(combo: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    cand_path = os.path.join(STAGE6, combo, "candidate_features.csv")
-    if not os.path.exists(cand_path):
-        raise FileNotFoundError(f"缺少 {cand_path}；请先运行 stage6_qc.py")
-    candidates = pd.read_csv(cand_path, encoding="utf-8-sig")
-    tables = []
-    for batch, fname in BATCH_FILES.items():
-        wanted = candidates.loc[candidates["batch"] == batch, "feature"].tolist()
-        path = os.path.join(FEATURES, combo, fname)
-        table = pd.read_csv(path, encoding="utf-8-sig", dtype={"影像号": str})
-        table = table[table["读者"] == "R1"].copy()
-        table["影像号"] = table["影像号"].astype(str).str.strip()
-        absent = sorted(set(wanted) - set(table.columns))
-        if absent:
-            raise AssertionError(f"{batch} 缺少候选特征：{absent[:5]}")
-        tables.append(table[["影像号"] + wanted].set_index("影像号"))
-    features = pd.concat(tables, axis=1)
-    if features.columns.duplicated().any():
-        raise AssertionError("合并后三批次存在重复特征名")
-    return features.reset_index(), candidates
+def load_features(*args, **kwargs):
+    raise RuntimeError("legacy builder is disabled; use build_model_dataset_a.py")
 
 
-def build_screened_dataset(screen: str, combo: str, features: pd.DataFrame,
-                           candidates: pd.DataFrame, clinical: pd.DataFrame,
-                           main_alias: bool) -> None:
-    cohort = cohort_table(screen)
-    cols = ["影像号"] + OUTCOMES + PRIMARY_CLINICAL + DESCRIPTIVE + POSTOP
-    dataset = cohort.merge(features, on="影像号", how="left").merge(
-        clinical[cols], on="影像号", how="left")
-    feature_cols = candidates["feature"].tolist()
-    if dataset[feature_cols].isna().sum().sum() != 0:
-        raise AssertionError("候选组学特征存在缺失")
-    dataset["cc"] = (dataset["CEA_log"].notna() &
-                     dataset["活检病理非腺癌"].notna()).astype(int)
-    order = (["影像号", "split", "cc"] + OUTCOMES + PRIMARY_CLINICAL + feature_cols +
-             DESCRIPTIVE + POSTOP)
-    dataset = dataset[order]
-    suffix = "" if main_alias else "_" + screen
-    dataset.to_csv(os.path.join(MODELING, "dataset_primary_raw%s.csv" % suffix),
-                   index=False, encoding="utf-8-sig")
-    dataset[dataset["split"] == "A"].to_csv(
-        os.path.join(MODELING, "dataset_primary_raw_A%s.csv" % suffix),
-        index=False, encoding="utf-8-sig")
-    dataset[dataset["split"] == "B"].to_csv(
-        os.path.join(MODELING, "dataset_primary_raw_B%s.csv" % suffix),
-        index=False, encoding="utf-8-sig")
-    r_dataset = dataset.rename(columns=R_ALIASES)
-    r_dataset.to_csv(os.path.join(MODELING, "dataset_primary_raw%s_r.csv" % suffix),
-                     index=False, encoding="utf-8")
-    r_dataset[r_dataset["split"] == "A"].to_csv(
-        os.path.join(MODELING, "dataset_primary_raw_A%s_r.csv" % suffix),
-        index=False, encoding="utf-8")
-    r_dataset[r_dataset["split"] == "B"].to_csv(
-        os.path.join(MODELING, "dataset_primary_raw_B%s_r.csv" % suffix),
-        index=False, encoding="utf-8")
-
-    schema = {"analysis_version": "v2_continuous_nested",
-              "combo": combo, "screening_rule": screen,
-              "screening_source": SCREEN_FILES[screen][0],
-              "screening_pass_column": SCREEN_FILES[screen][1],
-              "screening_definition": SCREEN_DEFINITIONS[screen],
-              "primary_clinical_variables": PRIMARY_CLINICAL,
-              "primary_clinical_variables_r": [R_ALIASES[x] for x in PRIMARY_CLINICAL],
-              "r_column_aliases": R_ALIASES,
-              "excluded_from_primary": EXCLUDED_PRIMARY,
-              "radiomics_candidates": feature_cols,
-              "data_processing": "raw; fit imputation/filtering/scaling inside outer training folds",
-              "complete_case_definition": "CEA_log and 活检病理非腺癌 both observed"}
-    schema_name = "analysis_schema.json" if main_alias else "analysis_schema_%s.json" % screen
-    with open(os.path.join(MODELING, schema_name), "w", encoding="utf-8") as f:
-        json.dump(schema, f, ensure_ascii=False, indent=2)
-    a = dataset[dataset["split"] == "A"]
-    b = dataset[dataset["split"] == "B"]
-    lines = ["# v2 建模数据集检查", "",
-             "- 情景：%s" % combo, "- 高信号筛选：%s" % screen,
-             "- 队列：A %d / B %d" % (len(a), len(b)),
-             "- ICC 固定候选特征：%d" % len(feature_cols),
-             "- 预设临床影像学变量：%d（已删除性别、length、distance）" % len(PRIMARY_CLINICAL),
-             "- 完整病例：A %d / B %d" % (int(a["cc"].sum()), int(b["cc"].sum())),
-             "- 数据保持原始尺度；不得直接用全 A 预标准化。"]
-    report_name = "report.md" if main_alias else "report_%s.md" % screen
-    with open(os.path.join(MODELING, report_name), "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
-    if main_alias:
-        # Keep an explicit lenient-named copy in addition to the legacy main aliases
-        # consumed by the downstream R scripts.
-        for name in [
-            "dataset_primary_raw.csv", "dataset_primary_raw_A.csv", "dataset_primary_raw_B.csv",
-            "dataset_primary_raw_r.csv", "dataset_primary_raw_A_r.csv", "dataset_primary_raw_B_r.csv",
-            "analysis_schema.json", "report.md",
-        ]:
-            stem, ext = os.path.splitext(name)
-            shutil.copyfile(os.path.join(MODELING, name),
-                            os.path.join(MODELING, stem + "_lenient" + ext))
-    print("；".join(lines[2:]))
+def build_screened_dataset(*args, **kwargs):
+    raise RuntimeError("legacy builder is disabled; use build_model_dataset_a.py")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="构建筛选后的 v2 原始建模数据集")
-    ap.add_argument("--combo", default="muscle_f0.25")
-    ap.add_argument("--screen", choices=["both", "lenient", "strict"], default="both",
-                    help="生成宽松主分析集、严格保留集，或单独生成一种")
-    args = ap.parse_args()
-    # This legacy builder opens combined feature/clinical sources and can
-    # therefore expose B.  Keep the old entry point fail-closed until the
-    # dedicated A-only builder is available.
-    require_b_unlock()
-    validate_outcome_unlock()
-    os.makedirs(MODELING, exist_ok=True)
-    features, candidates = load_features(args.combo)
-    clinical = read_b_excel(DATA_XLSX)
-    clinical["影像号"] = clinical["影像号"].astype(str).str.strip()
-    clinical["性别"] = clinical["性别"].map({"男": 1, "女": 0}).astype(int)
-    screens = ["lenient", "strict"] if args.screen == "both" else [args.screen]
-    for screen in screens:
-        build_screened_dataset(screen, args.combo, features, candidates, clinical,
-                                main_alias=(screen == "lenient"))
+    raise RuntimeError(
+        "legacy build_model_dataset.py is disabled; use "
+        "build_model_dataset_a.py --split A"
+    )
 
 
 if __name__ == "__main__":

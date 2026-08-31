@@ -22,6 +22,7 @@ import SimpleITK as sitk
 
 from workflow_utils import atomic_write_csv, atomic_write_json
 from sigma_guard import promote_complete_sigma
+from data_split_guard import resolve_cohort_membership
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "output")
@@ -34,11 +35,10 @@ ARMS = {"muscle": "output/preprocessed", "zscore": "output/preprocessed_zscore"}
 def load_a_cases() -> pd.DataFrame:
     man = pd.read_csv(MANIFEST, encoding="utf-8-sig", dtype=str)
     sc = pd.read_csv(SCANNER, encoding="utf-8-sig", dtype=str)
-    df = man.merge(sc[["影像号", "R1厂商", "R1机型", "R1场强"]], on="影像号", how="left")
-    df["_f"] = pd.to_numeric(df["R1场强"], errors="coerce")
-    a = df[(df["R1厂商"] == "GE MEDICAL SYSTEMS") & (df["R1机型"] == "DISCOVERY MR750") &
-           (df["_f"].round(1) == 3.0) & (df["排除"] != "1")]
-    return a[["影像号"]].drop_duplicates("影像号")
+    df = resolve_cohort_membership(man, sc)
+    if "排除" in df.columns:
+        df = df[df["排除"].fillna("0").astype(str).ne("1")]
+    return df.loc[df["split"] == "A", ["影像号"]].drop_duplicates("影像号")
 
 
 def arm_stats(ids: list[str], prep_dir: str) -> dict:

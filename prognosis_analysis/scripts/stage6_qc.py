@@ -19,7 +19,10 @@ EX_ROOT = os.path.join(PROJECT_ROOT, "feature_extract")
 FEATURE_SCRIPTS = os.path.join(EX_ROOT, "scripts")
 if FEATURE_SCRIPTS not in sys.path:
     sys.path.insert(0, FEATURE_SCRIPTS)
-from data_split_guard import read_b_csv, require_b_unlock  # noqa: E402
+from data_split_guard import (  # noqa: E402
+    read_B_validation, read_technical_A, require_b_unlock,
+    resolve_cohort_membership,
+)
 OUT = os.path.join(ROOT, "output")
 MANIFEST = os.path.join(EX_ROOT, "output", "manifest.csv")
 SCANNER = os.path.join(EX_ROOT, "output", "scanner_map.csv")
@@ -36,14 +39,19 @@ EXPECTED_FEATURES = {"original": 107, "wavelet": 8 * 93, "log": 3 * 93}
 COMBOS = ["muscle_f0.25", "muscle_f0.1", "zscore_f0.1", "zscore_f0.25"]
 
 
-def load_pairs() -> list[str]:
+def load_cohort_ids() -> dict:
     man = pd.read_csv(MANIFEST, encoding="utf-8-sig", dtype=str)
     sc = pd.read_csv(SCANNER, encoding="utf-8-sig", dtype=str)
-    df = man.merge(sc[["影像号", "R1机型"]], on="影像号", how="left")
-    pairs = df.loc[df["是否双读者"] == "1", "影像号"].tolist()
-    a_pairs = [x for x in pairs if df.loc[df["影像号"] == x, "R1机型"].iloc[0]
-               == "DISCOVERY MR750"]
-    return a_pairs
+    df = resolve_cohort_membership(man, sc)
+    return {split: set(df.loc[df["split"] == split, "影像号"].tolist())
+            for split in ("A", "B")}
+
+
+def load_pairs() -> list[str]:
+    ids = load_cohort_ids()["A"]
+    man = pd.read_csv(MANIFEST, encoding="utf-8-sig", dtype=str)
+    return man.loc[(man["是否双读者"] == "1") &
+                   man["影像号"].astype(str).str.strip().isin(ids), "影像号"].tolist()
 
 
 def icc21(pivot: pd.DataFrame) -> float:
@@ -75,8 +83,14 @@ def process_table(combo: str, batch: str, a_pairs: list[str], split: str = "A") 
     path = os.path.join(FEATURES, combo, fname)
     if not os.path.exists(path):
         raise FileNotFoundError(f"缺少 v2 特征表：{path}；请先完成修正版特征重提取")
-    df = read_b_csv(path, dtype={"影像号": str}) if split in ("B", "all") else pd.read_csv(
-        path, dtype={"影像号": str})
+    cohort_ids = load_cohort_ids()
+    allowed_ids = (set(a_pairs) if split == "A" else
+                   cohort_ids["B"] if split == "B" else
+                   cohort_ids["A"] | cohort_ids["B"])
+    df = (read_technical_A(path, allowed_ids=allowed_ids,
+                           dtype={"影像号": str}) if split == "A" else
+          read_B_validation(path, allowed_ids=allowed_ids,
+                            dtype={"影像号": str}))
     feat_cols = [c for c in df.columns if c not in meta]
     if len(feat_cols) != EXPECTED_FEATURES[batch]:
         raise AssertionError(
@@ -84,6 +98,8 @@ def process_table(combo: str, batch: str, a_pairs: list[str], split: str = "A") 
             "请检查是否仍含滤波 Shape 或旧版产物")
     if batch != "original" and any("_shape_" in c for c in feat_cols):
         raise AssertionError(f"{combo}/{batch} 仍含滤波 Shape，拒绝继续")
+    for column in feat_cols:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
 
     readers = df[df["读者"].isin(["R1", "R2"])]
     rows = []

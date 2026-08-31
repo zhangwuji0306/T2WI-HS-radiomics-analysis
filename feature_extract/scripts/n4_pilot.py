@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 from scipy.stats import wilcoxon
+from data_split_guard import resolve_cohort_membership
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "output")
@@ -53,13 +54,11 @@ CONTROL_QUOTAS = [("GE MEDICAL SYSTEMS|DISCOVERY MR750|3.0", 6),
 def load_frame() -> tuple[pd.DataFrame, set]:
     man = pd.read_csv(MANIFEST, encoding="utf-8-sig", dtype=str)
     sc = pd.read_csv(SCANNER, encoding="utf-8-sig", dtype=str)
-    df = man.merge(sc[["影像号", "R1厂商", "R1机型", "R1场强"]], on="影像号", how="left")
+    df = resolve_cohort_membership(man, sc)
     df["_f"] = pd.to_numeric(df["R1场强"], errors="coerce")
     df["device"] = (df["R1厂商"].fillna("") + "|" + df["R1机型"].fillna("") + "|" +
                     df["_f"].round(1).astype(str))
-    is_a = (df["R1厂商"] == "GE MEDICAL SYSTEMS") & (df["R1机型"] == "DISCOVERY MR750") & \
-           (df["_f"].round(1) == 3.0)
-    df["is_a"] = is_a
+    df["is_a"] = df["split"].eq("A")
     flagged = set()
     if os.path.exists(OUTLIERS):
         ol = pd.read_csv(OUTLIERS, encoding="utf-8-sig", dtype=str)
