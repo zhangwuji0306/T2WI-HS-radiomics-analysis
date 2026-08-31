@@ -1,0 +1,56 @@
+{
+  "stage": "W03",
+  "analysis_id": "w03_habitat_radiomics_reproducibility_A",
+  "cohort": {
+    "technical_manifest": "habitat_analysis/output/technical_cohort_manifest/cohort_A_lenient.csv",
+    "id_column": "影像号",
+    "expected_unique_cases": 393
+  },
+  "preprocessing": {
+    "root": "feature_extract/output/preprocessed",
+    "normalization": "muscle_mean_frozen_upstream",
+    "spacing_mm_xyz": [1.0, 1.0, 2.0],
+    "n4_enabled": false,
+    "resampling_performed_here": false
+  },
+  "slic": {
+    "config": "habitat_analysis/configs/main_cross_case_kmeans_k2_4mm.json",
+    "dimension": "3D",
+    "target_scale_mm": 4.0,
+    "supergrid_voxels_xyz": [4, 4, 2],
+    "actual_supergrid_mm_xyz": [4.0, 4.0, 4.0],
+    "enforce_connectivity": true
+  },
+  "frozen_technical_phenotype": {
+    "centers": "habitat_analysis/output/feasibility_A_patient_balanced_post_slic_fix/global_centers.csv",
+    "center_type": "M1_patient_balanced_all_supervoxels",
+    "labels": {
+      "low": 0,
+      "high": 1,
+      "outside": -1
+    }
+  },
+  "readers": ["R1", "R2"],
+  "radiomics": {
+    "pyradiomics_version": "3.0.1",
+    "image_type": "Original",
+    "bin_width": 0.248808,
+    "normalize": false,
+    "resampled_pixel_spacing": null,
+    "feature_classes": ["firstorder", "shape", "glcm", "glrlm", "glszm", "gldm", "ngtdm"]
+  },
+  "reproducibility": {
+    "icc": "ICC(2,1)",
+    "icc_threshold_exclusive": 0.75,
+    "minimum_valid_pairs": 10,
+    "finite_feature_rate_min_inclusive": 0.95,
+    "finite_rate_denominator": "all_reader_cases_with_habitat_present"
+  },
+  "candidate_levels": {
+    "main": ["glcm", "glrlm", "glszm", "gldm", "ngtdm"],
+    "secondary": ["firstorder"],
+    "exploratory_qc": ["shape"],
+    "formal_prediction_pool": ["main", "secondary"]
+  },
+  "output": "prognosis_analysis/output/w03_habitat_radiomics_A"
+}
