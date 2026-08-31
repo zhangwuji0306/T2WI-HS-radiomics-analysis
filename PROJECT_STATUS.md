@@ -15,17 +15,18 @@
 - A 集和 B 集的队列定义、数据隔离规则及主参数已记录在项目方法文档中。
 - 已完成修正后18例M1/M2比较、A=393校正M1、结构状态、技术因素效应量及严格A=137核验；校正后A=393硬技术失败0例，结构性单生境25例。bootstrap按`smoke=20`、`preflight=200`、`formal=1000`分目录和模式管理；preflight 200次已完成并判定为`CLEAR PASS`，formal患者层面bootstrap已完成1000/1000、成功1000/1000并通过全部稳定性门禁，正式判定为`FORMAL PASS`、`formal_eligible=1`。A393身份审计对称差为0，A137仍为A393真子集；结局盲态保持。
 - 已完成结局盲态0.1%高信号阈值技术合理性审计及补充技术混杂分解：A筛选母队列530例，重算A393与现有清单对称差为0，A137仍为A393真子集；预设阈值扫描保持单调嵌套，A393 preflight已按区间完整连接。近0.10–<0.25%区间的post-SLIC高信号保留召回率中位数为0；补充模型显示加入原始序列名没有稳定的交叉验证增益，但肿瘤体积依赖仍存在，综合判断为`NEUTRAL_WITH_TECHNICAL_CAUTION`。主阈值仍保持0.1%，未读取结局或B集，未执行阈值优化。
+- W02 H-low/H-high Original radiomics 工作流已在 outcome-blind 条件下完成 A393 全量建立：固定使用 W01 肌肉归一化、`[1,1,2] mm`、无 N4 图像、肿瘤 ROI 与冻结 SLIC labels；PyRadiomics 固定 `Original`、`binWidth=0.248808`、不内部归一化/重采样，完整覆盖 first-order、shape、GLCM、GLRLM、GLSZM、GLDM 和 NGTDM。A393 中 dual-habitat 368例、single-H-low 24例、single-H-high 1例；R_low 可提取391例、R_high可提取356例，结构性未定义分别为1例和24例，技术失败分别为1例和13例。未读取临床、病理、预后或B集数据，未执行ICC、候选筛选或建模。
 - GitHub/Codex 仓库采用代码和文档边界；原始影像、临床数据、患者级结果和原始影像号均保留在本地。
 
 ## In progress
 
 - 当前执行协议为《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》及《三十二、具体执行工作流：从formal PASS至A-only model freeze.md》。
 - 旧冻结前修复任务书和方法学修订报告已转入`archive/protocol_history/`，仅作为决策历史保存。
-- 方法学证据存放于`manuscript/methodology_defense/`；患者级技术输出仍仅保留在本地。
+- 方法学证据存放于`manuscript/methodology_defense/`；W02 患者级特征、诊断与可用性输出保存在本地 `prognosis_analysis/output/w02_habitat_radiomics_A/`，仓库仅保留可复用脚本、固定配置、测试及协议文档。
 
 ## Next task
 
-当前为`FORMAL PASS`，进入冻结前代码整改与technical freeze。下一阶段先完成W00A冻结前阻断性代码修复及W00B冻结与数据隔离集成测试，再执行W01 technical freeze并生成第一阶段`freeze_lock.json`；随后按W02–W05冻结生境特异性组学、建模协议及A-only访问边界，再首次读取A集DFS。第一把锁只解锁A集预设临床变量与DFS；完成A-only nested validation、全A最终拟合并生成第二阶段`model_freeze_lock.json`后，才允许首次读取B集进行一次性外部验证。
+当前已完成 W02 outcome-blind habitat-specific Original radiomics 工作流建立。下一阶段执行 W03 结局盲态技术 QC 与候选池冻结，随后完成 W04 建模协议冻结和 W05 A-only 数据访问边界；在这些门禁完成前不读取 A 集 DFS。第一把锁只解锁 A 集预设临床变量与 DFS；完成 A-only nested validation、全 A 最终拟合并生成第二阶段 `model_freeze_lock.json` 后，才允许首次读取 B 集进行一次性外部验证。
 
 ## Important decisions
 

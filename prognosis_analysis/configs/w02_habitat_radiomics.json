@@ -1,0 +1,37 @@
+{
+  "stage": "W02",
+  "analysis_id": "w02_habitat_specific_original_radiomics_A",
+  "cohort": "A_lenient_technical_cohort",
+  "reader": "R1",
+  "preprocessing": {
+    "image": "feature_extract/output/preprocessed/<id>/R1_image.nrrd",
+    "tumor_roi": "feature_extract/output/preprocessed/<id>/R1_mask.nrrd",
+    "normalization": "muscle_mean_frozen_upstream",
+    "spacing_mm_xyz": [1.0, 1.0, 2.0],
+    "n4_enabled": false,
+    "resampling_performed_here": false
+  },
+  "habitat_labels": {
+    "map_root": "habitat_analysis/output/habitat_maps_A",
+    "map_manifest": "habitat_analysis/output/habitat_maps_A_manifest.csv",
+    "low_label": 0,
+    "high_label": 1,
+    "outside_label": -1,
+    "source": "frozen_W01_SLIC_labels"
+  },
+  "pyradiomics": {
+    "version": "3.0.1",
+    "imageType": {"Original": {}},
+    "binWidth": 0.248808,
+    "normalize": false,
+    "resampledPixelSpacing": null,
+    "resample": false,
+    "featureClass": ["firstorder", "shape", "glcm", "glrlm", "glszm", "gldm", "ngtdm"]
+  },
+  "availability": {
+    "structural_absence_is_technical_failure": false,
+    "structural_absence_feature_value": null,
+    "technical_failure_feature_value": null,
+    "paired_blocks": ["R_low", "R_high"]
+  }
+}
