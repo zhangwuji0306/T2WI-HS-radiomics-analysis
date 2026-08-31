@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 import pandas as pd
+from openpyxl import Workbook
 
 
 FEATURE_SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
@@ -129,6 +130,47 @@ class W05ReaderTests(unittest.TestCase):
             self.assertEqual(result["影像号"].tolist(), ["A"])
             self.assertNotIn("B", result["影像号"].tolist())
             self.assertEqual(float(result.loc[0, "f_original"]), 1.0)
+
+    def test_mixed_xlsx_skips_non_a_sensitive_cells_before_allowlist_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "synthetic.xlsx")
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["影像号", "DFS_time", "DFS_event", "OS", "B_forbidden"])
+            # Put B first so a full-row reader would encounter the sentinel
+            # before it can return the later A row.
+            sheet.append(["B1", 30.0, 1, 40.0, "B_SENSITIVE_SENTINEL"])
+            sheet.append(["A1", 10.0, 0, 20.0, "A_payload"])
+            workbook.save(path)
+
+            parsed_coordinates = []
+            original_parse_cell = data_split_guard.WorkSheetParser.parse_cell
+
+            def guarded_parse_cell(parser, element):
+                coordinate = element.get("r")
+                parsed_coordinates.append(coordinate)
+                if coordinate == "E2":
+                    raise AssertionError("non-A sensitive field was parsed")
+                return original_parse_cell(parser, element)
+
+            with mock.patch.object(data_split_guard, "validate_freeze_lock",
+                                   return_value={"A_outcome_unlock": True}), \
+                    mock.patch.object(data_split_guard.WorkSheetParser,
+                                      "parse_cell", new=guarded_parse_cell):
+                result = data_split_guard.read_A_outcomes(
+                    path,
+                    allowed_ids=["A1"],
+                    usecols=["影像号", "DFS_time", "DFS_event"],
+                )
+
+        self.assertEqual(result["影像号"].tolist(), ["A1"])
+        self.assertEqual(list(result.columns), ["影像号", "DFS_time", "DFS_event"])
+        self.assertNotIn("E2", parsed_coordinates)
+        self.assertEqual(
+            {coordinate for coordinate in parsed_coordinates
+             if coordinate and coordinate.endswith("2")},
+            {"A2"},
+        )
 
     def test_split_membership_is_shared_by_a_builder_and_qc(self):
         manifest = pd.DataFrame({"影像号": ["A", "B"], "排除": ["0", "0"]})

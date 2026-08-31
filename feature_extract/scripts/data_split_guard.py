@@ -13,6 +13,13 @@ from typing import Iterable, Optional, Set
 
 import pandas as pd
 
+try:
+    from openpyxl.utils.cell import coordinate_to_tuple
+    from openpyxl.worksheet._reader import WorkSheetParser
+except ImportError:  # pragma: no cover - CSV readers remain importable without openpyxl
+    coordinate_to_tuple = None
+    WorkSheetParser = None
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 FEATURE_ROOT = os.path.dirname(HERE)
 PROJECT_ROOT = os.path.dirname(FEATURE_ROOT)
@@ -130,6 +137,8 @@ def _stream_excel(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):
         from openpyxl import load_workbook
     except ImportError as exc:
         raise RuntimeError("openpyxl is required for authorized XLSX reads") from exc
+    if WorkSheetParser is None or coordinate_to_tuple is None:
+        raise RuntimeError("openpyxl worksheet parser is required for authorized XLSX reads")
     if args:
         raise ValueError("positional options are unsupported for authorized XLSX reader")
     dtype = kwargs.pop("dtype", None)
@@ -146,27 +155,115 @@ def _stream_excel(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):
             worksheet = workbook.worksheets[sheet_name]
         else:
             worksheet = workbook[sheet_name]
-        rows = worksheet.iter_rows(values_only=True)
+        class _AuthorizedWorksheetParser(WorkSheetParser):
+            """Parse only selected cells from selected, already-authorized rows."""
+
+            def __init__(self, *parser_args, selected_rows=None,
+                         selected_columns=None, **parser_kwargs):
+                super().__init__(*parser_args, **parser_kwargs)
+                self.selected_rows = selected_rows
+                self.selected_columns = (None if selected_columns is None
+                                         else set(selected_columns))
+
+            def parse_row(self, row):
+                attrs = dict(row.attrib)
+                if "r" in attrs:
+                    try:
+                        self.row_counter = int(attrs["r"])
+                    except ValueError:
+                        value = float(attrs["r"])
+                        if not value.is_integer():
+                            raise
+                        self.row_counter = int(value)
+                else:
+                    self.row_counter += 1
+                self.col_counter = 0
+                if (self.selected_rows is not None and
+                        self.row_counter not in self.selected_rows):
+                    return self.row_counter, []
+
+                cells = []
+                for element in row:
+                    coordinate = element.get("r")
+                    if coordinate:
+                        _, column = coordinate_to_tuple(coordinate)
+                        self.col_counter = column
+                    else:
+                        self.col_counter += 1
+                        column = self.col_counter
+                    if (self.selected_columns is not None and
+                            column not in self.selected_columns):
+                        continue
+                    # parse_cell increments col_counter when a cell has no
+                    # explicit coordinate; restore the pre-cell position so
+                    # sparse coordinate-less rows remain correctly indexed.
+                    if not coordinate:
+                        self.col_counter = column - 1
+                    cells.append(self.parse_cell(element))
+                return self.row_counter, cells
+
+        def filtered_rows(selected_rows, selected_columns):
+            source = worksheet._get_source()
+            parser = _AuthorizedWorksheetParser(
+                source,
+                worksheet._shared_strings,
+                data_only=worksheet.parent.data_only,
+                epoch=worksheet.parent.epoch,
+                date_formats=worksheet.parent._date_formats,
+                selected_rows=selected_rows,
+                selected_columns=selected_columns,
+            )
+            try:
+                for row_number, cells in parser.parse():
+                    if selected_rows is None or row_number in selected_rows:
+                        yield row_number, {
+                            cell["column"]: cell["value"] for cell in cells
+                        }
+            finally:
+                source.close()
+
+        header_rows = filtered_rows({1}, None)
         try:
-            header = [str(value).strip() if value is not None else ""
-                      for value in next(rows)]
+            _, header_values = next(header_rows)
         except StopIteration:
             raise ValueError("authorized XLSX sheet is empty: %s" % path)
+        finally:
+            header_rows.close()
+        header_width = worksheet.max_column or (max(header_values) if header_values else 0)
+        header = [str(header_values.get(number, "")).strip()
+                  if header_values.get(number) is not None else ""
+                  for number in range(1, header_width + 1)]
         if id_column not in header:
             raise ValueError("%s lacks identifier column %s" % (path, id_column))
+        if header.count(id_column) != 1:
+            raise ValueError("%s must contain exactly one identifier column %s" %
+                             (path, id_column))
         if usecols is None:
-            columns = header
+            column_numbers = list(range(1, len(header) + 1))
         else:
-            requested = set(usecols)
-            columns = [column for column in header if column in requested]
-            if id_column not in columns:
-                columns.insert(0, id_column)
-        output = []
-        for values in rows:
-            row = dict(zip(header, values))
-            identifier = str(row.get(id_column, "")).strip()
+            requested = {usecols} if isinstance(usecols, str) else set(usecols)
+            column_numbers = [number for number, column in enumerate(header, 1)
+                              if column in requested]
+            id_number = header.index(id_column) + 1
+            if id_number not in column_numbers:
+                column_numbers.insert(0, id_number)
+        columns = [header[number - 1] for number in column_numbers]
+
+        # First pass touches only the identifier column.  No non-ID cell from
+        # any row is parsed while the A allow-list is being resolved.
+        id_number = header.index(id_column) + 1
+        selected_rows = []
+        for row_number, cell_values in filtered_rows(None, {id_number}):
+            identifier = str(cell_values.get(id_number, "")).strip()
             if identifier in allowed_ids:
-                output.append({column: row.get(column) for column in columns})
+                selected_rows.append(row_number)
+
+        # Second pass touches only requested columns and only rows admitted by
+        # the first pass.  Non-A rows never become application-level records.
+        output = []
+        selected_row_set = set(selected_rows)
+        for _, cell_values in filtered_rows(selected_row_set, set(column_numbers)):
+            output.append([cell_values.get(number) for number in column_numbers])
         return _apply_dtype(pd.DataFrame(output, columns=columns), dtype)
     finally:
         workbook.close()
