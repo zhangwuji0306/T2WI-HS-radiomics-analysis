@@ -134,6 +134,7 @@ def _stream_excel(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):
         raise ValueError("positional options are unsupported for authorized XLSX reader")
     dtype = kwargs.pop("dtype", None)
     sheet_name = kwargs.pop("sheet_name", 0)
+    usecols = kwargs.pop("usecols", None)
     if kwargs:
         raise ValueError("unsupported options for authorized XLSX reader: %s" %
                          sorted(kwargs))
@@ -153,13 +154,20 @@ def _stream_excel(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):
             raise ValueError("authorized XLSX sheet is empty: %s" % path)
         if id_column not in header:
             raise ValueError("%s lacks identifier column %s" % (path, id_column))
+        if usecols is None:
+            columns = header
+        else:
+            requested = set(usecols)
+            columns = [column for column in header if column in requested]
+            if id_column not in columns:
+                columns.insert(0, id_column)
         output = []
         for values in rows:
             row = dict(zip(header, values))
             identifier = str(row.get(id_column, "")).strip()
             if identifier in allowed_ids:
-                output.append(row)
-        return _apply_dtype(pd.DataFrame(output, columns=header), dtype)
+                output.append({column: row.get(column) for column in columns})
+        return _apply_dtype(pd.DataFrame(output, columns=columns), dtype)
     finally:
         workbook.close()
 
