@@ -1,0 +1,100 @@
+{
+  "stage": "W07",
+  "status": "frozen",
+  "input": {
+    "source": "prognosis_analysis/output/A_modeling/A_modeling_population.csv",
+    "schema": "prognosis_analysis/output/A_modeling/A_modeling_population_schema.json",
+    "expected_columns": [
+      "影像号",
+      "technical_cohort",
+      "DFS_time",
+      "DFS_event",
+      "modeling_eligible"
+    ],
+    "technical_cohort": "A393",
+    "expected_population": 393,
+    "expected_events": 89,
+    "expected_censors": 304,
+    "eligibility_source": "W06 endpoint QC only"
+  },
+  "outer_cv": {
+    "n_splits": 5,
+    "n_repeats": 10,
+    "n_validation_folds": 50,
+    "stratify_by": "DFS_event",
+    "minimum_events_per_train_fold": 1,
+    "minimum_events_per_validation_fold": 1,
+    "seed_root": 12345,
+    "seed_formula": "12345 + (repeat - 1)",
+    "roles": [
+      "train",
+      "validation"
+    ],
+    "same_plan_for": [
+      "M0",
+      "M1",
+      "M2",
+      "M5",
+      "R_low: M2 vs M3L",
+      "R_high: M2 vs M3H",
+      "dual-radiomics: M2/M3L/M3H/M4",
+      "dual-radiomics: M3L vs M3H paired comparison"
+    ]
+  },
+  "populations": {
+    "main": {
+      "models": [
+        "M0",
+        "M1",
+        "M2"
+      ],
+      "eligibility": "Exact W06 A393 modeling population; retain structural G values; no model-performance exclusion."
+    },
+    "M5": {
+      "models": [
+        "M5"
+      ],
+      "eligibility": "Main A modeling population intersected with W-available technical cases; refit M0 on the identical cases and outer folds; no outcome-based availability filter."
+    },
+    "R_low": {
+      "models": [
+        "M3L"
+      ],
+      "eligibility": "Main A modeling population with structurally present and W03-technically available R_low; M2 comparator uses the identical cases and outer folds."
+    },
+    "R_high": {
+      "models": [
+        "M3H"
+      ],
+      "eligibility": "Main A modeling population with structurally present and W03-technically available R_high; M2 comparator uses the identical cases and outer folds."
+    },
+    "dual_radiomics": {
+      "models": [
+        "M2",
+        "M3L",
+        "M3H",
+        "M4"
+      ],
+      "eligibility": "Main A modeling population with both R_low and R_high structurally and technically available; supports the paired M3L versus M3H comparison."
+    }
+  },
+  "exclusion_rule": {
+    "allowed_exclusions": [
+      "frozen technical exclusion",
+      "outcome unavailable",
+      "duplicated ID",
+      "DFS_time<=0",
+      "DFS_event outside {0,1}",
+      "event/time conflict",
+      "explicit unrepairable source-data error"
+    ],
+    "performance_based_exclusion": false,
+    "nested_cv_or_tuning": false
+  },
+  "forbidden_operations": [
+    "read B clinical, outcome, radiomics, habitat, QC, missingness, or performance data",
+    "read the mixed clinical workbook or build an A+B dataframe",
+    "nested CV, hyperparameter tuning, or model fitting",
+    "alter W06 DFS definition, censor rule, follow-up cutoff, eligibility, or technical cohort"
+  ]
+}
