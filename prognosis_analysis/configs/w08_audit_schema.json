@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "stage": "W08",
+  "status": "schema_only",
+  "required_keys": {
+    "stage": "W08",
+    "status": "implementation_ready_not_run",
+    "formal_run": "boolean",
+    "runs_requested": "array",
+    "models_requested": "array",
+    "outer_split_hash": "sha256",
+    "outer_split_hash_locked": "sha256",
+    "W04_protocol_sha256": "sha256",
+    "outer_split_validation": "object",
+    "n_fold_results": "integer",
+    "n_predictions": "integer",
+    "B_data_read": "false",
+    "B_reader_invoked": "false",
+    "B_source_opened": "false",
+    "B_statistics_generated": "false",
+    "patient_level_outputs_written": "false",
+    "outer_validation_used_for_selection": "false",
+    "candidate_failures": "integer"
+  },
+  "per_fold_required": [
+    "run_id", "model_id", "population", "training_id_hash",
+    "validation_id_hash", "outer_split_hash", "W04_protocol_sha256",
+    "fold_kmeans_seed", "model_solver_seed", "centers", "boundary",
+    "R_low_candidate_hash", "R_high_candidate_hash",
+    "outer_validation_used_for_selection", "candidate_attempts",
+    "candidate_failures", "stability_actions"
+  ]
+}

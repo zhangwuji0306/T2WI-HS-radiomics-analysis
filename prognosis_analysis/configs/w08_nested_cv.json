@@ -1,0 +1,86 @@
+{
+  "stage": "W08",
+  "status": "implementation_ready_not_run",
+  "frozen_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+  "frozen_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+  "outer_cv": {
+    "folds": 5,
+    "repeats": 10,
+    "total_folds": 50,
+    "stratify_by": "DFS_event",
+    "validation_roles": ["train", "validation"],
+    "fixed_seed_root": 12345
+  },
+  "inner_cv": {
+    "folds": 5,
+    "stratify_by": "DFS_event",
+    "selection_metric": "mean inner-validation Uno C-index",
+    "validation_never_used_for_selection": true
+  },
+  "alpha_grid": [0.1, 0.5, 0.9, 1.0],
+  "lambda_grid": {
+    "values_per_alpha": 100,
+    "scale": "log-spaced from each training-only lambda_max to lambda_max*1e-4",
+    "minimum_ratio": 0.0001,
+    "lambda_max_scope": "each inner-training fit and the outer-training refit",
+    "tie_break": ["larger lambda within 1e-12", "smaller alpha in frozen grid order"]
+  },
+  "models": ["M0", "M1", "M2", "M3L", "M3H", "M4", "M5"],
+  "fixed_runs": [
+    {"run_id": "M0", "model_id": "M0", "population": "main"},
+    {"run_id": "M1", "model_id": "M1", "population": "main"},
+    {"run_id": "M2", "model_id": "M2", "population": "main"},
+    {"run_id": "M0_W_available", "model_id": "M0", "population": "W_available"},
+    {"run_id": "M5", "model_id": "M5", "population": "W_available"},
+    {"run_id": "M2_R_low", "model_id": "M2", "population": "R_low"},
+    {"run_id": "M3L", "model_id": "M3L", "population": "R_low"},
+    {"run_id": "M2_R_high", "model_id": "M2", "population": "R_high"},
+    {"run_id": "M3H", "model_id": "M3H", "population": "R_high"},
+    {"run_id": "M2_dual_radiomics", "model_id": "M2", "population": "dual_radiomics"},
+    {"run_id": "M3L_dual_radiomics", "model_id": "M3L", "population": "dual_radiomics"},
+    {"run_id": "M3H_dual_radiomics", "model_id": "M3H", "population": "dual_radiomics"},
+    {"run_id": "M4", "model_id": "M4", "population": "dual_radiomics"}
+  ],
+  "model_populations": {
+    "main": ["M0", "M1", "M2"],
+    "W_available": ["M5"],
+    "R_low": ["M3L"],
+    "R_high": ["M3H"],
+    "dual_radiomics": ["M4"]
+  },
+  "provenance": {
+    "population_source": "prognosis_analysis/output/A_modeling/A_modeling_population.csv",
+    "outer_split_source": "prognosis_analysis/output/outer_splits_A.csv",
+    "W06_population_binding": "reused from w07_outer_splits.py code lock",
+    "R_low_candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high_candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+    "B_data_read": false,
+    "patient_level_outputs_written": false
+  },
+  "output_schema": {
+    "predictions": "prognosis_analysis/configs/w08_results_schema.json#predictions",
+    "fold_results": "prognosis_analysis/configs/w08_results_schema.json#fold_results",
+    "selection_results": "prognosis_analysis/configs/w08_results_schema.json#selection_results",
+    "patient_level_outputs_written": false
+  },
+  "audit_schema": {
+    "path": "prognosis_analysis/configs/w08_audit_schema.json",
+    "required_provenance": [
+      "training_id_hash",
+      "validation_id_hash",
+      "outer_split_hash",
+      "W04_protocol_sha256",
+      "fold_kmeans_seed",
+      "model_solver_seed",
+      "R_low_candidate_hash",
+      "R_high_candidate_hash"
+    ],
+    "required_isolation_flags": [
+      "outer_validation_used_for_selection",
+      "B_data_read",
+      "B_reader_invoked",
+      "B_source_opened",
+      "B_statistics_generated"
+    ]
+  }
+}
