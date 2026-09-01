@@ -74,6 +74,26 @@ def synthetic_splits(frame):
     return population, splits
 
 
+def convergent_synthetic_frame(n=50):
+    """Return a deterministic, non-separated fixture for fitted-model tests."""
+    frame = synthetic_frame(n)
+    rng = np.random.RandomState(2026)
+    frame["DFS_time"] = np.arange(2.0, float(n) + 2.0)
+    event = np.zeros(n, dtype=int)
+    event[rng.choice(n, n // 2, replace=False)] = 1
+    frame["DFS_event"] = event
+    for column in ["年龄", "CEA_log", "thickness", "EID"]:
+        frame[column] = rng.normal(size=n)
+    for column, levels in [("mrT_4级", [1, 2, 3, 4]),
+                           ("mrN_3级", [0, 1, 2, 3])]:
+        frame[column] = rng.choice(levels, size=n)
+    for column in ["MRF", "mrEMVI", "活检病理非腺癌"]:
+        frame[column] = rng.randint(0, 2, size=n)
+    for column in w08.GLOBAL_COLUMNS:
+        frame[column] = rng.normal(size=n)
+    return frame
+
+
 class W08NestedCVTests(unittest.TestCase):
     def test_config_freezes_models_and_tuning_grid(self):
         config = w08_config()
@@ -87,7 +107,7 @@ class W08NestedCVTests(unittest.TestCase):
                          w08.FIXED_RUN_IDS)
 
     def test_one_synthetic_outer_fold_covers_all_w04_models(self):
-        frame = synthetic_frame()
+        frame = convergent_synthetic_frame()
         population, splits = synthetic_splits(frame)
         values = {identifier: np.linspace(1.0 + (index % 3),
                                           3.0 + (index % 3), 6)
@@ -121,7 +141,7 @@ class W08NestedCVTests(unittest.TestCase):
                                 for record in inner_records))
 
     def test_provider_fit_receives_training_ids_only_and_reuses_boundary(self):
-        frame = synthetic_frame()
+        frame = convergent_synthetic_frame()
         population, splits = synthetic_splits(frame)
         values = {identifier: np.asarray([1.0, 1.1, 1.2, 1.3])
                   for identifier in frame["patient_id"]}
@@ -267,6 +287,68 @@ class W08NestedCVTests(unittest.TestCase):
         self.assertIsNone(model.coef_)
         self.assertFalse(model.fit_audit["converged"])
         self.assertEqual(model.fit_audit["fit_status"], "non_converged")
+
+    def test_cox_ph_nonconvergence_clears_state_and_blocks_prediction(self):
+        X = np.asarray([[0.0], [1.0], [2.0], [3.0]])
+        time = np.asarray([1.0, 2.0, 3.0, 4.0])
+        event = np.asarray([1, 0, 1, 0])
+        model = w08.CoxPHModel(max_iter=1, tolerance=1e-12)
+        with self.assertRaises(w08.W08NumericalFailure) as raised:
+            model.fit(X, time, event)
+        self.assertIsNone(model.coef_)
+        self.assertIsNone(model.baseline_times_)
+        self.assertIsNone(model.baseline_survival_)
+        self.assertFalse(model.fit_audit["converged"])
+        self.assertEqual(model.fit_audit["fit_status"], "non_converged")
+        self.assertEqual(model.fit_audit["failure_reason"],
+                         "iteration_budget_exhausted")
+        self.assertEqual(raised.exception.audit, model.fit_audit)
+        with self.assertRaises(w08.W08ValidationError):
+            model.predict_risk(X)
+        with self.assertRaises(w08.W08ValidationError):
+            model.predict_survival(X, {"horizon": 3.0})
+
+    def test_cox_ph_converged_path_still_produces_predictions(self):
+        rng = np.random.RandomState(0)
+        X = rng.normal(size=(40, 3))
+        time = np.arange(1.0, 41.0)
+        event = np.asarray([1 if index % 3 == 0 else 0
+                            for index in range(40)])
+        model = w08.CoxPHModel(max_iter=250, tolerance=1e-7).fit(
+            X, time, event)
+        self.assertTrue(model.fit_audit["converged"])
+        self.assertEqual(model.fit_audit["fit_status"], "converged")
+        self.assertEqual(model.predict_risk(X).shape, (40,))
+        self.assertEqual(model.predict_survival(
+            X, {"horizon": 3.0})["horizon"].shape, (40,))
+
+    def test_outer_model_rejects_nonconverged_fit_before_prediction(self):
+        frame = synthetic_frame()
+
+        def return_nonconverged(model, X, time, event):
+            model.coef_ = np.ones(X.shape[1], dtype=float)
+            model.baseline_times_ = np.asarray([1.0])
+            model.baseline_survival_ = np.asarray([0.5])
+            model.fit_audit = {
+                "converged": False,
+                "fit_status": "non_converged",
+                "failure_reason": "forced_test_failure",
+            }
+            return model
+
+        with mock.patch.object(w08.CoxPHModel, "fit",
+                               new=return_nonconverged):
+            for model_id in ("M0", "M1", "M2"):
+                with self.assertRaises(w08.W08NumericalFailure) as raised:
+                    w08._fit_outer_model(
+                        frame.iloc[:30].reset_index(drop=True),
+                        frame.iloc[30:].reset_index(drop=True),
+                        model_id, inner_seed=22346, max_iter=1)
+                self.assertEqual(raised.exception.audit["failure_reason"],
+                                 "forced_test_failure")
+                self.assertFalse(raised.exception.audit["converged"])
+                self.assertEqual(raised.exception.audit["fit_status"],
+                                 "non_converged")
 
     def test_no_qualified_candidate_returns_auditable_failure(self):
         frame = synthetic_frame(30).iloc[:30].reset_index(drop=True)

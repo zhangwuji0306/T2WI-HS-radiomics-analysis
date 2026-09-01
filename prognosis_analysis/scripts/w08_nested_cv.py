@@ -1095,6 +1095,13 @@ class CoxPHModel(object):
         X = np.asarray(X, dtype=float)
         time = np.asarray(time, dtype=float)
         event = np.asarray(event, dtype=int)
+        # A model instance may be reused after a prior successful fit.  Clear
+        # all predictive state before starting a new attempt so a failed fit
+        # can never expose stale coefficients or a stale baseline.
+        self.coef_ = None
+        self.baseline_times_ = None
+        self.baseline_survival_ = None
+        self.fit_audit = {}
         if np.sum(event) < 1:
             raise W08ValidationError("unpenalized Cox fit requires an event")
         beta = np.zeros(X.shape[1], dtype=float)
@@ -1131,26 +1138,35 @@ class CoxPHModel(object):
                     "converged": False,
                     "fit_status": "non_converged",
                     "convergence_reason": None,
+                    "failure_reason": "line_search_failed",
                     "stability_actions": ["line_search_failed"],
                     "linear_predictor_clipping": clipping,
                 }
-                # Unpenalized Cox has no candidate-selection fallback.  Keep
-                # the last finite iterate only with an explicit non-converged
-                # status so downstream audit cannot treat it as a successful
-                # fit.
-                self.coef_ = beta.copy()
                 self.fit_audit = audit
-                self._fit_baseline(X, time, event)
-                return self
+                raise W08NumericalFailure(
+                    "Unpenalized Cox line search failed", audit=audit)
             if np.max(np.abs(length * step)) < self.tolerance:
                 converged = True
                 break
+        if not converged:
+            audit = {
+                "iterations": self.max_iter,
+                "converged": False,
+                "fit_status": "non_converged",
+                "convergence_reason": None,
+                "failure_reason": "iteration_budget_exhausted",
+                "stability_actions": ["iteration_budget_exhausted"],
+                "linear_predictor_clipping": clipping,
+            }
+            self.fit_audit = audit
+            raise W08NumericalFailure(
+                "Unpenalized Cox fit did not converge", audit=audit)
         self.coef_ = beta
         self.fit_audit = {
             "iterations": iteration + 1,
-            "converged": bool(converged),
-            "fit_status": "converged" if converged else "non_converged",
-            "convergence_reason": "coefficient_delta" if converged else None,
+            "converged": True,
+            "fit_status": "converged",
+            "convergence_reason": "coefficient_delta",
             "stability_actions": [],
             "linear_predictor_clipping": clipping,
         }
@@ -1180,7 +1196,8 @@ class CoxPHModel(object):
         self.baseline_survival_ = np.asarray(survival, dtype=float)
 
     def predict_risk(self, X):
-        if self.coef_ is None:
+        if self.coef_ is None or not self.fit_audit.get("converged", False) or \
+                self.fit_audit.get("fit_status") != "converged":
             raise W08ValidationError("Cox model is not fitted")
         return np.asarray(X, dtype=float).dot(self.coef_)
 
@@ -1339,7 +1356,8 @@ class CoxElasticNetModel(object):
         self.baseline_survival_ = helper.baseline_survival_
 
     def predict_risk(self, X):
-        if self.coef_ is None:
+        if self.coef_ is None or not self.fit_audit.get("converged", False) or \
+                self.fit_audit.get("fit_status") != "converged":
             raise W08ValidationError("Elastic-Net model is not fitted")
         return np.asarray(X, dtype=float).dot(self.coef_)
 
@@ -1355,6 +1373,28 @@ class CoxElasticNetModel(object):
             hazard = -math.log(max(baseline, 1e-300))
             output[name] = np.exp(-hazard * np.exp(np.clip(risk, -50.0, 50.0)))
         return output
+
+
+def _require_converged_model(model, context):
+    """Reject any model that cannot be audited as a valid fitted model."""
+    audit = dict(getattr(model, "fit_audit", {}) or {})
+    valid = (audit.get("converged") is True and
+             audit.get("fit_status") == "converged" and
+             getattr(model, "coef_", None) is not None)
+    if valid:
+        return model
+    if not audit.get("failure_reason"):
+        audit["failure_reason"] = (
+            "missing_coefficients" if getattr(model, "coef_", None) is None
+            else "non_converged_model")
+    audit["converged"] = False
+    audit["fit_status"] = "non_converged"
+    model.coef_ = None
+    model.baseline_times_ = None
+    model.baseline_survival_ = None
+    model.fit_audit = audit
+    raise W08NumericalFailure(
+        "%s did not converge" % context, audit=audit)
 
 
 def make_inner_splits(frame, seed, folds=5):
@@ -1615,6 +1655,8 @@ def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
                             alpha, penalty, max_iter=max_iter,
                             tolerance=tolerance).fit(
                             X_train, train_time, train_event)
+                    _require_converged_model(
+                        model, "inner Elastic-Net Cox candidate")
                     risk = model.predict_risk(X_validation)
                     if not np.isfinite(risk).all():
                         raise W08NumericalFailure(
@@ -1713,14 +1755,11 @@ def _fit_outer_model(train_frame, validation_frame, model_id, inner_seed,
         model = CoxElasticNetModel(
             selection["alpha"], final_lambda, max_iter=max_iter,
             tolerance=tolerance).fit(X_train, train_time, train_event)
-        if not model.fit_audit.get("converged", False):
-            raise W08NumericalFailure(
-                "outer Elastic-Net Cox fit did not converge",
-                audit=model.fit_audit)
         selection["outer_lambda_max"] = float(outer_lambda_max)
         selection["outer_lambda"] = final_lambda
         selection["stability_actions"] = sorted(set(
             selection["stability_actions"] + model.fit_audit.get("stability_actions", [])))
+    _require_converged_model(model, "outer %s Cox fit" % model_id)
     selection["converged"] = bool(model.fit_audit.get("converged", False))
     selection["fit_status"] = model.fit_audit.get("fit_status", "unknown")
     selection["convergence_reason"] = model.fit_audit.get("convergence_reason")
