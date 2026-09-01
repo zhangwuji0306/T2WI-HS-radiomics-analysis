@@ -171,7 +171,7 @@ class Stage7FreezePathTests(unittest.TestCase):
                                       return_value="synthetic-commit\n"):
                 self.assertTrue(workflow.stage7_freeze())
 
-            validated_paths = [os.path.abspath(call.args[0])
+            validated_paths = [os.path.abspath(call[0][0])
                                for call in validate_lock.call_args_list]
             self.assertIn(os.path.abspath(paths["FREEZE_LOCK_STAGING"]), validated_paths)
             self.assertGreaterEqual(validated_paths.count(os.path.abspath(paths["FREEZE_LOCK"])), 1)

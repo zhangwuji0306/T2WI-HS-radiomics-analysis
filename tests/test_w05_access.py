@@ -267,7 +267,7 @@ class Stage6QCTests(unittest.TestCase):
                 result = stage6_qc.process_table(
                     "synthetic", "original", ["A1", "A2", "A3"])
 
-        self.assertEqual(reader.call_args.kwargs["allowed_ids"],
+        self.assertEqual(reader.call_args[1]["allowed_ids"],
                          {"A1", "A2", "A3", "A4", "A5"})
         target = result["icc"].set_index("feature").loc["feature_000"]
         self.assertGreater(float(target["icc_A"]), stage6_qc.ICC_THRESHOLD)

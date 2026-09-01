@@ -447,7 +447,7 @@ def validate_outer_splits(split_frame: pd.DataFrame, population: pd.DataFrame,
 
 def _canonical_csv_bytes(split_frame: pd.DataFrame) -> bytes:
     return split_frame[SPLIT_COLUMNS].to_csv(
-        index=False, lineterminator="\n").encode("utf-8")
+        index=False, line_terminator="\n").encode("utf-8")
 
 
 def _write_atomic(path: str, payload: bytes) -> None:

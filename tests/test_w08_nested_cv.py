@@ -170,7 +170,7 @@ class W08NestedCVTests(unittest.TestCase):
         _, splits = synthetic_splits(frame)
         digest = hashlib.sha256(
             splits[w08.W07_SPLIT_COLUMNS].to_csv(
-                index=False, lineterminator="\n").encode("utf-8")).hexdigest()
+                index=False, line_terminator="\n").encode("utf-8")).hexdigest()
         self.assertEqual(w08._canonical_split_hash(splits), digest)
         self.assertNotEqual(digest, "")
         with self.assertRaises(w08.W08ValidationError):

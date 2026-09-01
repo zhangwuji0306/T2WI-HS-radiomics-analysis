@@ -256,7 +256,7 @@ def canonical_id_hash(ids):
 def _canonical_split_hash(frame):
     return hashlib.sha256(
         frame[W07_SPLIT_COLUMNS].to_csv(
-            index=False, lineterminator="\n").encode("utf-8")).hexdigest()
+            index=False, line_terminator="\n").encode("utf-8")).hexdigest()
 
 
 def _read_json(path):
