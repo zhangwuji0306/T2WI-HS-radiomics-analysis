@@ -22,7 +22,9 @@
         "boundary", "representation_metadata", "preprocessing_audit",
         "selected_alpha", "selected_lambda_ratio", "selected_lambda",
         "selected_features", "candidate_attempts", "candidate_failures",
-        "inner_folds", "stability_actions", "outer_validation_used_for_selection",
+        "inner_folds", "stability_actions", "converged", "fit_status",
+        "convergence_reason",
+        "linear_predictor_clipping", "outer_validation_used_for_selection",
         "R_low_candidate_hash", "R_high_candidate_hash", "harrell_c_index",
         "harrell_c_index_reason", "uno_c_index", "uno_c_index_reason",
         "3_year_auc", "3_year_auc_reason", "3_year_brier", "3_year_brier_reason",
@@ -39,8 +41,10 @@
         "run_id", "model_id", "population", "repeat", "fold", "training_id_hash",
         "validation_id_hash", "inner_seed", "selected_alpha",
         "selected_lambda_ratio", "selected_lambda", "inner_mean_uno_c_index",
-        "candidate_attempts", "candidate_failures",
-        "outer_validation_used_for_selection", "inner_records"
+        "candidate_attempts", "candidate_failures", "converged", "fit_status",
+        "convergence_reason",
+        "linear_predictor_clipping",
+         "outer_validation_used_for_selection", "inner_records"
       ]
     }
   }

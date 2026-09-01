@@ -101,7 +101,12 @@ class W08NestedCVTests(unittest.TestCase):
                          set(w08.MODEL_SPECS))
         self.assertEqual(len(result["fold_results"]), 7)
         self.assertEqual(len(result["selection_results"]), 7)
-        self.assertTrue((result["fold_results"]["candidate_failures"] == 0).all())
+        for _, selection in result["selection_results"].iterrows():
+            expected_failures = sum(
+                record["candidate_failed"]
+                for record in selection["inner_records"])
+            self.assertEqual(int(selection["candidate_failures"]),
+                             expected_failures)
         self.assertTrue((result["fold_results"]["outer_validation_used_for_selection"] == False).all())  # noqa: E712
         self.assertEqual(result["audit"]["B_data_read"], False)
         self.assertFalse(result["audit"]["patient_level_outputs_written"])
@@ -183,11 +188,115 @@ class W08NestedCVTests(unittest.TestCase):
             frame, "M3L", inner_seed=22346, lambda_count=3,
             max_iter=45, tolerance=1e-6)
         self.assertEqual(selection["candidate_attempts"], 5 * 4 * 3)
-        self.assertEqual(selection["candidate_failures"], 0)
+        self.assertEqual(
+            selection["candidate_failures"],
+            sum(row["candidate_failed"] for row in selection["all_inner_records"]))
         self.assertTrue(selection["all_inner_records"])
         self.assertTrue(all(row["candidate_attempted"]
                             for row in selection["all_inner_records"]))
         self.assertTrue(selection["stability_actions"])
+
+    def test_population_alignment_includes_dfs_time(self):
+        frame = synthetic_frame()
+        population, _ = synthetic_splits(frame)
+        population["DFS_time"] = frame.set_index("patient_id").loc[
+            population["patient_id"], "DFS_time"].to_numpy()
+        changed = population.copy()
+        changed.loc[0, "DFS_time"] = 999.0
+        with self.assertRaises(w08.W08ValidationError):
+            w08._validate_population_alignment(frame, changed)
+
+    def test_split_normalisation_uses_string_patient_ids(self):
+        frame = pd.DataFrame({
+            "patient_id": [1, 2], "repeat": [1, 1], "fold": [1, 1],
+            "role": ["train", "validation"], "seed": [12345, 12345],
+        })
+        normalised = w08._normalise_split_frame(frame)
+        self.assertEqual(normalised["patient_id"].dtype, object)
+        self.assertEqual(normalised["patient_id"].tolist(), ["1", "2"])
+
+    def test_prefilled_frame_provider_cannot_be_formal_provider(self):
+        frame = synthetic_frame()
+        _, splits = synthetic_splits(frame)
+        provider = w08.FrameFoldFeatureProvider(
+            frame, {pid: [1.0, 2.0] for pid in frame["patient_id"]})
+        with self.assertRaisesRegex(
+                w08.W08ValidationError, "explicit fold-feature regeneration"):
+            w08.run_w08_in_memory(
+                frame, splits, provider, config=w08_config(), models=["M0"],
+                strict_schema=False, require_fixed_hash=True)
+
+    def test_formal_provider_must_audit_all_fold_specific_columns(self):
+        class IncompleteFormalProvider(w08.FoldFeatureProvider):
+            formal_capable = True
+
+        provider = IncompleteFormalProvider()
+        state = w08.FoldState(
+            training_id_hash=w08.canonical_id_hash(["S001"]), seed=1,
+            metadata={"feature_sources": {}})
+        with self.assertRaisesRegex(
+                w08.W08ValidationError, "audit every required"):
+            w08._validate_fold_provider_state(
+                provider, state, ["S001"], w08.FOLD_SPECIFIC_FEATURES)
+
+    def test_strict_candidate_pool_rejects_same_count_substitution(self):
+        frame = synthetic_frame()
+        for block in ("R_low", "R_high"):
+            for column in list(frame.columns):
+                if column.startswith(w08.RADIOMICS_PREFIXES[block]):
+                    frame = frame.drop(columns=[column])
+            for index, feature in enumerate(w08.FROZEN_CANDIDATE_FEATURES[block]):
+                frame[w08.RADIOMICS_PREFIXES[block] + feature] = \
+                    np.linspace(0.1 + index, 1.1 + index, len(frame))
+        w08.validate_feature_schema(frame, models=["M3L"], strict=True)
+        original = (w08.RADIOMICS_PREFIXES["R_low"] +
+                    w08.FROZEN_CANDIDATE_FEATURES["R_low"][0])
+        frame = frame.rename(columns={original: "R_low__same_count_spoof"})
+        with self.assertRaisesRegex(
+                w08.W08ValidationError, "candidate feature identity"):
+            w08.validate_feature_schema(frame, models=["M3L"], strict=True)
+
+    def test_numerical_nonconvergence_has_no_successful_old_coefficients(self):
+        X = np.asarray([[0.0], [1.0], [2.0], [3.0]])
+        time = np.asarray([1.0, 2.0, 3.0, 4.0])
+        event = np.asarray([1, 0, 1, 0])
+        model = w08.CoxElasticNetModel(
+            alpha=0.5, penalty=0.01, max_iter=1, tolerance=1e-12)
+        with self.assertRaises(w08.W08NumericalFailure):
+            model.fit(X, time, event)
+        self.assertIsNone(model.coef_)
+        self.assertFalse(model.fit_audit["converged"])
+        self.assertEqual(model.fit_audit["fit_status"], "non_converged")
+
+    def test_no_qualified_candidate_returns_auditable_failure(self):
+        frame = synthetic_frame(30).iloc[:30].reset_index(drop=True)
+        frame["DFS_event"] = [1] * 15 + [0] * 15
+        original_fit = w08.CoxElasticNetModel.fit
+
+        def fail_fit(model, X, time, event):
+            audit = {
+                "converged": False,
+                "fit_status": "non_converged",
+                "stability_actions": ["forced_test_failure"],
+                "linear_predictor_clipping": w08._new_clipping_audit(),
+            }
+            model.coef_ = None
+            model.fit_audit = audit
+            raise w08.W08NumericalFailure("forced numerical failure", audit=audit)
+
+        try:
+            with mock.patch.object(w08.CoxElasticNetModel, "fit", new=fail_fit):
+                with self.assertRaises(w08.W08CandidateSelectionFailure) as raised:
+                    w08.tune_elastic_net(
+                        frame, "M3L", inner_seed=22346, lambda_count=1,
+                        max_iter=1, tolerance=1e-6)
+        finally:
+            w08.CoxElasticNetModel.fit = original_fit
+        self.assertEqual(raised.exception.audit["candidate_attempts"], 20)
+        self.assertEqual(raised.exception.audit["candidate_failures"], 20)
+        self.assertTrue(all(
+            row["candidate_failed"]
+            for row in raised.exception.audit["candidate_records"]))
 
 
 if __name__ == "__main__":

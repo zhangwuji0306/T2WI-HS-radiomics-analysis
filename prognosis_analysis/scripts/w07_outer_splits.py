@@ -287,8 +287,13 @@ def _normalize_population(frame: pd.DataFrame, config: dict) -> pd.DataFrame:
     if int(events.eq(0).sum()) != expected_censors:
         raise W07ValidationError("W07 input censor count is not %d" % expected_censors)
 
+    # Retain DFS_time in the normalized W06 provenance frame.  W07 does not
+    # use it to construct the split plan, but W08 must be able to verify the
+    # complete endpoint provenance rather than reconstructing it from the
+    # feature frame under test.
     normalized = pd.DataFrame({
-        "patient_id": population["patient_id"],
+        "patient_id": population["patient_id"].astype(str),
+        "DFS_time": times.astype(float),
         "DFS_event": events.astype(int),
     })
     return normalized.sort_values("patient_id", kind="mergesort").reset_index(drop=True)

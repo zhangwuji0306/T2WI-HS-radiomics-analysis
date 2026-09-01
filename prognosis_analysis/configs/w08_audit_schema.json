@@ -20,7 +20,10 @@
     "B_statistics_generated": "false",
     "patient_level_outputs_written": "false",
     "outer_validation_used_for_selection": "false",
-    "candidate_failures": "integer"
+    "candidate_attempts": "integer",
+    "candidate_failures": "integer",
+    "stability_actions": "array",
+    "linear_predictor_clipping": "object"
   },
   "per_fold_required": [
     "run_id", "model_id", "population", "training_id_hash",
@@ -28,6 +31,7 @@
     "fold_kmeans_seed", "model_solver_seed", "centers", "boundary",
     "R_low_candidate_hash", "R_high_candidate_hash",
     "outer_validation_used_for_selection", "candidate_attempts",
-    "candidate_failures", "stability_actions"
+    "candidate_failures", "stability_actions", "converged", "fit_status",
+    "linear_predictor_clipping"
   ]
 }
