@@ -48,6 +48,17 @@ OUTPUT_ROOT = os.path.join(ROOT, "output", "w08_formal_A")
 WORK_ROOT = os.path.join(OUTPUT_ROOT, "work")
 SLIC_CACHE_ROOT = os.path.join(WORK_ROOT, "slic_cache")
 
+MINIMUM_ROI_SIZE = 10
+RADIOMICS_STATE_STRUCTURALLY_ABSENT = "structurally_absent"
+RADIOMICS_STATE_TECHNICALLY_UNEXTRACTABLE_SMALL_ROI = \
+    "technically_unextractable_small_ROI"
+RADIOMICS_STATE_EXTRACTABLE = "radiomics_extractable"
+RADIOMICS_SUPPORT_COLUMNS = (
+    "R_low_voxel_count", "R_high_voxel_count", "R_low_state", "R_high_state",
+    "R_low_structurally_defined", "R_high_structurally_defined",
+    "R_low_technically_extractable", "R_high_technically_extractable",
+)
+
 W06_POPULATION = os.path.join(
     ROOT, "output", "A_modeling", "A_modeling_population.csv")
 W03_LOW = os.path.join(
@@ -123,6 +134,18 @@ def _six_neighbor_interface(habitat, roi, spacing_xyz):
         total += float(((left >= 0) & (right >= 0) & left_roi & right_roi &
                         (left != right)).sum()) * area
     return total
+
+
+def _radiomics_support_state(voxel_count):
+    """Classify one fold-specific habitat mask by its voxel support."""
+    voxel_count = int(voxel_count)
+    if voxel_count < 0:
+        raise RuntimeError("radiomics mask voxel count cannot be negative")
+    if voxel_count == 0:
+        return RADIOMICS_STATE_STRUCTURALLY_ABSENT
+    if voxel_count < MINIMUM_ROI_SIZE:
+        return RADIOMICS_STATE_TECHNICALLY_UNEXTRACTABLE_SMALL_ROI
+    return RADIOMICS_STATE_EXTRACTABLE
 
 
 def _read_header(path):
@@ -425,6 +448,10 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         habitat = self._habitat_from_boundary(case, state.boundary)
         low_mask = roi & (habitat == 0)
         high_mask = roi & (habitat == 1)
+        low_voxel_count = int(low_mask.sum())
+        high_voxel_count = int(high_mask.sum())
+        low_state = _radiomics_support_state(low_voxel_count)
+        high_state = _radiomics_support_state(high_voxel_count)
         tumour_n = int(roi.sum())
         spacing_xyz = case["spacing_xyz"]
         voxel_volume = float(np.prod(spacing_xyz))
@@ -442,6 +469,16 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
                   if high_mask.any() and max_depth > 0 else 0.0)
         row = {
             "patient_id": identifier,
+            "R_low_voxel_count": low_voxel_count,
+            "R_high_voxel_count": high_voxel_count,
+            "R_low_state": low_state,
+            "R_high_state": high_state,
+            "R_low_structurally_defined": int(low_voxel_count > 0),
+            "R_high_structurally_defined": int(high_voxel_count > 0),
+            "R_low_technically_extractable": int(
+                low_state == RADIOMICS_STATE_EXTRACTABLE),
+            "R_high_technically_extractable": int(
+                high_state == RADIOMICS_STATE_EXTRACTABLE),
             "H_high_fraction": high_fraction,
             "sv_median_minus_boundary": float(np.median(values) - state.boundary),
             "sv_IQR": float(np.percentile(values, 75) - np.percentile(values, 25)),
@@ -449,14 +486,16 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
             "H_high_largest_component_tumor_fraction": float(largest / float(tumour_n)),
             "H_high_radial_burden": radial,
         }
-        low_image_mask = w02.make_habitat_mask(image, low_mask.astype(np.uint8), 1)
-        high_image_mask = w02.make_habitat_mask(image, high_mask.astype(np.uint8), 1)
-        if low_mask.any():
+        if low_state == RADIOMICS_STATE_EXTRACTABLE:
+            low_image_mask = w02.make_habitat_mask(
+                image, low_mask.astype(np.uint8), 1)
             row.update(self._radiomics_for_mask(image, low_image_mask, "R_low"))
         else:
             row.update({w08.RADIOMICS_PREFIXES["R_low"] + feature: np.nan
                         for feature in w08.FROZEN_CANDIDATE_FEATURES["R_low"]})
-        if high_mask.any():
+        if high_state == RADIOMICS_STATE_EXTRACTABLE:
+            high_image_mask = w02.make_habitat_mask(
+                image, high_mask.astype(np.uint8), 1)
             row.update(self._radiomics_for_mask(image, high_image_mask, "R_high"))
         else:
             row.update({w08.RADIOMICS_PREFIXES["R_high"] + feature: np.nan
@@ -476,6 +515,8 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
             new_rows.append(cache[identifier])
         generated = pd.DataFrame(new_rows).set_index("patient_id")
         base = self._by_id.loc[identifiers].copy()
+        for column in RADIOMICS_SUPPORT_COLUMNS:
+            base[column] = generated.loc[identifiers, column].to_numpy()
         for column in w08.GLOBAL_COLUMNS:
             base[column] = generated.loc[identifiers, column].to_numpy()
         for block in ("R_low", "R_high"):
