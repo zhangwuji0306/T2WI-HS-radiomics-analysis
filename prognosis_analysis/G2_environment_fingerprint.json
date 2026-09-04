@@ -1,0 +1,105 @@
+{
+  "schema": "g2_environment_fingerprint",
+  "version": "1.0",
+  "generated_at_utc": "2026-09-04T23:51:41Z",
+  "g2_reference": {
+    "base_commit": "72d518cb57525b085b1458eaa19dcecc8e48349e"
+  },
+  "repository_fingerprints": {
+    "environment.yml": {
+      "sha256": "5089792e24c19ea25dce42f4ae0a10748114c7a4e9bcbca7b3b87ea52e3cc907"
+    },
+    "requirements-cloud.txt": {
+      "sha256": "1df65b2cc7189edb0da42b4fc6cf6392c4c3040aa76f2146ecdd4d2692349a27"
+    }
+  },
+  "platform": {
+    "system": "Windows",
+    "release": "10",
+    "version": "10.0.19045",
+    "machine": "AMD64"
+  },
+  "locked_environment": {
+    "name": "t2_radiomics",
+    "python": "3.7.12",
+    "dependencies": {
+      "numpy": "1.21.6",
+      "pandas": "1.3.5",
+      "openpyxl": "3.0.10",
+      "scipy": "1.7.3",
+      "scikit-learn": "1.0.2",
+      "matplotlib": "3.5.3",
+      "PyYAML": "6.0",
+      "pyradiomics": "3.0.1",
+      "SimpleITK": "2.2.1",
+      "PyWavelets": "1.3.0"
+    }
+  },
+  "current_probe": {
+    "python_version": "3.12.0",
+    "implementation": "cpython",
+    "platform": {
+      "system": "Windows",
+      "release": "10",
+      "version": "10.0.19045",
+      "machine": "AMD64"
+    },
+    "locked_environment_available": false,
+    "locked_environment_status": "blocked_by_missing_locked_environment",
+    "locked_environment_probe_error": "No conda executable or registered Python 3.7 environment was available on this machine.",
+    "imports": {
+      "numpy": {
+        "import_name": "numpy",
+        "available": true,
+        "version": "2.4.6"
+      },
+      "pandas": {
+        "import_name": "pandas",
+        "available": true,
+        "version": "2.2.2"
+      },
+      "openpyxl": {
+        "import_name": "openpyxl",
+        "available": true,
+        "version": "3.1.2"
+      },
+      "scipy": {
+        "import_name": "scipy",
+        "available": true,
+        "version": "1.18.0"
+      },
+      "scikit-learn": {
+        "import_name": "sklearn",
+        "available": true,
+        "version": "1.8.0"
+      },
+      "matplotlib": {
+        "import_name": "matplotlib",
+        "available": true,
+        "version": "3.11.0"
+      },
+      "PyYAML": {
+        "import_name": "yaml",
+        "available": false,
+        "error": "ModuleNotFoundError: No module named 'yaml'"
+      },
+      "pyradiomics": {
+        "import_name": "radiomics",
+        "available": false,
+        "error": "ModuleNotFoundError: No module named 'radiomics'"
+      },
+      "SimpleITK": {
+        "import_name": "SimpleITK",
+        "available": false,
+        "error": "ModuleNotFoundError: No module named 'SimpleITK'"
+      },
+      "PyWavelets": {
+        "import_name": "pywt",
+        "available": false,
+        "error": "ModuleNotFoundError: No module named 'pywt'"
+      }
+    }
+  },
+  "environment_matches_locked_spec": false,
+  "status": "blocked_by_missing_locked_environment"
+}
