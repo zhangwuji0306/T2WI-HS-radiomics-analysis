@@ -145,13 +145,17 @@ class W00BAccessBoundaryTests(unittest.TestCase):
             model_path = os.path.join(tmp, "model_freeze_lock.json")
             with open(model_path, "w", encoding="utf-8") as handle:
                 json.dump(_synthetic_model_lock(), handle)
-            reader = mock.Mock(return_value="synthetic B payload")
+            source_path = os.path.join(tmp, "synthetic-b.csv")
+            with open(source_path, "w", encoding="utf-8-sig", newline="") as handle:
+                handle.write("影像号,value\nA1,10\nB1,20\n")
             with mock.patch.object(data_split_guard, "FREEZE_LOCK", os.path.join(tmp, "technical.json")), \
                     mock.patch.object(data_split_guard, "MODEL_FREEZE_LOCK", model_path), \
-                    mock.patch.object(data_split_guard, "validate_freeze_lock", return_value={}):
-                result = data_split_guard.read_b_data("synthetic-b-file", reader)
-            self.assertEqual(result, "synthetic B payload")
-            reader.assert_called_once_with("synthetic-b-file")
+                    mock.patch.object(data_split_guard, "validate_freeze_lock", return_value={}), \
+                    mock.patch.object(data_split_guard, "validate_model_freeze_lock", return_value={}):
+                result = data_split_guard.read_B_validation(
+                    source_path, allowed_ids=["B1"])
+            self.assertEqual(result["影像号"].tolist(), ["B1"])
+            self.assertNotIn("A1", result["影像号"].tolist())
 
     def test_a_outcome_fails_before_read_while_technical_reader_remains_available(self):
         outcome_reader = mock.Mock(side_effect=AssertionError("outcome reader must not be called"))
@@ -159,11 +163,14 @@ class W00BAccessBoundaryTests(unittest.TestCase):
                 mock.patch.object(data_split_guard, "FREEZE_LOCK", os.path.join(tmp, "missing.json")):
             with self.assertRaises(RuntimeError):
                 data_split_guard.read_a_outcome("synthetic-outcome.xlsx", outcome_reader)
-            technical_reader = mock.Mock(return_value="synthetic technical payload")
-            result = data_split_guard.read_technical_data("synthetic-manifest.csv", technical_reader)
-        self.assertEqual(result, "synthetic technical payload")
+            source_path = os.path.join(tmp, "synthetic-technical.csv")
+            with open(source_path, "w", encoding="utf-8-sig", newline="") as handle:
+                handle.write("影像号,value\nA1,10\nB1,20\n")
+            result = data_split_guard.read_technical_A(
+                source_path, allowed_ids=["A1"])
+        self.assertEqual(result["影像号"].tolist(), ["A1"])
+        self.assertNotIn("B1", result["影像号"].tolist())
         outcome_reader.assert_not_called()
-        technical_reader.assert_called_once_with("synthetic-manifest.csv")
 
     def test_invalid_first_lock_fails_before_a_outcome_read(self):
         outcome_reader = mock.Mock(side_effect=AssertionError("invalid-lock outcome reader must not be called"))
