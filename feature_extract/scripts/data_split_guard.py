@@ -3,6 +3,8 @@
 The three public readers deliberately separate technical A, A outcome, and B
 validation access.  Default CSV/XLSX reads are row-streamed and filtered by an
 already-authorized identifier allow-list before a pandas frame is created.
+Arbitrary injected readers are rejected because a callable returning a mixed
+frame cannot prove that disallowed rows were not materialized first.
 """
 from __future__ import annotations
 
@@ -107,6 +109,31 @@ def _apply_dtype(frame: pd.DataFrame, dtype) -> pd.DataFrame:
     return frame.astype(dtype)
 
 
+def _validate_authorized_frame(frame: pd.DataFrame, allowed_ids,
+                               id_column: str) -> pd.DataFrame:
+    """Validate the output contract at the authorized-read boundary."""
+    if not isinstance(frame, pd.DataFrame):
+        raise RuntimeError("authorized read must return a pandas DataFrame")
+    if id_column not in frame.columns:
+        raise RuntimeError("authorized data lacks the identifier column")
+
+    identifiers = frame[id_column]
+    if identifiers.isna().any():
+        raise RuntimeError("authorized data contains a missing identifier")
+    identifiers = identifiers.astype(str).str.strip()
+    if identifiers.eq("").any():
+        raise RuntimeError("authorized data contains an empty identifier")
+    uniqueness_key = frame[[id_column, "读者"]] if "读者" in frame.columns else identifiers
+    if uniqueness_key.duplicated().any():
+        raise RuntimeError("authorized data contains duplicate identifiers")
+    if allowed_ids is not None and not set(identifiers).issubset(allowed_ids):
+        raise RuntimeError("authorized data contains an identifier outside the allow-list")
+
+    validated = frame.copy()
+    validated[id_column] = identifiers
+    return validated
+
+
 def _stream_csv(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):
     encoding = kwargs.pop("encoding", "utf-8-sig")
     dtype = kwargs.pop("dtype", None)
@@ -119,7 +146,7 @@ def _stream_csv(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):
     with open(path, "r", newline="", encoding=encoding) as handle:
         reader = csv.DictReader(handle, delimiter=delimiter)
         if not reader.fieldnames or id_column not in reader.fieldnames:
-            raise ValueError("%s lacks identifier column %s" % (path, id_column))
+            raise ValueError("authorized CSV source lacks the identifier column")
         columns = list(reader.fieldnames)
         if usecols is not None:
             columns = [column for column in columns if column in set(usecols)]
@@ -226,7 +253,7 @@ def _stream_excel(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):
         try:
             _, header_values = next(header_rows)
         except StopIteration:
-            raise ValueError("authorized XLSX sheet is empty: %s" % path)
+            raise ValueError("authorized XLSX source is empty")
         finally:
             header_rows.close()
         header_width = worksheet.max_column or (max(header_values) if header_values else 0)
@@ -234,10 +261,9 @@ def _stream_excel(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):
                   if header_values.get(number) is not None else ""
                   for number in range(1, header_width + 1)]
         if id_column not in header:
-            raise ValueError("%s lacks identifier column %s" % (path, id_column))
+            raise ValueError("authorized XLSX source lacks the identifier column")
         if header.count(id_column) != 1:
-            raise ValueError("%s must contain exactly one identifier column %s" %
-                             (path, id_column))
+            raise ValueError("authorized XLSX source must contain exactly one identifier column")
         if usecols is None:
             column_numbers = list(range(1, len(header) + 1))
         else:
@@ -273,26 +299,32 @@ def _authorized_read(path, reader, allowed_ids, id_column, allow_full,
                      *args, **kwargs):
     allowlist = _normalize_allowlist(allowed_ids)
     if reader is not None:
-        # Injectable readers are retained for tests and connector adapters.
-        # Production callers use the default streaming path below so the
-        # allow-list is applied before any patient row enters pandas.
-        return reader(path, *args, **kwargs)
+        # A callable may materialize disallowed rows before this function can
+        # inspect or filter its return value.  Reject it before execution.
+        raise RuntimeError(
+            "arbitrary custom readers are not authorized; use the built-in "
+            "CSV/XLSX streaming reader"
+        )
     if allowlist is None:
         if not allow_full:
             raise RuntimeError("authorized read requires an identifier allow-list")
         suffix = os.path.splitext(str(path))[1].lower()
         if suffix == ".csv":
-            return pd.read_csv(path, *args, **kwargs)
+            result = pd.read_csv(path, *args, **kwargs)
+            return _validate_authorized_frame(result, None, id_column)
         if suffix in (".xlsx", ".xlsm"):
-            return pd.read_excel(path, *args, **kwargs)
+            result = pd.read_excel(path, *args, **kwargs)
+            return _validate_authorized_frame(result, None, id_column)
         raise ValueError("unsupported declared technical format: %s" % suffix)
     suffix = os.path.splitext(str(path))[1].lower()
     if suffix in (".csv", ".tsv"):
         if suffix == ".tsv" and "delimiter" not in kwargs:
             kwargs["delimiter"] = "\t"
-        return _stream_csv(path, allowlist, id_column, *args, **kwargs)
+        result = _stream_csv(path, allowlist, id_column, *args, **kwargs)
+        return _validate_authorized_frame(result, allowlist, id_column)
     if suffix in (".xlsx", ".xlsm"):
-        return _stream_excel(path, allowlist, id_column, *args, **kwargs)
+        result = _stream_excel(path, allowlist, id_column, *args, **kwargs)
+        return _validate_authorized_frame(result, allowlist, id_column)
     raise ValueError("unsupported authorized data format: %s" % suffix)
 
 
@@ -301,8 +333,9 @@ def read_technical_A(path, reader=None, allowed_ids=None, id_column="影像号",
     """Read outcome-blind technical A data without a lock.
 
     ``allowed_ids`` is required for a raw source that may contain A and B.
-    A declared A-only technical artifact may be read through an injected
-    reader or an explicit allow-list.
+    A declared A-only technical artifact may be read with ``allow_full=True``.
+    The legacy ``reader`` argument is retained for call compatibility but is
+    rejected; only the built-in source-level streaming reader is authorized.
     """
     return _authorized_read(path, reader, allowed_ids, id_column, allow_full,
                             *args, **kwargs)

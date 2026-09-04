@@ -65,14 +65,74 @@ class W05ReaderTests(unittest.TestCase):
         reader.assert_not_called()
 
     def test_valid_first_lock_allows_synthetic_a_outcome(self):
-        reader = mock.Mock(return_value=pd.DataFrame({
-            "影像号": ["A"], "DFS_event": [0]}))
-        with mock.patch.object(data_split_guard, "validate_freeze_lock",
-                               return_value={"A_outcome_unlock": True}):
-            result = data_split_guard.read_A_outcomes(
-                "synthetic-outcome.xlsx", reader=reader, allowed_ids=["A"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "synthetic-outcome.csv")
+            pd.DataFrame({"影像号": ["A"], "DFS_event": [0]}).to_csv(
+                path, index=False, encoding="utf-8-sig")
+            with mock.patch.object(data_split_guard, "validate_freeze_lock",
+                                   return_value={"A_outcome_unlock": True}):
+                result = data_split_guard.read_A_outcomes(
+                    path, allowed_ids=["A"])
         self.assertEqual(result["影像号"].tolist(), ["A"])
-        reader.assert_called_once_with("synthetic-outcome.xlsx")
+
+    def test_arbitrary_custom_reader_is_rejected_before_b_row_materialization(self):
+        calls = {"reader": 0, "b_rows": 0}
+
+        def malicious_reader(*args, **kwargs):
+            del args, kwargs
+            calls["reader"] += 1
+            calls["b_rows"] += 1
+            return pd.DataFrame({"影像号": ["A", "B"], "value": [1, 99]})
+
+        with mock.patch.object(data_split_guard, "validate_freeze_lock",
+                               return_value={}), \
+                mock.patch.object(data_split_guard, "validate_model_freeze_lock",
+                                  return_value=_model_lock()):
+            reader_calls = (
+                lambda: data_split_guard.read_technical_A(
+                    "synthetic.csv", reader=malicious_reader, allowed_ids=["A"]),
+                lambda: data_split_guard.read_A_outcomes(
+                    "synthetic.csv", reader=malicious_reader, allowed_ids=["A"]),
+                lambda: data_split_guard.read_B_validation(
+                    "synthetic.csv", reader=malicious_reader, allowed_ids=["B"]),
+            )
+            for attempt in reader_calls:
+                with self.subTest(attempt=attempt):
+                    with self.assertRaises(RuntimeError):
+                        attempt()
+
+        self.assertEqual(calls, {"reader": 0, "b_rows": 0})
+
+    def test_compatibility_aliases_reject_arbitrary_reader_before_execution(self):
+        calls = []
+
+        def arbitrary_reader(*args, **kwargs):
+            del args, kwargs
+            calls.append("reader")
+            return pd.DataFrame({"影像号": ["A", "B"]})
+
+        with mock.patch.object(data_split_guard, "validate_freeze_lock",
+                               return_value={}), \
+                mock.patch.object(data_split_guard, "validate_model_freeze_lock",
+                                  return_value=_model_lock()):
+            attempts = (
+                lambda: data_split_guard.read_technical_data(
+                    "synthetic.csv", arbitrary_reader, allowed_ids=["A"]),
+                lambda: data_split_guard.read_a_outcome(
+                    "synthetic.csv", arbitrary_reader, allowed_ids=["A"]),
+                lambda: data_split_guard.read_b_data(
+                    "synthetic.csv", arbitrary_reader, allowed_ids=["B"]),
+                lambda: data_split_guard.read_b_csv(
+                    "synthetic.csv", reader=arbitrary_reader, allowed_ids=["B"]),
+                lambda: data_split_guard.read_b_excel(
+                    "synthetic.xlsx", reader=arbitrary_reader, allowed_ids=["B"]),
+            )
+            for attempt in attempts:
+                with self.subTest(attempt=attempt):
+                    with self.assertRaises(RuntimeError):
+                        attempt()
+
+        self.assertEqual(calls, [])
 
     def test_missing_model_lock_blocks_every_b_reader_before_physical_read(self):
         for kind in ("clinical", "outcome", "radiomics", "habitat", "qc"):
@@ -90,21 +150,21 @@ class W05ReaderTests(unittest.TestCase):
             reader.assert_not_called()
 
     def test_valid_model_lock_allows_synthetic_b_validation(self):
-        reader = mock.Mock(return_value=pd.DataFrame({
-            "影像号": ["B"], "DFS_event": [1]}))
         with tempfile.TemporaryDirectory() as tmp:
             lock_path = os.path.join(tmp, "model_freeze_lock.json")
             with open(lock_path, "w", encoding="utf-8") as handle:
                 json.dump(_model_lock(), handle)
+            source_path = os.path.join(tmp, "synthetic-b.csv")
+            pd.DataFrame({"影像号": ["A", "B"], "DFS_event": [0, 1]}).to_csv(
+                source_path, index=False, encoding="utf-8-sig")
             with mock.patch.object(data_split_guard, "FREEZE_LOCK",
                                    os.path.join(tmp, "technical.json")), \
                     mock.patch.object(data_split_guard, "MODEL_FREEZE_LOCK", lock_path), \
                     mock.patch.object(data_split_guard, "validate_freeze_lock",
                                        return_value={}):
                 result = data_split_guard.read_B_validation(
-                    "synthetic-b.csv", reader=reader, allowed_ids=["B"])
+                    source_path, allowed_ids=["B"])
         self.assertEqual(result["影像号"].tolist(), ["B"])
-        reader.assert_called_once_with("synthetic-b.csv")
 
     def test_mixed_raw_feature_file_is_filtered_by_reader_allowlist(self):
         with tempfile.TemporaryDirectory() as tmp:
