@@ -26,6 +26,24 @@
     "lambda_max_scope": "each inner-training fit and the outer-training refit",
     "tie_break": ["larger lambda within 1e-12", "smaller alpha in frozen grid order"]
   },
+  "ridge_sensitivity": {
+    "family": "pure_ridge_Cox",
+    "alpha": 0,
+    "feature_zero_selection": false,
+    "lambda_scale": "trace(I0)/p at beta=0 using event-normalized observed information in inner-training",
+    "lambda_relative_grid": {
+      "count": 100,
+      "from": "1e4",
+      "to": "1e-4",
+      "spacing": "logarithmic"
+    },
+    "lambda_max_scope": "inner-training-only ridge reference and outer-training refit",
+    "selection_scope": "outer-training_inner_5fold_only",
+    "selection_metric": "mean_inner_validation_Uno_C_index",
+    "tie_break": "larger_lambda_within_1e-12",
+    "nonpositive_lambda_ref": "hard_fail",
+    "outer_validation_used_for_lambda": false
+  },
   "models": ["M0", "M1", "M2", "M3L", "M3H", "M4", "M5"],
   "fixed_runs": [
     {"run_id": "M0", "model_id": "M0", "population": "main"},
@@ -42,6 +60,125 @@
     {"run_id": "M3H_dual_radiomics", "model_id": "M3H", "population": "dual_radiomics"},
     {"run_id": "M4", "model_id": "M4", "population": "dual_radiomics"}
   ],
+  "fixed_sensitivity_runs": [
+    {"run_id": "M0-R", "model_id": "M0", "population": "main"},
+    {"run_id": "M1-R", "model_id": "M1", "population": "main"},
+    {"run_id": "M2-R", "model_id": "M2", "population": "main"}
+  ],
+  "penalty_semantics": {
+    "M0": {
+      "model": "M0",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M1": {
+      "model": "M1",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2": {
+      "model": "M2",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M3L": {
+      "model": "M3L",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_low"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M3H": {
+      "model": "M3H",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_high"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M4": {
+      "model": "M4",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_low", "R_high"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M0_W_available": {
+      "model": "M0_W_available",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M5": {
+      "model": "M5",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "W"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2_R_low": {
+      "model": "M2_R_low",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2_R_high": {
+      "model": "M2_R_high",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2_dual_radiomics": {
+      "model": "M2_dual_radiomics",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M3L_dual_radiomics": {
+      "model": "M3L_dual_radiomics",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_low"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M3H_dual_radiomics": {
+      "model": "M3H_dual_radiomics",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_high"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M0-R": {
+      "model": "M0-R",
+      "family": "pure_ridge_Cox",
+      "penalized_blocks": ["C"],
+      "penalty_semantics": "pure L2 ridge on every preprocessed coefficient in penalized_blocks",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M1-R": {
+      "model": "M1-R",
+      "family": "pure_ridge_Cox",
+      "penalized_blocks": ["C", "H_high_fraction"],
+      "penalty_semantics": "pure L2 ridge on every preprocessed coefficient in penalized_blocks",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2-R": {
+      "model": "M2-R",
+      "family": "pure_ridge_Cox",
+      "penalized_blocks": ["C", "G"],
+      "penalty_semantics": "pure L2 ridge on every preprocessed coefficient in penalized_blocks",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    }
+  },
   "model_populations": {
     "main": ["M0", "M1", "M2"],
     "W_available": ["M5"],

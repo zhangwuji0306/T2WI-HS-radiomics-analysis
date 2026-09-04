@@ -86,6 +86,9 @@ P3B_COVERAGE_FIELDS = (
 ALPHA_GRID = (0.1, 0.5, 0.9, 1.0)
 LAMBDA_COUNT = 100
 LAMBDA_MIN_RATIO = 1e-4
+RIDGE_LAMBDA_COUNT = 100
+RIDGE_LAMBDA_MAX_RATIO = 1e4
+RIDGE_LAMBDA_MIN_RATIO = 1e-4
 CORRELATION_THRESHOLD = 0.90
 HORIZONS_MONTHS = OrderedDict((("3_year", 36.0), ("5_year", 60.0)))
 
@@ -123,6 +126,66 @@ MODEL_SPECS = OrderedDict((
              "population": "W_available"}),
 ))
 
+# The primary W04 models retain their frozen solver families.  P3D adds only
+# three explicitly named ridge sensitivity runs; they reuse the corresponding
+# primary predictor blocks and main population and never replace a primary
+# model.  The block-level declarations are also copied into every fold audit
+# so the penalty mask is machine-checkable rather than inferred from comments.
+RIDGE_SENSITIVITY_RUN_IDS = ("M0-R", "M1-R", "M2-R")
+RIDGE_SENSITIVITY_SPECS = {
+    "M0-R": {"model_id": "M0", "blocks": ("C",), "population": "main"},
+    "M1-R": {"model_id": "M1", "blocks": ("C", "H_high_fraction"),
+             "population": "main"},
+    "M2-R": {"model_id": "M2", "blocks": ("C", "G"),
+             "population": "main"},
+}
+
+_NO_EXPLICIT_INTERCEPT = (
+    "no explicit intercept; Cox baseline hazard is unpenalized")
+_RIDGE_PENALTY_SEMANTICS = (
+    "pure L2 ridge on every preprocessed coefficient in penalized_blocks")
+_ELASTIC_NET_PENALTY_SEMANTICS = (
+    "joint Elastic Net on the complete preprocessed coefficient vector; "
+    "no block is exempt")
+_UNPENALIZED_SEMANTICS = "unpenalized Breslow Cox PH coefficient vector"
+
+MODEL_PENALTY_SEMANTICS = OrderedDict((
+    ("M0", {"model": "M0", "family": "Cox_PH_unpenalized",
+            "penalized_blocks": [], "penalty_semantics": _UNPENALIZED_SEMANTICS,
+            "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M1", {"model": "M1", "family": "Cox_PH_unpenalized",
+            "penalized_blocks": [], "penalty_semantics": _UNPENALIZED_SEMANTICS,
+            "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M2", {"model": "M2", "family": "Cox_PH_unpenalized",
+            "penalized_blocks": [], "penalty_semantics": _UNPENALIZED_SEMANTICS,
+            "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M3L", {"model": "M3L", "family": "Elastic_Net_Cox",
+              "penalized_blocks": ["C", "G", "R_low"],
+              "penalty_semantics": _ELASTIC_NET_PENALTY_SEMANTICS,
+              "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M3H", {"model": "M3H", "family": "Elastic_Net_Cox",
+              "penalized_blocks": ["C", "G", "R_high"],
+              "penalty_semantics": _ELASTIC_NET_PENALTY_SEMANTICS,
+              "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M4", {"model": "M4", "family": "Elastic_Net_Cox",
+             "penalized_blocks": ["C", "G", "R_low", "R_high"],
+             "penalty_semantics": _ELASTIC_NET_PENALTY_SEMANTICS,
+             "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M5", {"model": "M5", "family": "Elastic_Net_Cox",
+             "penalized_blocks": ["C", "W"],
+             "penalty_semantics": _ELASTIC_NET_PENALTY_SEMANTICS,
+             "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+))
+
+for _run_id, _spec in RIDGE_SENSITIVITY_SPECS.items():
+    MODEL_PENALTY_SEMANTICS[_run_id] = {
+        "model": _run_id,
+        "family": "pure_ridge_Cox",
+        "penalized_blocks": list(_spec["blocks"]),
+        "penalty_semantics": _RIDGE_PENALTY_SEMANTICS,
+        "intercept_semantics": _NO_EXPLICIT_INTERCEPT,
+    }
+
 # One W07 split plan is reused for these paired population-specific runs.  The
 # same model ID can therefore occur more than once, but each occurrence has a
 # distinct fixed eligible population for the prespecified comparison.
@@ -142,6 +205,35 @@ FIXED_RUN_DEFINITIONS = (
     {"run_id": "M4", "model_id": "M4", "population": "dual_radiomics"},
 )
 FIXED_RUN_IDS = tuple(run["run_id"] for run in FIXED_RUN_DEFINITIONS)
+FIXED_SENSITIVITY_RUN_DEFINITIONS = tuple(
+    {"run_id": run_id, "model_id": spec["model_id"],
+     "population": spec["population"]}
+    for run_id, spec in RIDGE_SENSITIVITY_SPECS.items())
+FIXED_SENSITIVITY_RUN_IDS = tuple(
+    run["run_id"] for run in FIXED_SENSITIVITY_RUN_DEFINITIONS)
+
+# All fixed run IDs, including population-specific comparator refits, map to
+# the same family/block semantics as their model ID.  Sensitivity runs have
+# their own entries because their family is intentionally different.
+RUN_PENALTY_SEMANTICS = OrderedDict()
+for _run in FIXED_RUN_DEFINITIONS:
+    RUN_PENALTY_SEMANTICS[_run["run_id"]] = dict(
+        MODEL_PENALTY_SEMANTICS[_run["model_id"]])
+    RUN_PENALTY_SEMANTICS[_run["run_id"]]["model"] = _run["run_id"]
+for _run in FIXED_SENSITIVITY_RUN_DEFINITIONS:
+    RUN_PENALTY_SEMANTICS[_run["run_id"]] = dict(
+        MODEL_PENALTY_SEMANTICS[_run["run_id"]])
+
+
+def _run_penalty_definition(run_definition):
+    """Return the frozen family/block penalty declaration for one run."""
+    run_id = run_definition.get("run_id")
+    model_id = run_definition.get("model_id")
+    if run_id in RUN_PENALTY_SEMANTICS:
+        return dict(RUN_PENALTY_SEMANTICS[run_id])
+    if model_id in MODEL_PENALTY_SEMANTICS:
+        return dict(MODEL_PENALTY_SEMANTICS[model_id])
+    raise W08ValidationError("run has no frozen penalty semantics: %s" % run_id)
 
 # Each pair shares the same current-fold eligible IDs.  The three dual
 # comparisons use the M2 dual comparator refit against the corresponding
@@ -314,7 +406,8 @@ def _validate_config(config):
                 "frozen_outer_split_sha256", "outer_cv", "inner_cv",
                 "W07A_protocol_sha256", "models", "fixed_runs", "provenance",
                 "extractability_state", "paired_comparators", "coverage_schema",
-                "output_schema", "audit_schema"}
+                "output_schema", "audit_schema", "fixed_sensitivity_runs",
+                "penalty_semantics", "ridge_sensitivity"}
     missing = sorted(required - set(config))
     if missing:
         raise W08ValidationError("W08 config missing keys: %s" % missing)
@@ -349,6 +442,34 @@ def _validate_config(config):
     for item, expected in zip(config["fixed_runs"], FIXED_RUN_DEFINITIONS):
         if item != expected:
             raise W08ValidationError("W08 paired run definition differs from the frozen comparison")
+    sensitivity_runs = config["fixed_sensitivity_runs"]
+    if sensitivity_runs != list(FIXED_SENSITIVITY_RUN_DEFINITIONS):
+        raise W08ValidationError(
+            "W08 ridge sensitivity run definitions differ from the P3D freeze")
+    if config["penalty_semantics"] != {
+            key: dict(value) for key, value in RUN_PENALTY_SEMANTICS.items()}:
+        raise W08ValidationError(
+            "W08 run penalty semantics differ from the P3D freeze")
+    ridge = config["ridge_sensitivity"]
+    if not isinstance(ridge, dict) or ridge.get("family") != "pure_ridge_Cox" or \
+            ridge.get("alpha") != 0 or ridge.get("feature_zero_selection") is not False:
+        raise W08ValidationError("W08 ridge sensitivity family semantics are not frozen")
+    if ridge.get("lambda_scale") != (
+            "trace(I0)/p at beta=0 using event-normalized observed information "
+            "in inner-training"):
+        raise W08ValidationError("W08 ridge lambda reference is not the P3D lock")
+    ridge_grid = ridge.get("lambda_relative_grid", {})
+    if (ridge_grid.get("count"), ridge_grid.get("from"), ridge_grid.get("to"),
+            ridge_grid.get("spacing")) != (100, "1e4", "1e-4", "logarithmic"):
+        raise W08ValidationError("W08 ridge lambda grid differs from the P3D lock")
+    if ridge.get("lambda_max_scope") != \
+            "inner-training-only ridge reference and outer-training refit" or \
+            ridge.get("selection_scope") != "outer-training_inner_5fold_only" or \
+            ridge.get("selection_metric") != "mean_inner_validation_Uno_C_index" or \
+            ridge.get("tie_break") != "larger_lambda_within_1e-12" or \
+            ridge.get("nonpositive_lambda_ref") != "hard_fail" or \
+            ridge.get("outer_validation_used_for_lambda") is not False:
+        raise W08ValidationError("W08 ridge selection isolation semantics are incomplete")
     provenance = config["provenance"]
     if provenance.get("population_source") != "prognosis_analysis/output/A_modeling/A_modeling_population.csv":
         raise W08ValidationError("W08 population source is not the W06 A artifact")
@@ -1373,6 +1494,56 @@ class ModelPreprocessor(object):
         }
 
 
+def _penalty_audit(run_definition, preprocessor):
+    """Materialise the frozen block penalty mask against fitted columns."""
+    definition = _run_penalty_definition(run_definition)
+    model_id = run_definition["model_id"]
+    blocks = MODEL_SPECS[model_id]["blocks"]
+    block_features = OrderedDict()
+    block_features["C"] = list(preprocessor.clinical.feature_names)
+    if "H_high_fraction" in blocks:
+        block_features["H_high_fraction"] = ["H_high_fraction"]
+    if "G" in blocks:
+        block_features["G"] = list(GLOBAL_COLUMNS)
+    if preprocessor.radiomics is not None:
+        for block in ("R_low", "R_high", "W"):
+            if block in blocks:
+                prefix = RADIOMICS_PREFIXES[block]
+                block_features[block] = [
+                    column for column in preprocessor.radiomics.kept_columns
+                    if str(column).startswith(prefix)]
+    all_features = list(preprocessor.feature_names)
+    penalized_blocks = list(definition["penalized_blocks"])
+    penalized_features = []
+    for block in penalized_blocks:
+        if block not in block_features:
+            raise W08ValidationError(
+                "penalty block %s is absent from %s design" % (block, model_id))
+        penalized_features.extend(block_features[block])
+    penalized_set = set(penalized_features)
+    if len(penalized_set) != len(penalized_features):
+        raise W08ValidationError("penalty block feature names overlap")
+    if not penalized_set.issubset(set(all_features)):
+        raise W08ValidationError("penalty mask contains an unknown feature")
+    return {
+        "model": definition["model"],
+        "model_id": model_id,
+        "family": definition["family"],
+        "penalized_blocks": penalized_blocks,
+        "penalty_semantics": definition["penalty_semantics"],
+        "intercept_semantics": definition["intercept_semantics"],
+        "intercept_in_design_matrix": False,
+        "block_feature_names": dict(block_features),
+        "all_coefficient_features": all_features,
+        "penalized_feature_names": [
+            feature for feature in all_features if feature in penalized_set],
+        "unpenalized_feature_names": [
+            feature for feature in all_features if feature not in penalized_set],
+        "penalty_mask": {
+            feature: bool(feature in penalized_set) for feature in all_features},
+    }
+
+
 def _cox_components(X, time, event, beta):
     """Return Breslow log-likelihood and score with stable risk-set sums."""
     if len(X) == 0 or int(np.sum(event)) == 0:
@@ -1436,6 +1607,23 @@ def _lambda_max(X, time, event, alpha):
     if not np.isfinite(maximum) or maximum <= 0.0:
         return 1.0
     return max(maximum / max(float(alpha), 1e-12), 1e-12)
+
+
+def _ridge_lambda_reference(X, time, event):
+    """Return the P3D trace(I0)/p ridge reference from one training frame."""
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2 or X.shape[1] < 1:
+        raise W08ValidationError("ridge lambda reference requires at least one feature")
+    if int(np.sum(np.asarray(event, dtype=int))) < 1:
+        raise W08ValidationError("ridge lambda reference requires an event")
+    information = _cox_information(
+        X, np.asarray(time, dtype=float), np.asarray(event, dtype=int),
+        np.zeros(X.shape[1], dtype=float)) / float(np.sum(event))
+    reference = float(np.trace(information)) / float(X.shape[1])
+    if not np.isfinite(reference) or reference <= 0.0:
+        raise W08ValidationError(
+            "ridge lambda reference is nonpositive or nonfinite")
+    return reference
 
 
 LINEAR_PREDICTOR_CLIP_LOWER = -50.0
@@ -1759,6 +1947,23 @@ class CoxElasticNetModel(object):
             hazard = -math.log(max(baseline, 1e-300))
             output[name] = np.exp(-hazard * np.exp(np.clip(risk, -50.0, 50.0)))
         return output
+
+
+class CoxRidgeModel(CoxElasticNetModel):
+    """Pure-ridge Cox model used only by the prespecified P3D sensitivities."""
+
+    def __init__(self, penalty, max_iter=250, tolerance=1e-7):
+        super(CoxRidgeModel, self).__init__(
+            alpha=0.0, penalty=penalty, max_iter=max_iter, tolerance=tolerance)
+
+    def fit(self, X, time, event):
+        super(CoxRidgeModel, self).fit(X, time, event)
+        self.fit_audit.update({
+            "family": "pure_ridge_Cox",
+            "alpha": 0.0,
+            "penalty_semantics": _RIDGE_PENALTY_SEMANTICS,
+        })
+        return self
 
 
 def _require_converged_model(model, context):
@@ -2115,14 +2320,163 @@ def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
     return selected
 
 
+def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
+               max_iter=250, tolerance=1e-7):
+    """Tune a P3D pure-ridge sensitivity using outer-training data only."""
+    if model_id not in ("M0", "M1", "M2"):
+        raise W08ValidationError(
+            "ridge sensitivity tuning is only for M0/M1/M2 blocks")
+    inner_splits = make_inner_splits(raw_frame, inner_seed, folds=5)
+    ratios = np.geomspace(
+        RIDGE_LAMBDA_MAX_RATIO, RIDGE_LAMBDA_MIN_RATIO, int(lambda_count))
+    records = []
+    stability_actions = []
+    for inner_index, (train_idx, validation_idx) in enumerate(inner_splits, start=1):
+        inner_train = raw_frame.iloc[train_idx].reset_index(drop=True)
+        inner_validation = raw_frame.iloc[validation_idx].reset_index(drop=True)
+        preprocessor = ModelPreprocessor(model_id).fit(inner_train)
+        X_train = preprocessor.transform(inner_train)
+        X_validation = preprocessor.transform(inner_validation)
+        train_time = inner_train["DFS_time"].to_numpy(dtype=float)
+        train_event = inner_train["DFS_event"].to_numpy(dtype=int)
+        validation_time = inner_validation["DFS_time"].to_numpy(dtype=float)
+        validation_event = inner_validation["DFS_event"].to_numpy(dtype=int)
+        reference = _ridge_lambda_reference(X_train, train_time, train_event)
+        censoring = {
+            "train_ids_hash": canonical_id_hash(inner_train["patient_id"]),
+            "validation_ids_hash": canonical_id_hash(inner_validation["patient_id"]),
+        }
+        for lambda_index, ratio in enumerate(ratios):
+            penalty = float(reference * ratio)
+            record = {
+                "inner_fold": inner_index,
+                "family": "pure_ridge_Cox",
+                "alpha": 0.0,
+                "alpha_index": 0,
+                "lambda_index": int(lambda_index),
+                "lambda_ratio": float(ratio),
+                "inner_lambda_reference": float(reference),
+                "inner_lambda_max": float(reference),
+                "inner_lambda": penalty,
+                "lambda_reference_scope": "inner_training_only_trace_I0_over_p",
+                "lambda_grid_scope": "inner_training_only",
+                "lambda_fit_scope": "inner_training_only",
+                "uno_c_index": float("nan"),
+                "inner_train_ids_hash": censoring["train_ids_hash"],
+                "inner_validation_ids_hash": censoring["validation_ids_hash"],
+                "outer_validation_used_for_lambda": False,
+                "candidate_attempted": True,
+                "candidate_failed": False,
+                "failure_reason": "",
+                "converged": False,
+                "fit_status": "not_started",
+                "convergence_reason": None,
+                "stability_actions": [],
+                "linear_predictor_clipping": _new_clipping_audit(),
+            }
+            try:
+                model = CoxRidgeModel(
+                    penalty, max_iter=max_iter, tolerance=tolerance).fit(
+                    X_train, train_time, train_event)
+                _require_converged_model(model, "inner ridge Cox candidate")
+                risk = model.predict_risk(X_validation)
+                if not np.isfinite(risk).all():
+                    raise W08NumericalFailure(
+                        "ridge candidate linear predictor is nonfinite",
+                        audit=model.fit_audit)
+                score = uno_c_index(train_time, train_event,
+                                    validation_time, validation_event, risk)
+                if not np.isfinite(score):
+                    score = float("nan")
+                record["uno_c_index"] = float(score)
+                record["converged"] = bool(model.fit_audit.get("converged"))
+                record["fit_status"] = model.fit_audit.get(
+                    "fit_status", "unknown")
+                record["convergence_reason"] = model.fit_audit.get(
+                    "convergence_reason")
+                record["stability_actions"] = list(
+                    model.fit_audit.get("stability_actions", []))
+                record["linear_predictor_clipping"] = model.fit_audit.get(
+                    "linear_predictor_clipping", _new_clipping_audit())
+                stability_actions.extend(record["stability_actions"])
+            except W08NumericalFailure as exc:
+                audit = exc.audit or {}
+                record["candidate_failed"] = True
+                record["failure_reason"] = str(exc)
+                record["fit_status"] = audit.get("fit_status", "non_converged")
+                record["convergence_reason"] = audit.get("convergence_reason")
+                record["converged"] = False
+                record["stability_actions"] = list(
+                    audit.get("stability_actions", []))
+                record["linear_predictor_clipping"] = audit.get(
+                    "linear_predictor_clipping", _new_clipping_audit())
+                stability_actions.extend(record["stability_actions"])
+            records.append(record)
+    grouped = {}
+    for record in records:
+        key = record["lambda_index"]
+        grouped.setdefault(key, []).append(record["uno_c_index"])
+    summary = []
+    for lambda_index, scores in grouped.items():
+        finite = [score for score in scores if np.isfinite(score)]
+        summary.append({
+            "family": "pure_ridge_Cox",
+            "alpha": 0.0,
+            "alpha_index": 0,
+            "lambda_index": int(lambda_index),
+            "lambda_ratio": float(ratios[lambda_index]),
+            "mean_uno_c_index": float(np.mean(finite)) if finite else float("nan"),
+            "n_estimable_inner_scores": int(len(finite)),
+            "n_inner_scores": int(len(scores)),
+            "lambda_selection_scope": "outer_training_inner_5fold_only",
+            "outer_validation_used_for_lambda": False,
+            "outer_validation_used_for_selection": False,
+        })
+    try:
+        selected = _select_candidate(summary)
+    except W08ValidationError as exc:
+        raise W08CandidateSelectionFailure(
+            str(exc), audit={
+                "candidate_attempts": int(len(records)),
+                "candidate_failures": int(sum(
+                    row["candidate_failed"] for row in records)),
+                "candidate_records": records,
+                "stability_actions": sorted(set(stability_actions)),
+            })
+    selected = dict(selected)
+    selected.update({
+        "candidate_attempts": int(len(records)),
+        "candidate_failures": int(sum(row["candidate_failed"] for row in records)),
+        "inner_folds": int(len(inner_splits)),
+        "lambda_count": int(lambda_count),
+        "lambda_grid_max_ratio": RIDGE_LAMBDA_MAX_RATIO,
+        "lambda_grid_min_ratio": RIDGE_LAMBDA_MIN_RATIO,
+        "lambda_grid_scope": "inner_training_only",
+        "lambda_reference_scope": "inner_training_only_trace_I0_over_p_and_outer_training_refit",
+        "all_inner_records": records,
+        "stability_actions": sorted(set(stability_actions)) or ["stable_path"],
+        "lambda_selection_scope": "outer_training_inner_5fold_only",
+        "outer_validation_used_for_lambda": False,
+        "outer_validation_used_for_selection": False,
+    })
+    return selected
+
+
 def _fit_outer_model(train_frame, validation_frame, model_id, inner_seed,
-                     lambda_count=LAMBDA_COUNT, max_iter=250, tolerance=1e-7):
+                     lambda_count=LAMBDA_COUNT, max_iter=250, tolerance=1e-7,
+                     run_definition=None):
+    run_definition = dict(run_definition or {
+        "run_id": model_id, "model_id": model_id,
+        "population": MODEL_SPECS[model_id]["population"],
+    })
+    penalty_definition = _run_penalty_definition(run_definition)
+    family = penalty_definition["family"]
     preprocessor = ModelPreprocessor(model_id).fit(train_frame)
     X_train = preprocessor.transform(train_frame)
     X_validation = preprocessor.transform(validation_frame)
     train_time = train_frame["DFS_time"].to_numpy(dtype=float)
     train_event = train_frame["DFS_event"].to_numpy(dtype=int)
-    if MODEL_SPECS[model_id]["family"] == "Cox_PH_unpenalized":
+    if family == "Cox_PH_unpenalized":
         model = CoxPHModel(max_iter=max_iter, tolerance=tolerance).fit(
             X_train, train_time, train_event)
         selection = {
@@ -2130,7 +2484,33 @@ def _fit_outer_model(train_frame, validation_frame, model_id, inner_seed,
             "candidate_attempts": 0, "candidate_failures": 0,
             "inner_folds": 0, "lambda_count": 0,
             "mean_uno_c_index": None, "stability_actions": [],
+            "family": family,
+            "lambda_selection_scope": "not_applicable_unpenalized_primary",
+            "outer_validation_used_for_lambda": False,
+            "outer_validation_used_for_selection": False,
         }
+    elif family == "pure_ridge_Cox":
+        selection = tune_ridge(
+            train_frame, model_id, inner_seed, lambda_count=lambda_count,
+            max_iter=max_iter, tolerance=tolerance)
+        outer_lambda_reference = _ridge_lambda_reference(
+            X_train, train_time, train_event)
+        final_lambda = float(outer_lambda_reference * selection["lambda_ratio"])
+        if not np.isfinite(final_lambda) or final_lambda <= 0.0:
+            raise W08ValidationError("outer ridge lambda is nonpositive or nonfinite")
+        model = CoxRidgeModel(
+            final_lambda, max_iter=max_iter, tolerance=tolerance).fit(
+                X_train, train_time, train_event)
+        selection["outer_lambda_reference"] = float(outer_lambda_reference)
+        selection["outer_lambda_max"] = float(outer_lambda_reference)
+        selection["outer_lambda"] = final_lambda
+        selection["lambda_reference_scope"] = (
+            "inner_training_only_trace_I0_over_p_and_outer_training_refit")
+        selection["outer_validation_used_for_lambda"] = False
+        selection["outer_validation_used_for_selection"] = False
+        selection["stability_actions"] = sorted(set(
+            selection["stability_actions"] +
+            model.fit_audit.get("stability_actions", [])))
     else:
         selection = tune_elastic_net(
             train_frame, model_id, inner_seed, lambda_count=lambda_count,
@@ -2145,6 +2525,10 @@ def _fit_outer_model(train_frame, validation_frame, model_id, inner_seed,
         selection["outer_lambda"] = final_lambda
         selection["stability_actions"] = sorted(set(
             selection["stability_actions"] + model.fit_audit.get("stability_actions", [])))
+        selection["family"] = family
+        selection["lambda_selection_scope"] = "outer_training_inner_5fold_only"
+        selection["outer_validation_used_for_lambda"] = False
+        selection["outer_validation_used_for_selection"] = False
     _require_converged_model(model, "outer %s Cox fit" % model_id)
     selection["converged"] = bool(model.fit_audit.get("converged", False))
     selection["fit_status"] = model.fit_audit.get("fit_status", "unknown")
@@ -2182,7 +2566,8 @@ def _resolve_runs(models=None, runs=None):
     if runs is not None and models is not None:
         raise W08ValidationError("specify either model IDs or fixed run IDs, not both")
     if runs is not None:
-        by_id = {item["run_id"]: item for item in FIXED_RUN_DEFINITIONS}
+        by_id = {item["run_id"]: item for item in
+                 FIXED_RUN_DEFINITIONS + FIXED_SENSITIVITY_RUN_DEFINITIONS}
         selected = []
         for run_id in runs:
             if run_id not in by_id:
@@ -2328,7 +2713,8 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
             model, preprocessor, selection, risk, survival, survival_grid = _fit_outer_model(
                 train_model, validation_model, model_id, inner_seed,
                 lambda_count=lambda_count, max_iter=solver_max_iter,
-                tolerance=solver_tolerance)
+                tolerance=solver_tolerance, run_definition=run)
+            penalty_audit = _penalty_audit(run, preprocessor)
             train_time = train_model["DFS_time"].to_numpy(dtype=float)
             train_event = train_model["DFS_event"].to_numpy(dtype=int)
             valid_time = validation_model["DFS_time"].to_numpy(dtype=float)
@@ -2367,6 +2753,21 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                 "selected_alpha": selection.get("alpha"),
                 "selected_lambda_ratio": selection.get("lambda_ratio"),
                 "selected_lambda": selection.get("outer_lambda"),
+                "selected_lambda_reference": selection.get(
+                    "outer_lambda_reference"),
+                "selected_lambda_max": selection.get("outer_lambda_max"),
+                "family": penalty_audit["family"],
+                "penalized_blocks": list(penalty_audit["penalized_blocks"]),
+                "penalty_semantics": penalty_audit["penalty_semantics"],
+                "intercept_semantics": penalty_audit["intercept_semantics"],
+                "penalty_audit": penalty_audit,
+                "lambda_selection_scope": selection.get(
+                    "lambda_selection_scope"),
+                "lambda_reference_scope": selection.get(
+                    "lambda_reference_scope",
+                    "not_applicable_unpenalized_primary"),
+                "outer_validation_used_for_lambda": selection.get(
+                    "outer_validation_used_for_lambda", False),
                 "selected_features": [
                     name for name, coefficient in zip(
                         preprocessor.feature_names, model.coef_)
@@ -2422,6 +2823,21 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                 "selected_alpha": selection.get("alpha"),
                 "selected_lambda_ratio": selection.get("lambda_ratio"),
                 "selected_lambda": selection.get("outer_lambda"),
+                "selected_lambda_reference": selection.get(
+                    "outer_lambda_reference"),
+                "selected_lambda_max": selection.get("outer_lambda_max"),
+                "family": penalty_audit["family"],
+                "penalized_blocks": list(penalty_audit["penalized_blocks"]),
+                "penalty_semantics": penalty_audit["penalty_semantics"],
+                "intercept_semantics": penalty_audit["intercept_semantics"],
+                "penalty_audit": penalty_audit,
+                "lambda_selection_scope": selection.get(
+                    "lambda_selection_scope"),
+                "lambda_reference_scope": selection.get(
+                    "lambda_reference_scope",
+                    "not_applicable_unpenalized_primary"),
+                "outer_validation_used_for_lambda": selection.get(
+                    "outer_validation_used_for_lambda", False),
                 "inner_mean_uno_c_index": selection.get("mean_uno_c_index"),
                 "candidate_attempts": selection.get("candidate_attempts", 0),
                 "candidate_failures": selection.get("candidate_failures", 0),
@@ -2468,6 +2884,11 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
         "formal_run": bool(require_fixed_hash and max_outer_folds is None),
         "runs_requested": [run["run_id"] for run in selected_runs],
         "models_requested": selected_models,
+        "run_penalty_semantics": {
+            run["run_id"]: _run_penalty_definition(run)
+            for run in selected_runs
+        },
+        "fixed_sensitivity_runs": list(FIXED_SENSITIVITY_RUN_IDS),
         "outer_split_hash": split_hash,
         "outer_split_hash_locked": W07_OUTER_SPLIT_SHA256,
         "W04_protocol_sha256": W04_PROTOCOL_SHA256,
@@ -2480,6 +2901,7 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
         "B_source_opened": False,
         "B_statistics_generated": False,
         "patient_level_outputs_written": False,
+        "outer_validation_used_for_lambda": False,
         "outer_validation_used_for_selection": False,
         "outer_validation_used_for_boundary_fit": False,
         "outer_validation_used_for_eligibility_threshold_learning": False,
