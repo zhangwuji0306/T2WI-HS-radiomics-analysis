@@ -141,10 +141,27 @@ class FreezeLockTests(unittest.TestCase):
 
     def test_tampered_freeze_artifacts_hard_fail(self):
         tamper_cases = {
+            "A393_identity_artifact": lambda tmp: _write(
+                os.path.join(tmp, "a393.csv"), "影像号\nA002\n"),
+            "A137_identity_artifact": lambda tmp: _write(
+                os.path.join(tmp, "a137.csv"), "影像号\nA002\n"),
+            "manifest": lambda tmp: _write(os.path.join(tmp, "manifest.csv"), "changed\n"),
+            "scanner_map": lambda tmp: _write(
+                os.path.join(tmp, "scanner_map.csv"), "changed\n"),
+            "preprocessing_config": lambda tmp: _write(
+                os.path.join(tmp, "preprocessing.yaml"), "changed\n"),
+            "slic_config": lambda tmp: _write(
+                os.path.join(tmp, "slic.json"), "changed\n"),
+            "high_signal_screen_list_member": lambda tmp: _write(
+                os.path.join(tmp, "screen_strict.csv"), "changed\n"),
+            "formal_bootstrap_summary": lambda tmp: _write(
+                os.path.join(tmp, "formal_summary.csv"), "changed\n"),
             "global_descriptors": lambda tmp: _write(os.path.join(tmp, "global.csv"), "changed\n"),
             "feature_qc": lambda tmp: _write(os.path.join(tmp, "feature_qc.csv"), "changed\n"),
             "feature_dictionary": lambda tmp: _write(os.path.join(tmp, "feature_dictionary.md"), "changed\n"),
             "threshold_audit": lambda tmp: _write(os.path.join(tmp, "threshold.md"), "changed\n"),
+            "threshold_confounding_audit": lambda tmp: _write(
+                os.path.join(tmp, "confounding.md"), "changed\n"),
             "map_manifest": lambda tmp: _write(os.path.join(tmp, "habitat_map_manifest.csv"), "changed\n"),
             "map_content_modified": lambda tmp: _write(
                 os.path.join(tmp, "maps", "A001_R1_habitat.nrrd"), "changed\n"),
@@ -155,10 +172,13 @@ class FreezeLockTests(unittest.TestCase):
         }
         for name, tamper in tamper_cases.items():
             with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
-                path = self.write_lock(tmp, valid_payload(tmp))
+                payload = valid_payload(tmp)
+                path = self.write_lock(tmp, payload)
                 tamper(tmp)
                 with self.assertRaises(RuntimeError):
                     validate_freeze_lock(path)
+                with self.assertRaises(RuntimeError):
+                    validate_artifact_hashes(payload, payload["artifact_paths"], tmp)
 
 
 if __name__ == "__main__":
