@@ -1,0 +1,231 @@
+{
+  "schema_version": "1.0",
+  "amendment_id": "W07A_pre_W08_protocol_amendment",
+  "status": "frozen",
+  "created_at": "2026-09-04T23:06:30+08:00",
+  "effective_timing": {
+    "after": ["W06", "W07", "P1A", "P1B", "P1C", "P1D"],
+    "before": ["formal W08 prediction", "formal W08 performance"],
+    "trigger": "technical_preflight_only",
+    "outcome_performance_informed": false
+  },
+  "access_boundary": {
+    "analysis_scope": "A-only",
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "patient_level_outputs_written": false
+  },
+  "protocol_lock": {
+    "algorithm": "SHA-256",
+    "locked_file": "prognosis_analysis/W07A_pre_W08_protocol_amendment.md",
+    "hash_scope": "exact UTF-8 bytes of locked_file",
+    "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70"
+  },
+  "source_provenance": {
+    "working_tree_head_before_amendment": "bfdfc47aecd3a8c583d9e59450b17edc4bf1f333",
+    "workflow": {
+      "path": "T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md",
+      "sha256": "ef3db6abb0c51765d0d34f15ede9a19931f7301633fac2da01934e8017c21fd3"
+    },
+    "W04_modeling_protocol": {
+      "path": "prognosis_analysis/modeling_protocol.json",
+      "sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe"
+    },
+    "technical_freeze_lock": {
+      "path": "habitat_analysis/freeze_lock.json",
+      "sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262"
+    },
+    "W07_outer_split_config": {
+      "path": "prognosis_analysis/configs/w07_outer_splits.json",
+      "sha256": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217"
+    },
+    "W07_outer_split_artifact": {
+      "path": "prognosis_analysis/output/outer_splits_A.csv",
+      "sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502"
+    },
+    "R_low_candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high_candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
+  },
+  "audit_basis": [
+    {
+      "audit_id": "P1A",
+      "path": "prognosis_analysis/P1A_reader_security_audit.md",
+      "commit": "bbae7841884a299a59661d8171e1bea7502ce466",
+      "sha256": "bf21258fc76cb1bca272c9f6496d865a00640d31b1e3cff452ab37c19463cf83",
+      "non_identifying_conclusion": "Arbitrary custom reader bypass was reproduced; production A-only reader authorization must reject arbitrary callables before execution; B access remained false."
+    },
+    {
+      "audit_id": "P1B",
+      "path": "prognosis_analysis/P1B_freeze_integrity_audit.md",
+      "commit": "3ee79dad53c16169521a41844acc378715193734",
+      "sha256": "0d75514a727bc05a2e7262a7158559e0c7357b7be6cebc9731a2ee985e980b4e",
+      "non_identifying_conclusion": "The original technical freeze lock and its bound artifacts passed integrity verification; no scientific freeze parameter or B-access state changed."
+    },
+    {
+      "audit_id": "P1C",
+      "path": "prognosis_analysis/P1C_fold_specific_extractability_audit.md",
+      "commit": "c6f181f819882e58b1fe0bc42aae19c8fa245fba",
+      "sha256": "df7cba0d04fd0083dfc90c944165df80a028ca3af1764484a3f860d4b291cd81",
+      "non_identifying_conclusion": "All 50 outer folds were scanned technically with training-derived boundaries; the 0, 1-9, and >=10 support states were quantified without changing the split plan or 10-voxel rule, and no performance was generated."
+    },
+    {
+      "audit_id": "P1D",
+      "path": "prognosis_analysis/P1D_modeling_methodology_audit.md",
+      "commit": "bfdfc47aecd3a8c583d9e59450b17edc4bf1f333",
+      "sha256": "2b6866be8d9c44d237e4ee0b4dbd082267297d07bd5a76bebe7bf91a8da7455b",
+      "non_identifying_conclusion": "W04 clinical membership remained fixed; M0-R/M1-R/M2-R ridge sensitivities were prespecified; current M3L/M3H/M4 semantics penalize the complete C+G+R coefficient vector and required explicit amendment text."
+    }
+  ],
+  "decisions": {
+    "reader_policy": {
+      "production_arbitrary_custom_reader": "prohibited",
+      "required_reader": "explicitly_authorized_A_only_reader_or_API",
+      "B_may_enter_application_memory": false,
+      "authorization_before_source_open": true
+    },
+    "small_roi_rule": {
+      "minimumROISize": 10,
+      "states": [
+        {
+          "id": "structural_absence",
+          "condition": "mask_voxel_count == 0",
+          "extractable": false
+        },
+        {
+          "id": "technical_small_roi",
+          "condition": "1 <= mask_voxel_count < 10",
+          "extractable": false
+        },
+        {
+          "id": "extractable",
+          "condition": "mask_voxel_count >= 10",
+          "extractable": true
+        }
+      ],
+      "zero_is_distinct_from_one_to_nine": true,
+      "unsupported_block_to_zero_or_ordinary_missingness": false
+    },
+    "model_specific_population": {
+      "main": {
+        "models": ["M0", "M1", "M2"],
+        "eligibility": "W06 A modeling population",
+        "radiomics_support": "not_applicable"
+      },
+      "M3L": {
+        "population": "current_outer_fold_R_low_extractable",
+        "required_support": {"R_low": ">=10 voxels"}
+      },
+      "M3H": {
+        "population": "current_outer_fold_R_high_extractable",
+        "required_support": {"R_high": ">=10 voxels"}
+      },
+      "M4": {
+        "population": "current_outer_fold_dual_extractable",
+        "required_support": {"R_low": ">=10 voxels", "R_high": ">=10 voxels"}
+      }
+    },
+    "paired_comparator": {
+      "required_equalities": [
+        "same patients",
+        "same outer repeat/fold",
+        "same train/validation roles",
+        "same training-derived habitat boundary"
+      ],
+      "pairs": [
+        {"radiomics_run": "M3L", "comparator": "M2_R_low", "population": "R_low_extractable"},
+        {"radiomics_run": "M3H", "comparator": "M2_R_high", "population": "R_high_extractable"},
+        {"radiomics_run": "M4", "comparator": "M2_dual", "population": "dual_extractable"},
+        {"radiomics_run": "M3L_vs_M3H", "comparator": "none", "population": "dual_extractable"}
+      ],
+      "validation_used_for_boundary_fit": false
+    },
+    "clinical_and_penalty": {
+      "primary_models": {
+        "M0": {"predictors": ["C"], "family": "unpenalized_Breslow_Cox_PH"},
+        "M1": {"predictors": ["C", "H_high_fraction"], "family": "unpenalized_Breslow_Cox_PH"},
+        "M2": {"predictors": ["C", "G"], "family": "unpenalized_Breslow_Cox_PH"}
+      },
+      "clinical_predictor_membership": "all_W04_predeclared_clinical_predictors_retained",
+      "outcome_based_clinical_screening": false,
+      "ridge_sensitivity_models": ["M0-R", "M1-R", "M2-R"],
+      "ridge": {
+        "family": "pure_ridge_Cox",
+        "alpha": 0,
+        "feature_zero_selection": false,
+        "lambda_scale": "trace(I0)/p at beta=0 using event-normalized observed information in inner-training",
+        "lambda_relative_grid": {
+          "count": 100,
+          "from": "1e4",
+          "to": "1e-4",
+          "spacing": "logarithmic"
+        },
+        "selection_scope": "outer-training_inner_5fold_only",
+        "selection_metric": "mean_inner_validation_Uno_C_index",
+        "tie_break": "larger_lambda_within_1e-12",
+        "nonpositive_lambda_ref": "hard_fail",
+        "outer_validation_used_for_lambda": false
+      },
+      "high_dimensional_penalty": {
+        "models": ["M3L", "M3H", "M4"],
+        "penalty_scope": "complete_preprocessed_coefficient_vector",
+        "penalized_vectors": {
+          "M3L": ["C", "G", "R_low"],
+          "M3H": ["C", "G", "R_high"],
+          "M4": ["C", "G", "R_low", "R_high"]
+        },
+        "C_or_G_exemption": false,
+        "penalty_mask": "none",
+        "performance_informed_change_allowed": false
+      }
+    }
+  },
+  "coverage_estimand": {
+    "unit": "model_run_outer_repeat_fold",
+    "opportunity_denominator": "relevant outer-validation A population before required fold-specific radiomics eligibility classification",
+    "required_reports": [
+      "validation_opportunities",
+      "valid_predictions",
+      "structural_absence",
+      "technical_small_roi_unavailable",
+      "per_patient_held_out_prediction_count",
+      "per_fold_effective_n"
+    ],
+    "patient_level_count_scope": "local protected analysis output; shared reports contain no direct identifiers",
+    "model_level_category_precedence": ["structural_absence", "technical_small_roi", "extractable"],
+    "M0_M1_M2_radiomics_state": "not_applicable",
+    "paired_comparator_same_coverage": true,
+    "metric_not_estimable": "record prespecified reason; do not substitute metric, population, or endpoint"
+  },
+  "event_gate_and_fallback": {
+    "outer_training_event_gate": ">=1 event",
+    "outer_validation_event_gate": ">=1 event",
+    "inner_training_event_gate": ">=1 event per inner fold",
+    "inner_validation_event_gate": ">=1 event per inner fold",
+    "failure_action": "formal_run_hard_fail_and_return_to_protocol_review",
+    "fallback": "none_predefined",
+    "prohibited_responses": [
+      "change W07 split",
+      "reduce folds or repeats",
+      "lower minimumROISize below 10",
+      "add or replace cases",
+      "change boundary",
+      "change candidate pools",
+      "change endpoint",
+      "change alpha or lambda selection rule"
+    ]
+  },
+  "preserved_frozen_state": {
+    "W04_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+    "W07_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+    "technical_freeze_sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
+    "R_low_candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high_candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+    "scientific_freeze_changed": false,
+    "W07_split_changed": false,
+    "formal_W08_started": false,
+    "formal_predictions_generated": false,
+    "formal_performance_generated": false
+  }
+}
