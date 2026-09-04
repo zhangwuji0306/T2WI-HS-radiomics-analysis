@@ -51,6 +51,8 @@ W04_PROTOCOL_SHA256 = (
     "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe")
 W07_OUTER_SPLIT_SHA256 = (
     "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502")
+W07A_PROTOCOL_AMENDMENT_SHA256 = (
+    "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70")
 W07_SPLIT_COLUMNS = ["patient_id", "repeat", "fold", "role", "seed"]
 W08_STATUS = "implementation_ready_not_run"
 
@@ -70,6 +72,16 @@ P3B_STATE_LABELS = {
     "extractable": frozenset(("radiomics_extractable", "extractable")),
 }
 P3B_STATE_ORDER = ("structural_absence", "technical_small_roi", "extractable")
+P3B_STATE_DEFINITIONS = OrderedDict((
+    ("structural_absence", "voxel_count == 0"),
+    ("technical_small_roi", "1 <= voxel_count < 10"),
+    ("extractable", "voxel_count >= 10"),
+))
+P3B_COVERAGE_FIELDS = (
+    "validation_opportunities", "valid_predictions", "effective_n",
+    "training_eligible_n", "validation_model_state_counts",
+    "validation_block_state_counts",
+)
 
 ALPHA_GRID = (0.1, 0.5, 0.9, 1.0)
 LAMBDA_COUNT = 100
@@ -300,7 +312,9 @@ def _read_json(path):
 def _validate_config(config):
     required = {"stage", "status", "frozen_protocol_sha256",
                 "frozen_outer_split_sha256", "outer_cv", "inner_cv",
-                "models", "fixed_runs", "provenance", "output_schema", "audit_schema"}
+                "W07A_protocol_sha256", "models", "fixed_runs", "provenance",
+                "extractability_state", "paired_comparators", "coverage_schema",
+                "output_schema", "audit_schema"}
     missing = sorted(required - set(config))
     if missing:
         raise W08ValidationError("W08 config missing keys: %s" % missing)
@@ -310,6 +324,9 @@ def _validate_config(config):
         raise W08ValidationError("W08 protocol hash is not the W04 lock")
     if config["frozen_outer_split_sha256"].lower() != W07_OUTER_SPLIT_SHA256:
         raise W08ValidationError("W08 outer split hash is not the W07 lock")
+    if not isinstance(config["W07A_protocol_sha256"], str) or \
+            config["W07A_protocol_sha256"].lower() != W07A_PROTOCOL_AMENDMENT_SHA256:
+        raise W08ValidationError("W08 W07A protocol amendment hash is not the fixed lock")
     outer = config["outer_cv"]
     if (outer.get("folds"), outer.get("repeats"), outer.get("total_folds")) != (5, 10, 50):
         raise W08ValidationError("W08 requires 5 folds x 10 repeats")
@@ -339,35 +356,56 @@ def _validate_config(config):
         raise W08ValidationError("W08 outer split source is not the W07 artifact")
     if provenance.get("B_data_read") is not False:
         raise W08ValidationError("W08 must remain B-blinded")
+    if not isinstance(provenance.get("W07A_protocol_sha256"), str) or \
+            provenance["W07A_protocol_sha256"].lower() != W07A_PROTOCOL_AMENDMENT_SHA256:
+        raise W08ValidationError(
+            "W08 provenance W07A protocol amendment hash is not the fixed lock")
     for block, expected_hash in FROZEN_CANDIDATE_HASHES.items():
         if provenance.get("%s_candidate_hash" % block, "").lower() != expected_hash:
             raise W08ValidationError(
                 "W08 %s candidate hash is not the frozen W03 hash" % block)
-    extractability = config.get("extractability_state")
-    if extractability is not None:
-        if extractability.get("source") != "P3B":
-            raise W08ValidationError("W08 extractability source must be P3B")
-        if list(extractability.get("fields", [])) != list(P3B_EXTRACTABILITY_FIELDS):
-            raise W08ValidationError("W08 P3B extractability field set differs from P3B")
-        if extractability.get("minimumROISize") != MINIMUM_ROI_SIZE:
-            raise W08ValidationError("W08 minimumROISize differs from the amendment")
-        if extractability.get("zero_is_distinct_from_one_to_nine") is not True:
-            raise W08ValidationError("W08 must keep zero distinct from 1-9 support")
-        if extractability.get("eligibility_stage") != \
-                "after_provider_transform_before_any_preprocessing":
-            raise W08ValidationError("W08 eligibility stage is not pre-preprocessing")
-    configured_pairs = config.get("paired_comparators")
-    if configured_pairs is not None and configured_pairs != list(
-            PAIRED_COMPARATOR_DEFINITIONS):
+    extractability = config["extractability_state"]
+    expected_extractability_keys = {
+        "source", "fields", "minimumROISize", "states",
+        "zero_is_distinct_from_one_to_nine", "eligibility_stage",
+    }
+    if not isinstance(extractability, dict) or \
+            set(extractability) != expected_extractability_keys:
+        raise W08ValidationError("W08 P3B extractability state fields are incomplete")
+    if extractability["source"] != "P3B":
+        raise W08ValidationError("W08 extractability source must be P3B")
+    if not isinstance(extractability["fields"], list) or \
+            extractability["fields"] != list(P3B_EXTRACTABILITY_FIELDS):
+        raise W08ValidationError("W08 P3B extractability field set differs from P3B")
+    if type(extractability["minimumROISize"]) is not int or \
+            extractability["minimumROISize"] != MINIMUM_ROI_SIZE:
+        raise W08ValidationError("W08 minimumROISize differs from the amendment")
+    if extractability["states"] != dict(P3B_STATE_DEFINITIONS):
+        raise W08ValidationError("W08 P3B state definitions differ from the amendment")
+    if extractability["zero_is_distinct_from_one_to_nine"] is not True:
+        raise W08ValidationError("W08 must keep zero distinct from 1-9 support")
+    if extractability["eligibility_stage"] != \
+            "after_provider_transform_before_any_preprocessing":
+        raise W08ValidationError("W08 eligibility stage is not pre-preprocessing")
+    configured_pairs = config["paired_comparators"]
+    if not isinstance(configured_pairs, list) or len(configured_pairs) != 5 or \
+            configured_pairs != list(PAIRED_COMPARATOR_DEFINITIONS):
         raise W08ValidationError(
             "W08 paired comparator definitions differ from the amendment")
-    coverage = config.get("coverage_schema")
-    if coverage is not None:
-        if coverage.get("unit") != "model_run_outer_repeat_fold":
-            raise W08ValidationError("W08 coverage unit is not outer repeat/fold")
-        if coverage.get("paired_same_coverage") is not True or \
-                coverage.get("paired_same_boundary") is not True:
-            raise W08ValidationError("W08 paired coverage/boundary lock is incomplete")
+    coverage = config["coverage_schema"]
+    expected_coverage_keys = {
+        "unit", "required_fields", "paired_same_coverage", "paired_same_boundary",
+    }
+    if not isinstance(coverage, dict) or set(coverage) != expected_coverage_keys:
+        raise W08ValidationError("W08 coverage schema fields are incomplete")
+    if coverage["unit"] != "model_run_outer_repeat_fold":
+        raise W08ValidationError("W08 coverage unit is not outer repeat/fold")
+    if not isinstance(coverage["required_fields"], list) or \
+            coverage["required_fields"] != list(P3B_COVERAGE_FIELDS):
+        raise W08ValidationError("W08 coverage required fields differ from the amendment")
+    if coverage["paired_same_coverage"] is not True or \
+            coverage["paired_same_boundary"] is not True:
+        raise W08ValidationError("W08 paired coverage/boundary lock is incomplete")
     return config
 
 
@@ -608,11 +646,11 @@ def _legacy_radiomics_categories(frame, block):
     return category
 
 
-def _extractability_categories(frame, required_blocks):
+def _extractability_categories(frame, required_blocks, require_p3b=False):
     required_blocks = tuple(required_blocks)
     if not required_blocks:
         return None, "not_applicable"
-    p3b = _p3b_extractability_categories(frame, required=False)
+    p3b = _p3b_extractability_categories(frame, required=require_p3b)
     if p3b is not None:
         return p3b.loc[:, list(required_blocks)].copy(), "P3B"
     output = pd.DataFrame(index=frame.index)
@@ -691,7 +729,8 @@ def _fold_population_coverage(population_name, required_blocks,
     }
 
 
-def derive_fold_populations(training_frame, validation_frame, population_names=None):
+def derive_fold_populations(training_frame, validation_frame, population_names=None,
+                            require_p3b=False):
     """Derive current-fold populations after P3B state consumption.
 
     ``training_frame`` and ``validation_frame`` are already transformed with
@@ -708,9 +747,9 @@ def derive_fold_populations(training_frame, validation_frame, population_names=N
     required_blocks = tuple(block for block in ("R_low", "R_high")
                             if any(block in POPULATION_RULES[name] for name in names))
     train_categories, train_source = _extractability_categories(
-        training_frame, required_blocks)
+        training_frame, required_blocks, require_p3b=require_p3b)
     validation_categories, validation_source = _extractability_categories(
-        validation_frame, required_blocks)
+        validation_frame, required_blocks, require_p3b=require_p3b)
     if train_source != validation_source:
         raise W08ValidationError("fold train/validation extractability sources differ")
 
@@ -1041,6 +1080,11 @@ def _validate_fold_provider_output(frame, ids, required_columns, formal_capable)
     """Ensure transformed outputs contain the audited fold-specific columns."""
     if not formal_capable:
         return
+    # A formal-capable provider is the formal radiomics boundary.  Validate all
+    # P3B fields immediately after transform, before eligibility or any model
+    # preprocessing can consume the representation.  This deliberately makes
+    # the legacy availability adapter unreachable on the formal path.
+    _p3b_extractability_categories(frame, required=True)
     missing = sorted(set(required_columns) - set(frame.columns))
     if missing:
         raise W08ValidationError(
@@ -2254,7 +2298,8 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
             outer_validation_ids].reset_index()
 
         fold_populations = derive_fold_populations(
-            train_repr, validation_repr, population_names=population_names)
+            train_repr, validation_repr, population_names=population_names,
+            require_p3b=bool(provider.formal_capable))
         paired_metadata = derive_paired_comparators(
             selected_runs, fold_populations)
         for run in selected_runs:
@@ -2314,6 +2359,7 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                     train_ids + validation_ids),
                 "outer_split_hash": split_hash,
                 "W04_protocol_sha256": W04_PROTOCOL_SHA256,
+                "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
                 "centers": list(state.centers) if state.centers is not None else None,
                 "boundary": state.boundary,
                 "representation_metadata": state.metadata,
@@ -2372,6 +2418,7 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                 "outer_training_id_hash": outer_train_hash,
                 "outer_validation_id_hash": outer_validation_hash,
                 "inner_seed": inner_seed,
+                "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
                 "selected_alpha": selection.get("alpha"),
                 "selected_lambda_ratio": selection.get("lambda_ratio"),
                 "selected_lambda": selection.get("outer_lambda"),
@@ -2424,6 +2471,7 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
         "outer_split_hash": split_hash,
         "outer_split_hash_locked": W07_OUTER_SPLIT_SHA256,
         "W04_protocol_sha256": W04_PROTOCOL_SHA256,
+        "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
         "outer_split_validation": split_summary,
         "n_fold_results": int(len(fold_results)),
         "n_predictions": int(len(predictions)),
