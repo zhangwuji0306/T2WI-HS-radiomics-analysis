@@ -48,6 +48,64 @@
     "R_high": ["M3H"],
     "dual_radiomics": ["M4"]
   },
+  "extractability_state": {
+    "source": "P3B",
+    "fields": [
+      "R_low_voxel_count", "R_high_voxel_count", "R_low_state", "R_high_state",
+      "R_low_structurally_defined", "R_high_structurally_defined",
+      "R_low_technically_extractable", "R_high_technically_extractable"
+    ],
+    "minimumROISize": 10,
+    "states": {
+      "structural_absence": "voxel_count == 0",
+      "technical_small_roi": "1 <= voxel_count < 10",
+      "extractable": "voxel_count >= 10"
+    },
+    "zero_is_distinct_from_one_to_nine": true,
+    "eligibility_stage": "after_provider_transform_before_any_preprocessing"
+  },
+  "paired_comparators": [
+    {
+      "comparison_id": "M2_R_low_vs_M3L",
+      "comparator_run": "M2_R_low",
+      "radiomics_run": "M3L",
+      "population": "R_low"
+    },
+    {
+      "comparison_id": "M2_R_high_vs_M3H",
+      "comparator_run": "M2_R_high",
+      "radiomics_run": "M3H",
+      "population": "R_high"
+    },
+    {
+      "comparison_id": "M2_dual_vs_M3L",
+      "comparator_run": "M2_dual_radiomics",
+      "radiomics_run": "M3L_dual_radiomics",
+      "population": "dual_radiomics"
+    },
+    {
+      "comparison_id": "M2_dual_vs_M3H",
+      "comparator_run": "M2_dual_radiomics",
+      "radiomics_run": "M3H_dual_radiomics",
+      "population": "dual_radiomics"
+    },
+    {
+      "comparison_id": "M2_dual_vs_M4",
+      "comparator_run": "M2_dual_radiomics",
+      "radiomics_run": "M4",
+      "population": "dual_radiomics"
+    }
+  ],
+  "coverage_schema": {
+    "unit": "model_run_outer_repeat_fold",
+    "required_fields": [
+      "validation_opportunities", "valid_predictions", "effective_n",
+      "training_eligible_n", "validation_model_state_counts",
+      "validation_block_state_counts"
+    ],
+    "paired_same_coverage": true,
+    "paired_same_boundary": true
+  },
   "provenance": {
     "population_source": "prognosis_analysis/output/A_modeling/A_modeling_population.csv",
     "outer_split_source": "prognosis_analysis/output/outer_splits_A.csv",
@@ -61,7 +119,34 @@
     "predictions": "prognosis_analysis/configs/w08_results_schema.json#predictions",
     "fold_results": "prognosis_analysis/configs/w08_results_schema.json#fold_results",
     "selection_results": "prognosis_analysis/configs/w08_results_schema.json#selection_results",
-    "patient_level_outputs_written": false
+    "patient_level_outputs_written": false,
+    "additional_in_memory_columns": {
+      "predictions": [
+        "outer_training_id_hash", "outer_validation_id_hash",
+        "paired_comparison_ids"
+      ],
+      "fold_results": [
+        "outer_training_id_hash", "outer_validation_id_hash",
+        "eligible_population_id_hash", "coverage",
+        "validation_opportunities", "valid_predictions", "effective_n",
+        "training_opportunities", "training_eligible_n",
+        "coverage_model_state_counts", "coverage_block_state_counts",
+        "validation_structural_absence",
+        "validation_technical_small_roi_unavailable",
+        "paired_comparison_ids", "paired_comparator_run_ids",
+        "paired_training_id_hash", "paired_validation_id_hash",
+        "paired_boundary", "outer_validation_used_for_boundary_fit",
+        "outer_validation_used_for_eligibility_threshold_learning",
+        "eligibility_before_preprocessing"
+      ],
+      "selection_results": [
+        "outer_training_id_hash", "outer_validation_id_hash",
+        "paired_comparison_ids", "paired_comparator_run_ids",
+        "validation_opportunities", "valid_predictions", "effective_n",
+        "outer_validation_used_for_boundary_fit",
+        "outer_validation_used_for_eligibility_threshold_learning"
+      ]
+    }
   },
   "audit_schema": {
     "path": "prognosis_analysis/configs/w08_audit_schema.json",
@@ -77,6 +162,9 @@
     ],
     "required_isolation_flags": [
       "outer_validation_used_for_selection",
+      "outer_validation_used_for_boundary_fit",
+      "outer_validation_used_for_eligibility_threshold_learning",
+      "eligibility_before_preprocessing",
       "B_data_read",
       "B_reader_invoked",
       "B_source_opened",

@@ -54,6 +54,23 @@ W07_OUTER_SPLIT_SHA256 = (
 W07_SPLIT_COLUMNS = ["patient_id", "repeat", "fold", "role", "seed"]
 W08_STATUS = "implementation_ready_not_run"
 
+# P3B is the sole fold-specific radiomics extractability contract consumed by
+# W08.  These fields are emitted by the already-frozen provider; W08 validates
+# them and never reconstructs their values from imputed feature columns.
+MINIMUM_ROI_SIZE = 10
+P3B_EXTRACTABILITY_FIELDS = (
+    "R_low_voxel_count", "R_high_voxel_count", "R_low_state", "R_high_state",
+    "R_low_structurally_defined", "R_high_structurally_defined",
+    "R_low_technically_extractable", "R_high_technically_extractable",
+)
+P3B_STATE_LABELS = {
+    "structural_absence": frozenset(("structurally_absent", "structural_absence")),
+    "technical_small_roi": frozenset((
+        "technically_unextractable_small_ROI", "technical_small_roi")),
+    "extractable": frozenset(("radiomics_extractable", "extractable")),
+}
+P3B_STATE_ORDER = ("structural_absence", "technical_small_roi", "extractable")
+
 ALPHA_GRID = (0.1, 0.5, 0.9, 1.0)
 LAMBDA_COUNT = 100
 LAMBDA_MIN_RATIO = 1e-4
@@ -113,6 +130,22 @@ FIXED_RUN_DEFINITIONS = (
     {"run_id": "M4", "model_id": "M4", "population": "dual_radiomics"},
 )
 FIXED_RUN_IDS = tuple(run["run_id"] for run in FIXED_RUN_DEFINITIONS)
+
+# Each pair shares the same current-fold eligible IDs.  The three dual
+# comparisons use the M2 dual comparator refit against the corresponding
+# radiomics run on that identical dual population.
+PAIRED_COMPARATOR_DEFINITIONS = (
+    {"comparison_id": "M2_R_low_vs_M3L", "comparator_run": "M2_R_low",
+     "radiomics_run": "M3L", "population": "R_low"},
+    {"comparison_id": "M2_R_high_vs_M3H", "comparator_run": "M2_R_high",
+     "radiomics_run": "M3H", "population": "R_high"},
+    {"comparison_id": "M2_dual_vs_M3L", "comparator_run": "M2_dual_radiomics",
+     "radiomics_run": "M3L_dual_radiomics", "population": "dual_radiomics"},
+    {"comparison_id": "M2_dual_vs_M3H", "comparator_run": "M2_dual_radiomics",
+     "radiomics_run": "M3H_dual_radiomics", "population": "dual_radiomics"},
+    {"comparison_id": "M2_dual_vs_M4", "comparator_run": "M2_dual_radiomics",
+     "radiomics_run": "M4", "population": "dual_radiomics"},
+)
 
 POPULATION_RULES = {
     "main": (),
@@ -310,6 +343,31 @@ def _validate_config(config):
         if provenance.get("%s_candidate_hash" % block, "").lower() != expected_hash:
             raise W08ValidationError(
                 "W08 %s candidate hash is not the frozen W03 hash" % block)
+    extractability = config.get("extractability_state")
+    if extractability is not None:
+        if extractability.get("source") != "P3B":
+            raise W08ValidationError("W08 extractability source must be P3B")
+        if list(extractability.get("fields", [])) != list(P3B_EXTRACTABILITY_FIELDS):
+            raise W08ValidationError("W08 P3B extractability field set differs from P3B")
+        if extractability.get("minimumROISize") != MINIMUM_ROI_SIZE:
+            raise W08ValidationError("W08 minimumROISize differs from the amendment")
+        if extractability.get("zero_is_distinct_from_one_to_nine") is not True:
+            raise W08ValidationError("W08 must keep zero distinct from 1-9 support")
+        if extractability.get("eligibility_stage") != \
+                "after_provider_transform_before_any_preprocessing":
+            raise W08ValidationError("W08 eligibility stage is not pre-preprocessing")
+    configured_pairs = config.get("paired_comparators")
+    if configured_pairs is not None and configured_pairs != list(
+            PAIRED_COMPARATOR_DEFINITIONS):
+        raise W08ValidationError(
+            "W08 paired comparator definitions differ from the amendment")
+    coverage = config.get("coverage_schema")
+    if coverage is not None:
+        if coverage.get("unit") != "model_run_outer_repeat_fold":
+            raise W08ValidationError("W08 coverage unit is not outer repeat/fold")
+        if coverage.get("paired_same_coverage") is not True or \
+                coverage.get("paired_same_boundary") is not True:
+            raise W08ValidationError("W08 paired coverage/boundary lock is incomplete")
     return config
 
 
@@ -451,8 +509,289 @@ def _validate_split_frame(split_frame, population):
     return summary
 
 
+def _has_p3b_extractability_fields(frame):
+    present = set(P3B_EXTRACTABILITY_FIELDS) & set(frame.columns)
+    p3b_specific = set(P3B_EXTRACTABILITY_FIELDS) - {
+        "R_low_structurally_defined", "R_high_structurally_defined"}
+    if not (present & p3b_specific):
+        return False
+    if present != set(P3B_EXTRACTABILITY_FIELDS):
+        missing = sorted(set(P3B_EXTRACTABILITY_FIELDS) - present)
+        raise W08ValidationError(
+            "P3B extractability state is incomplete; missing %s" % missing)
+    return True
+
+
+def _p3b_extractability_categories(frame, required=True):
+    """Validate P3B's eight support fields and return explicit state classes.
+
+    The count is authoritative for the three mutually exclusive classes.  The
+    state text and the two flags are cross-checked against it so a missing or
+    imputed radiomics value can never turn a zero or a 1--9 ROI into an
+    eligible case.
+    """
+    if not _has_p3b_extractability_fields(frame):
+        if required:
+            raise W08ValidationError(
+                "fold-specific radiomics eligibility requires the P3B eight-field state")
+        return None
+    output = pd.DataFrame(index=frame.index)
+    for block in ("R_low", "R_high"):
+        count_name = "%s_voxel_count" % block
+        state_name = "%s_state" % block
+        structural_name = "%s_structurally_defined" % block
+        technical_name = "%s_technically_extractable" % block
+        counts = pd.to_numeric(frame[count_name], errors="coerce")
+        if counts.isna().any():
+            raise W08ValidationError("P3B %s voxel counts contain missing values" % block)
+        count_values = counts.to_numpy(dtype=float)
+        if (not np.isfinite(count_values).all() or
+                not np.equal(count_values, np.floor(count_values)).all() or
+                np.any(count_values < 0)):
+            raise W08ValidationError("P3B %s voxel counts are invalid" % block)
+        counts = counts.astype(int)
+
+        structural = pd.to_numeric(frame[structural_name], errors="coerce")
+        technical = pd.to_numeric(frame[technical_name], errors="coerce")
+        if (structural.isna().any() or technical.isna().any() or
+                not structural.isin([0, 1]).all() or
+                not technical.isin([0, 1]).all()):
+            raise W08ValidationError("P3B %s support flags are invalid" % block)
+
+        category = pd.Series("extractable", index=frame.index, dtype=object)
+        category.loc[counts.eq(0)] = "structural_absence"
+        category.loc[counts.between(1, MINIMUM_ROI_SIZE - 1)] = "technical_small_roi"
+        expected_structural = counts.gt(0).astype(int)
+        expected_technical = counts.ge(MINIMUM_ROI_SIZE).astype(int)
+        if not structural.astype(int).equals(expected_structural):
+            raise W08ValidationError(
+                "P3B %s structural flag disagrees with voxel count" % block)
+        if not technical.astype(int).equals(expected_technical):
+            raise W08ValidationError(
+                "P3B %s extractability flag disagrees with voxel count" % block)
+
+        raw_states = frame[state_name]
+        if raw_states.isna().any():
+            raise W08ValidationError("P3B %s states contain missing values" % block)
+        allowed = set().union(*P3B_STATE_LABELS.values())
+        if not raw_states.astype(str).isin(allowed).all():
+            raise W08ValidationError("P3B %s states contain an unknown label" % block)
+        for state_class, labels in P3B_STATE_LABELS.items():
+            expected = category.eq(state_class)
+            observed = raw_states.astype(str).isin(labels)
+            if not observed.equals(expected):
+                raise W08ValidationError(
+                    "P3B %s state disagrees with voxel count" % block)
+        output[block] = category
+    return output
+
+
+def _legacy_radiomics_categories(frame, block):
+    """Compatibility adapter for pre-P3B synthetic/in-memory fixtures only."""
+    structural_name = "%s_structurally_defined" % block
+    technical_name = "%s_technically_available" % block
+    if structural_name not in frame.columns or technical_name not in frame.columns:
+        raise W08ValidationError(
+            "%s eligibility requires P3B state or legacy explicit availability" % block)
+    structural = pd.to_numeric(frame[structural_name], errors="coerce")
+    technical = pd.to_numeric(frame[technical_name], errors="coerce")
+    if (structural.isna().any() or technical.isna().any() or
+            not structural.isin([0, 1]).all() or
+            not technical.isin([0, 1]).all()):
+        raise W08ValidationError("invalid legacy %s availability flags" % block)
+    if (technical.eq(1) & structural.eq(0)).any():
+        raise W08ValidationError(
+            "legacy %s technical availability cannot exceed structural definition" % block)
+    category = pd.Series("technical_small_roi", index=frame.index, dtype=object)
+    category.loc[structural.eq(0)] = "structural_absence"
+    category.loc[technical.eq(1)] = "extractable"
+    return category
+
+
+def _extractability_categories(frame, required_blocks):
+    required_blocks = tuple(required_blocks)
+    if not required_blocks:
+        return None, "not_applicable"
+    p3b = _p3b_extractability_categories(frame, required=False)
+    if p3b is not None:
+        return p3b.loc[:, list(required_blocks)].copy(), "P3B"
+    output = pd.DataFrame(index=frame.index)
+    for block in required_blocks:
+        output[block] = _legacy_radiomics_categories(frame, block)
+    return output, "legacy_explicit_availability"
+
+
+def _model_level_state(categories, required_blocks, index=None):
+    if not required_blocks:
+        return pd.Series("not_applicable", index=index, dtype=object)
+    output = pd.Series("extractable", index=categories.index, dtype=object)
+    structural = pd.Series(False, index=categories.index)
+    technical = pd.Series(False, index=categories.index)
+    for block in required_blocks:
+        structural |= categories[block].eq("structural_absence")
+        technical |= categories[block].eq("technical_small_roi")
+    output.loc[technical] = "technical_small_roi"
+    output.loc[structural] = "structural_absence"
+    return output
+
+
+def _state_counts(values):
+    return {state: int(values.eq(state).sum()) for state in P3B_STATE_ORDER}
+
+
+def _fold_population_coverage(population_name, required_blocks,
+                              train_frame, validation_frame,
+                              train_categories, validation_categories,
+                              source, train_ids, validation_ids):
+    train_model_state = _model_level_state(
+        train_categories, required_blocks, index=train_frame.index)
+    validation_model_state = _model_level_state(
+        validation_categories, required_blocks, index=validation_frame.index)
+    if required_blocks:
+        train_block_states = {
+            block: _state_counts(train_categories[block])
+            for block in required_blocks
+        }
+        validation_block_states = {
+            block: _state_counts(validation_categories[block])
+            for block in required_blocks
+        }
+        train_model_counts = _state_counts(train_model_state)
+        validation_model_counts = _state_counts(validation_model_state)
+    else:
+        train_block_states = {}
+        validation_block_states = {}
+        train_model_counts = {"not_applicable": int(len(train_frame))}
+        validation_model_counts = {"not_applicable": int(len(validation_frame))}
+    return {
+        "population": population_name,
+        "required_blocks": list(required_blocks),
+        "source": source,
+        "minimumROISize": MINIMUM_ROI_SIZE if required_blocks else None,
+        "eligibility_before_preprocessing": True,
+        "training_opportunities": int(len(train_frame)),
+        "training_eligible_n": int(len(train_ids)),
+        "validation_opportunities": int(len(validation_frame)),
+        "valid_predictions": int(len(validation_ids)),
+        "effective_n": int(len(validation_ids)),
+        "training_model_state_counts": train_model_counts,
+        "validation_model_state_counts": validation_model_counts,
+        "training_block_state_counts": train_block_states,
+        "validation_block_state_counts": validation_block_states,
+        "training_structural_absence": int(train_model_counts.get(
+            "structural_absence", 0)),
+        "training_technical_small_roi_unavailable": int(train_model_counts.get(
+            "technical_small_roi", 0)),
+        "validation_structural_absence": int(validation_model_counts.get(
+            "structural_absence", 0)),
+        "validation_technical_small_roi_unavailable": int(
+            validation_model_counts.get("technical_small_roi", 0)),
+        "validation_extractable": int(validation_model_counts.get(
+            "extractable", validation_model_counts.get("not_applicable", 0))),
+    }
+
+
+def derive_fold_populations(training_frame, validation_frame, population_names=None):
+    """Derive current-fold populations after P3B state consumption.
+
+    ``training_frame`` and ``validation_frame`` are already transformed with
+    one immutable outer-training provider state.  This function is deliberately
+    independent of every imputation, scaling, correlation, and feature
+    selection operation.
+    """
+    names = list(POPULATION_RULES if population_names is None else population_names)
+    unknown = sorted(set(names) - set(POPULATION_RULES))
+    if unknown:
+        raise W08ValidationError("unknown fold population: %s" % unknown)
+    if set(training_frame["patient_id"]) & set(validation_frame["patient_id"]):
+        raise W08ValidationError("fold population input train/validation overlap")
+    required_blocks = tuple(block for block in ("R_low", "R_high")
+                            if any(block in POPULATION_RULES[name] for name in names))
+    train_categories, train_source = _extractability_categories(
+        training_frame, required_blocks)
+    validation_categories, validation_source = _extractability_categories(
+        validation_frame, required_blocks)
+    if train_source != validation_source:
+        raise W08ValidationError("fold train/validation extractability sources differ")
+
+    output = OrderedDict()
+    for population_name in names:
+        required_for_population = tuple(POPULATION_RULES[population_name])
+        train_mask = pd.Series(True, index=training_frame.index)
+        validation_mask = pd.Series(True, index=validation_frame.index)
+        if population_name == "W_available":
+            train_mask &= _required_availability_mask(training_frame, "W")
+            validation_mask &= _required_availability_mask(validation_frame, "W")
+        for block in required_for_population:
+            if block in ("R_low", "R_high"):
+                if train_categories is None or validation_categories is None:
+                    raise W08ValidationError(
+                        "radiomics population lacks explicit fold extractability state")
+                train_mask &= train_categories[block].eq("extractable")
+                validation_mask &= validation_categories[block].eq("extractable")
+        train_ids = training_frame.loc[train_mask, "patient_id"].astype(str).tolist()
+        validation_ids = validation_frame.loc[
+            validation_mask, "patient_id"].astype(str).tolist()
+        coverage_blocks = tuple(block for block in required_for_population
+                                if block in ("R_low", "R_high"))
+        coverage = _fold_population_coverage(
+            population_name, coverage_blocks, training_frame,
+            validation_frame, train_categories, validation_categories,
+            train_source if coverage_blocks else (
+                "explicit_availability" if population_name == "W_available"
+                else "not_applicable"), train_ids, validation_ids)
+        output[population_name] = {
+            "population": population_name,
+            "train_ids": train_ids,
+            "validation_ids": validation_ids,
+            "coverage": coverage,
+        }
+    return output
+
+
+def derive_paired_comparators(selected_runs, population_views):
+    """Validate and index the fixed same-fold paired comparator definitions."""
+    selected = {run["run_id"]: run for run in selected_runs}
+    metadata = {run_id: {"comparison_ids": [], "comparator_run_ids": []}
+                for run_id in selected}
+
+    def view_for(run_id, population_name):
+        # The production caller keys views by fixed population.  Accepting
+        # run-keyed views as well keeps this helper useful for synthetic paired
+        # tests and makes the equality check explicit.
+        return population_views.get(run_id, population_views.get(population_name))
+
+    for pair in PAIRED_COMPARATOR_DEFINITIONS:
+        comparator_run = pair["comparator_run"]
+        radiomics_run = pair["radiomics_run"]
+        if comparator_run not in selected or radiomics_run not in selected:
+            continue
+        if (selected[comparator_run]["population"] != pair["population"] or
+                selected[radiomics_run]["population"] != pair["population"]):
+            raise W08ValidationError(
+                "paired comparator population mismatch for %s" % pair["comparison_id"])
+        comparator_view = view_for(comparator_run, pair["population"])
+        radiomics_view = view_for(radiomics_run, pair["population"])
+        if comparator_view is None or radiomics_view is None:
+            raise W08ValidationError(
+                "paired comparator population is missing for %s" % pair["comparison_id"])
+        if (list(comparator_view["train_ids"]) != list(radiomics_view["train_ids"]) or
+                list(comparator_view["validation_ids"]) !=
+                list(radiomics_view["validation_ids"])):
+            raise W08ValidationError(
+                "paired comparator IDs differ for %s" % pair["comparison_id"])
+        for run_id, other_run_id in ((comparator_run, radiomics_run),
+                                     (radiomics_run, comparator_run)):
+            metadata[run_id]["comparison_ids"].append(pair["comparison_id"])
+            metadata[run_id]["comparator_run_ids"].append(other_run_id)
+    return metadata
+
+
 def _required_availability_mask(frame, block):
     """Use explicit structural and technical flags; never infer availability."""
+    if block in ("R_low", "R_high") and _has_p3b_extractability_fields(frame):
+        categories = _p3b_extractability_categories(frame, required=True)
+        return categories[block].eq("extractable")
     structural = "%s_structurally_defined" % block
     technical = "%s_technically_available" % block
     available = "%s_available" % block
@@ -693,6 +1032,9 @@ def _validate_fold_provider_state(provider, state, training_ids, required_column
                 record.get("validation_ids_used_for_fit") is not False:
             raise W08ValidationError(
                 "invalid fold-specific source audit for %s" % column)
+    if metadata.get("validation_ids_used_for_fit") is not False:
+        raise W08ValidationError(
+            "formal provider state must exclude validation IDs from boundary fit")
 
 
 def _validate_fold_provider_output(frame, ids, required_columns, formal_capable):
@@ -1868,71 +2210,94 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
     required_fold_columns = _required_fold_specific_columns(selected_models)
 
     id_to_row = data.set_index("patient_id", drop=False)
-    eligibility = {}
-    for run in selected_runs:
-        population_name = run["population"]
-        eligible = eligible_ids(data, population_name)
-        if not eligible:
-            raise W08ValidationError("no eligible A patients for %s" % run["run_id"])
-        eligibility[run["run_id"]] = eligible
-
+    population_names = list(OrderedDict(
+        (run["population"], None) for run in selected_runs))
     predictions = []
     fold_results = []
     selection_results = []
     representation_cache = {}
-    completed_folds = 0
-    for run in selected_runs:
-        run_id = run["run_id"]
-        model_id = run["model_id"]
-        population_name = run["population"]
-        eligible = eligibility[run_id]
-        model_fold_count = 0
-        for repeat, fold, train_ids, validation_ids in _outer_fold_rows(outer_splits, eligible):
-            if max_outer_folds is not None and model_fold_count >= int(max_outer_folds):
-                break
-            outer_seed = 12345 + repeat - 1
-            inner_seed = 12345 + 1000 + 10 * (repeat - 1) + fold
-            kmeans_seed = 12345 + 2000 + 10 * (repeat - 1) + fold
-            solver_seed = 12345 + 3000 + 10 * (repeat - 1) + fold
-            event_train = id_to_row.loc[train_ids, "DFS_event"].to_numpy(dtype=int)
-            event_validation = id_to_row.loc[validation_ids, "DFS_event"].to_numpy(dtype=int)
-            if np.sum(event_train) < 1 or np.sum(event_validation) < 1:
-                raise W08ValidationError("outer event gate failed for %s repeat=%d fold=%d" %
-                                         (model_id, repeat, fold))
-            cache_key = tuple(train_ids)
-            if cache_key not in representation_cache:
-                state = provider.fit(train_ids, kmeans_seed)
-                _validate_fold_provider_state(
-                    provider, state, train_ids, required_fold_columns)
-                representation_cache[cache_key] = state
-            state = representation_cache[cache_key]
+    fold_count = 0
+    # The full outer split is traversed first.  Fold-specific eligibility is
+    # intentionally derived only after both provider transforms have consumed
+    # the same training-derived state.
+    for repeat, fold, outer_train_ids, outer_validation_ids in _outer_fold_rows(
+            outer_splits, set(data["patient_id"])):
+        if max_outer_folds is not None and fold_count >= int(max_outer_folds):
+            break
+        outer_seed = 12345 + repeat - 1
+        inner_seed = 12345 + 1000 + 10 * (repeat - 1) + fold
+        kmeans_seed = 12345 + 2000 + 10 * (repeat - 1) + fold
+        solver_seed = 12345 + 3000 + 10 * (repeat - 1) + fold
+        cache_key = tuple(outer_train_ids)
+        if cache_key not in representation_cache:
+            state = provider.fit(outer_train_ids, kmeans_seed)
             _validate_fold_provider_state(
-                provider, state, train_ids, required_fold_columns)
-            train_repr = provider.transform(train_ids, state)
-            validation_repr = provider.transform(validation_ids, state)
-            train_repr = _normalise_frame(train_repr)
-            validation_repr = _normalise_frame(validation_repr)
-            _validate_fold_provider_output(
-                train_repr, train_ids, required_fold_columns, provider.formal_capable)
-            _validate_fold_provider_output(
-                validation_repr, validation_ids, required_fold_columns,
-                provider.formal_capable)
-            if set(train_repr["patient_id"]) != set(train_ids) or set(validation_repr["patient_id"]) != set(validation_ids):
-                raise W08ValidationError("provider representation changed outer fold membership")
-            train_repr = train_repr.set_index("patient_id").loc[train_ids].reset_index()
-            validation_repr = validation_repr.set_index("patient_id").loc[validation_ids].reset_index()
+                provider, state, outer_train_ids, required_fold_columns)
+            representation_cache[cache_key] = state
+        state = representation_cache[cache_key]
+        _validate_fold_provider_state(
+            provider, state, outer_train_ids, required_fold_columns)
+        train_repr = _normalise_frame(provider.transform(outer_train_ids, state))
+        validation_repr = _normalise_frame(
+            provider.transform(outer_validation_ids, state))
+        _validate_fold_provider_output(
+            train_repr, outer_train_ids, required_fold_columns, provider.formal_capable)
+        _validate_fold_provider_output(
+            validation_repr, outer_validation_ids, required_fold_columns,
+            provider.formal_capable)
+        if (set(train_repr["patient_id"]) != set(outer_train_ids) or
+                set(validation_repr["patient_id"]) != set(outer_validation_ids)):
+            raise W08ValidationError("provider representation changed outer fold membership")
+        train_repr = train_repr.set_index("patient_id").loc[
+            outer_train_ids].reset_index()
+        validation_repr = validation_repr.set_index("patient_id").loc[
+            outer_validation_ids].reset_index()
+
+        fold_populations = derive_fold_populations(
+            train_repr, validation_repr, population_names=population_names)
+        paired_metadata = derive_paired_comparators(
+            selected_runs, fold_populations)
+        for run in selected_runs:
+            run_id = run["run_id"]
+            model_id = run["model_id"]
+            population_name = run["population"]
+            view = fold_populations[population_name]
+            train_ids = list(view["train_ids"])
+            validation_ids = list(view["validation_ids"])
+            coverage = dict(view["coverage"])
+            if not train_ids or not validation_ids:
+                raise W08ValidationError(
+                    "outer eligibility gate failed for %s repeat=%d fold=%d population=%s"
+                    % (run_id, repeat, fold, population_name))
+            event_train = id_to_row.loc[train_ids, "DFS_event"].to_numpy(dtype=int)
+            event_validation = id_to_row.loc[
+                validation_ids, "DFS_event"].to_numpy(dtype=int)
+            if np.sum(event_train) < 1 or np.sum(event_validation) < 1:
+                raise W08ValidationError(
+                    "outer event gate failed for %s repeat=%d fold=%d population=%s"
+                    % (run_id, repeat, fold, population_name))
+
+            train_model = train_repr.set_index("patient_id").loc[train_ids].reset_index()
+            validation_model = validation_repr.set_index(
+                "patient_id").loc[validation_ids].reset_index()
             model, preprocessor, selection, risk, survival, survival_grid = _fit_outer_model(
-                train_repr, validation_repr, model_id, inner_seed,
+                train_model, validation_model, model_id, inner_seed,
                 lambda_count=lambda_count, max_iter=solver_max_iter,
                 tolerance=solver_tolerance)
-            train_time = train_repr["DFS_time"].to_numpy(dtype=float)
-            train_event = train_repr["DFS_event"].to_numpy(dtype=int)
-            valid_time = validation_repr["DFS_time"].to_numpy(dtype=float)
-            valid_event = validation_repr["DFS_event"].to_numpy(dtype=int)
+            train_time = train_model["DFS_time"].to_numpy(dtype=float)
+            train_event = train_model["DFS_event"].to_numpy(dtype=int)
+            valid_time = validation_model["DFS_time"].to_numpy(dtype=float)
+            valid_event = validation_model["DFS_event"].to_numpy(dtype=int)
             metrics = evaluate_metrics(train_time, train_event, valid_time,
                                        valid_event, risk, survival, survival_grid)
             fold_id_hash = canonical_id_hash(train_ids)
             validation_id_hash = canonical_id_hash(validation_ids)
+            outer_train_hash = canonical_id_hash(outer_train_ids)
+            outer_validation_hash = canonical_id_hash(outer_validation_ids)
+            pair_info = paired_metadata.get(
+                run_id, {"comparison_ids": [], "comparator_run_ids": []})
+            coverage["valid_predictions"] = int(len(risk))
+            coverage["effective_n"] = int(len(risk))
             fold_result = {
                 "run_id": run_id, "model_id": model_id, "population": population_name,
                 "repeat": repeat, "fold": fold, "outer_seed": outer_seed,
@@ -1943,6 +2308,10 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                 "validation_events": int(np.sum(valid_event)),
                 "training_id_hash": fold_id_hash,
                 "validation_id_hash": validation_id_hash,
+                "outer_training_id_hash": outer_train_hash,
+                "outer_validation_id_hash": outer_validation_hash,
+                "eligible_population_id_hash": canonical_id_hash(
+                    train_ids + validation_ids),
                 "outer_split_hash": split_hash,
                 "W04_protocol_sha256": W04_PROTOCOL_SHA256,
                 "centers": list(state.centers) if state.centers is not None else None,
@@ -1967,8 +2336,31 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                 "linear_predictor_clipping": selection.get(
                     "linear_predictor_clipping", _new_clipping_audit()),
                 "outer_validation_used_for_selection": False,
+                "outer_validation_used_for_boundary_fit": False,
+                "outer_validation_used_for_eligibility_threshold_learning": False,
+                "eligibility_before_preprocessing": True,
                 "R_low_candidate_hash": config["provenance"]["R_low_candidate_hash"],
                 "R_high_candidate_hash": config["provenance"]["R_high_candidate_hash"],
+                "coverage": coverage,
+                "validation_opportunities": coverage["validation_opportunities"],
+                "valid_predictions": coverage["valid_predictions"],
+                "effective_n": coverage["effective_n"],
+                "training_opportunities": coverage["training_opportunities"],
+                "training_eligible_n": coverage["training_eligible_n"],
+                "coverage_model_state_counts": coverage["validation_model_state_counts"],
+                "coverage_block_state_counts": coverage["validation_block_state_counts"],
+                "validation_structural_absence": coverage[
+                    "validation_structural_absence"],
+                "validation_technical_small_roi_unavailable": coverage[
+                    "validation_technical_small_roi_unavailable"],
+                "paired_comparison_ids": list(pair_info["comparison_ids"]),
+                "paired_comparator_run_ids": list(pair_info["comparator_run_ids"]),
+                "paired_training_id_hash": fold_id_hash if pair_info[
+                    "comparison_ids"] else None,
+                "paired_validation_id_hash": validation_id_hash if pair_info[
+                    "comparison_ids"] else None,
+                "paired_boundary": state.boundary if pair_info[
+                    "comparison_ids"] else None,
             }
             fold_result.update(metrics)
             fold_results.append(fold_result)
@@ -1977,6 +2369,8 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                 "repeat": repeat, "fold": fold,
                 "training_id_hash": fold_id_hash,
                 "validation_id_hash": validation_id_hash,
+                "outer_training_id_hash": outer_train_hash,
+                "outer_validation_id_hash": outer_validation_hash,
                 "inner_seed": inner_seed,
                 "selected_alpha": selection.get("alpha"),
                 "selected_lambda_ratio": selection.get("lambda_ratio"),
@@ -1990,10 +2384,17 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                 "linear_predictor_clipping": selection.get(
                     "linear_predictor_clipping", _new_clipping_audit()),
                 "outer_validation_used_for_selection": False,
+                "outer_validation_used_for_boundary_fit": False,
+                "outer_validation_used_for_eligibility_threshold_learning": False,
+                "paired_comparison_ids": list(pair_info["comparison_ids"]),
+                "paired_comparator_run_ids": list(pair_info["comparator_run_ids"]),
+                "validation_opportunities": coverage["validation_opportunities"],
+                "valid_predictions": coverage["valid_predictions"],
+                "effective_n": coverage["effective_n"],
                 "inner_records": selection.get("all_inner_records", []),
             })
             for identifier, prediction, observed_time, observed_event in zip(
-                    validation_repr["patient_id"], risk, valid_time, valid_event):
+                    validation_model["patient_id"], risk, valid_time, valid_event):
                 predictions.append({
                     "run_id": run_id, "model_id": model_id, "population": population_name,
                     "repeat": repeat, "fold": fold,
@@ -2001,12 +2402,19 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                     "DFS_event": int(observed_event), "risk_score": float(prediction),
                     "training_id_hash": fold_id_hash,
                     "validation_id_hash": validation_id_hash,
+                    "outer_training_id_hash": outer_train_hash,
+                    "outer_validation_id_hash": outer_validation_hash,
                     "outer_split_hash": split_hash,
+                    "paired_comparison_ids": list(pair_info["comparison_ids"]),
+                    "outer_validation_used_for_boundary_fit": False,
+                    "outer_validation_used_for_eligibility_threshold_learning": False,
                     "outer_validation_used_for_selection": False,
                 })
-            completed_folds += 1
-            model_fold_count += 1
+        fold_count += 1
 
+    coverage_sources = sorted(set(
+        row["coverage"].get("source") for row in fold_results
+        if isinstance(row.get("coverage"), dict)))
     audit = {
         "stage": "W08",
         "status": W08_STATUS,
@@ -2025,6 +2433,16 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
         "B_statistics_generated": False,
         "patient_level_outputs_written": False,
         "outer_validation_used_for_selection": False,
+        "outer_validation_used_for_boundary_fit": False,
+        "outer_validation_used_for_eligibility_threshold_learning": False,
+        "eligibility_source": coverage_sources[0] if len(coverage_sources) == 1
+        else coverage_sources,
+        "eligibility_before_preprocessing": True,
+        "paired_comparators": [dict(item) for item in PAIRED_COMPARATOR_DEFINITIONS
+                                if item["comparator_run"] in {
+                                    run["run_id"] for run in selected_runs} and
+                                item["radiomics_run"] in {
+                                    run["run_id"] for run in selected_runs}],
         "candidate_attempts": int(sum(
             row["candidate_attempts"] for row in fold_results)),
         "candidate_failures": int(sum(row["candidate_failures"] for row in fold_results)),
