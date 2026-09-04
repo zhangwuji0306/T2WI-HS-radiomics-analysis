@@ -123,7 +123,13 @@ def _validate_authorized_frame(frame: pd.DataFrame, allowed_ids,
     identifiers = identifiers.astype(str).str.strip()
     if identifiers.eq("").any():
         raise RuntimeError("authorized data contains an empty identifier")
-    uniqueness_key = frame[[id_column, "读者"]] if "读者" in frame.columns else identifiers
+    if "读者" in frame.columns:
+        uniqueness_key = pd.DataFrame({
+            id_column: identifiers,
+            "读者": frame["读者"].astype(str).str.strip(),
+        }, index=frame.index)
+    else:
+        uniqueness_key = identifiers
     if uniqueness_key.duplicated().any():
         raise RuntimeError("authorized data contains duplicate identifiers")
     if allowed_ids is not None and not set(identifiers).issubset(allowed_ids):

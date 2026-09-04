@@ -75,6 +75,40 @@ class W05ReaderTests(unittest.TestCase):
                     path, allowed_ids=["A"])
         self.assertEqual(result["影像号"].tolist(), ["A"])
 
+    def test_normalized_duplicate_keys_fail_for_csv_and_xlsx(self):
+        rows = [
+            [" A1 ", " R1 ", 1],
+            ["A1", "R1", 2],
+        ]
+        for suffix in (".csv", ".xlsx"):
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as tmp:
+                path = os.path.join(tmp, "synthetic" + suffix)
+                frame = pd.DataFrame(rows, columns=["影像号", "读者", "value"])
+                if suffix == ".csv":
+                    frame.to_csv(path, index=False, encoding="utf-8-sig")
+                else:
+                    workbook = Workbook()
+                    sheet = workbook.active
+                    sheet.append(list(frame.columns))
+                    for row in frame.itertuples(index=False, name=None):
+                        sheet.append(list(row))
+                    workbook.save(path)
+
+                with self.assertRaisesRegex(
+                        RuntimeError, "authorized data contains duplicate identifiers"):
+                    data_split_guard.read_technical_A(
+                        path, allowed_ids=["A1"])
+
+    def test_normalized_duplicate_identifiers_fail_without_reader_column(self):
+        rows = pd.DataFrame({"影像号": [" A1 ", "A1"], "value": [1, 2]})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "synthetic.csv")
+            rows.to_csv(path, index=False, encoding="utf-8-sig")
+            with self.assertRaisesRegex(
+                    RuntimeError, "authorized data contains duplicate identifiers"):
+                data_split_guard.read_technical_A(
+                    path, allowed_ids=["A1"])
+
     def test_arbitrary_custom_reader_is_rejected_before_b_row_materialization(self):
         calls = {"reader": 0, "b_rows": 0}
 
