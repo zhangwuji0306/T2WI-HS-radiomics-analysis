@@ -10,7 +10,11 @@ feature_extract/output/
 prognosis_analysis/data/
 prognosis_analysis/output/
 habitat_analysis/output/
-archive/
+archive/*
+!archive/protocol_history/
+archive/protocol_history/*
+!archive/protocol_history/README.md
+!archive/protocol_history/三十二、具体执行工作流：从 formal PASS 至 A-only model freeze.md
 *.csv
 *.xlsx
 *.xls

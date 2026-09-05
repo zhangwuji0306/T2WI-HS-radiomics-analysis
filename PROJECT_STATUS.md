@@ -25,13 +25,13 @@
 
 ## In progress
 
-- 当前执行协议为《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》及《三十二、具体执行工作流：从formal PASS至A-only model freeze.md》。
-- 旧冻结前修复任务书和方法学修订报告已转入`archive/protocol_history/`，仅作为决策历史保存。
+- 科学主协议为《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》；当前唯一逐阶段执行入口为《T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md》。
+- 《三十二、具体执行工作流：从 formal PASS 至 A-only model freeze》已转入`archive/protocol_history/`，仅作为历史执行记录保存。
 - 方法学证据存放于`manuscript/methodology_defense/`；W02/W03 患者级特征、诊断、可用性与候选QC输出保存在本地 `prognosis_analysis/output/` 对应目录，仓库仅保留可复用脚本、固定配置、测试及协议文档。
 
 ## Next task
 
-W07A、P3C/P3D/P3E 与 G2R 已完成。下一阶段待启动 P4/P5；正式 W08、全 A 最终拟合及第二阶段 `model_freeze_lock.json` 生成均尚未执行，生成第二阶段锁后才允许首次读取 B 集进行一次性外部验证。
+W07A、P3C/P3D/P3E 与 G2R 已完成。下一阶段先完成 P4 post-remediation integrity audit；随后补齐 P5 technical-only 执行能力并通过 G2R2，再完成全部 50/50 outer folds 的技术预检和 G3。G3 PASS 前不得启动正式 W08；正式 W08、全 A 最终拟合及第二阶段 `model_freeze_lock.json` 生成均尚未执行，生成第二阶段锁后才允许首次读取 B 集进行一次性外部验证。
 
 ## Important decisions
 

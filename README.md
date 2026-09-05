@@ -29,17 +29,19 @@ GitHub/Codex 仓库只保存代码、配置、方法文档和不含原始影像�
 
 ## 当前主线
 
-主方法固定为三维 SLIC 4 mm 加跨病例 K-means，聚类数为 K=2。当前执行协议为《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》，具体执行顺序见《三十二、具体执行工作流：从formal PASS至A-only model freeze.md》。
+主方法固定为三维 SLIC 4 mm 加跨病例 K-means，聚类数为 K=2。科学问题、冻结原则、模型层级和 A/B 隔离由《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》定义；当前唯一逐阶段执行入口为《T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md》。历史执行工作流保存在 `archive/protocol_history/`，不作为当前入口。
 
 分析顺序为：
 
 ```text
-formal bootstrap 1000
-→ 技术门禁与正式生境特征
-→ habitat_analysis/freeze_lock.json
-→ A-only endpoint QC与nested modeling
-→ final A refit
-→ prognosis_analysis/model_freeze_lock.json
+G2R PASS
+→ P4 integrity audit
+→ P5 implementation
+→ G2R2
+→ P5 50-fold technical-only preflight
+→ G3 PASS
+→ formal W08
+→ A-only evaluation / final refit / model freeze
 → B一次性外部验证
 ```
 
@@ -101,11 +103,12 @@ python tools/build_image_id_mapping.py
 
 ## 文档入口
 
-- [当前执行任务书](T2WI-HS-radiomics-analysis%20后续探索性预后分析与双阶段冻结任务书.md)
-- [具体执行工作流](三十二、具体执行工作流：从formal%20PASS至A-only%20model%20freeze.md)
+- [科学主协议](T2WI-HS-radiomics-analysis%20后续探索性预后分析与双阶段冻结任务书.md)
+- [当前执行 SOP](T2WI-HS-radiomics-analysis%20Pre-W08%20整改、协议补丁与后续%20A-only%20建模分包工作流.md)
 - [项目说明](项目说明.md)
 - [组学分析方案](组学分析方案.md)
 - [生境分析方案与工作流](生境分析方案与工作流.md)
 - [分析冻结状态](habitat_analysis/analysis_freeze.md)
 - [项目状态](PROJECT_STATUS.md)
 - [历史协议归档](archive/protocol_history/README.md)
+- [历史执行工作流](archive/protocol_history/三十二、具体执行工作流：从%20formal%20PASS%20至%20A-only%20model%20freeze.md)

@@ -1,5 +1,28 @@
-# T2WI-HS-radiomics-analysis
-# Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流
+# T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流
+
+CURRENT EXECUTION STATUS
+========================
+
+Authoritative operational workflow: YES
+
+Completed:
+P0 / P1 / G1 / P2 / P3 / G2R
+
+Current gate:
+P4
+
+Next:
+P5 implementation
+→ G2R2
+→ P5 50-fold technical-only
+→ G3
+
+Formal W08:
+HOLD
+
+B:
+LOCKED
+
 
 ## 0. 工作流定位
 
@@ -1172,7 +1195,7 @@ schema v2
 
 ---
 
-# 八、G2 — Synthetic + Regression Gate
+# 八、G2/G2R — Synthetic + Regression Gate
 
 总控智能体统一运行。
 
@@ -1220,6 +1243,8 @@ no B access
 
 否则不得进入 P4。
 
+当前状态：G2R PASS。若 P5 implementation 阶段新增或修改正式执行代码，不得沿用本次 G2R 结果授权新代码；必须在 P5 technical-only preflight 前完成 G2R2。
+
 ---
 
 # 九、P4 — Post-freeze integrity verification
@@ -1259,7 +1284,67 @@ prognosis_analysis/W07A_pre_W08_integrity_audit.md
 
 ---
 
-# 十、P5 — 全 50-fold TECHNICAL-ONLY preflight
+# 十、P5 implementation — 技术预检入口补齐与 G2R2
+
+P5 technical-only preflight 必须使用与 formal W08 分离的、fail-closed 执行入口。当前 `w08_formal_run_a.py --preflight-fold` 的单 fold 预检不等价于本阶段，也不能单独授权 50-fold P5。
+
+## 必须具备的执行边界
+
+建议新增独立入口：
+
+```text
+prognosis_analysis/scripts/w08_technical_preflight_a.py
+```
+
+或为现有 runner 增加等价的独立 `--technical-preflight-all` 模式。该入口只允许完成：
+
+```text
+training-only habitat centre fitting
+boundary assignment
+mask generation
+extractability classification
+model-specific eligible population construction
+event/censor feasibility
+inner-5-fold feasibility
+W03/W04/W07/W07A hash verification
+```
+
+该入口不得调用或产生：
+
+```text
+final Cox fitting
+risk score
+held-out prediction
+C-index / AUC / Brier / calibration
+model comparison
+B data access
+```
+
+预检结果只写入本地敏感输出目录；仓库如需提交证据，仅保留不含患者标识的聚合结果：
+
+```text
+P5_technical_preflight_summary.json
+P5_fold_feasibility.csv
+P5_release_gate.json
+```
+
+## G2R2
+
+P5 执行入口完成任何新增或修改后，必须重新通过回归门禁，不能引用旧 G2R 结果。G2R2 至少覆盖完整测试发现集、W05 access tests、W08 tests 和新增 P5 technical-only tests，并证明：
+
+```text
+P5 cannot call final Cox fitting
+P5 cannot generate prediction or performance
+P5 cannot open B
+P5 cannot modify W07 split or minimumROISize
+P5 verifies W04/W07/W07A hashes
+```
+
+G2R2 未通过前不得执行真实患者级 P5。
+
+---
+
+# 十一、P5 — 全 50-fold TECHNICAL-ONLY preflight
 
 这是正式 W08 前最后一道硬门禁。
 
@@ -1361,7 +1446,7 @@ FORMAL_W08_RELEASE = FAIL
 
 ---
 
-# 十一、P6 — W08 Formal
+# 十二、P6 — W08 Formal
 
 ## 子智能体 S6
 
@@ -1416,7 +1501,7 @@ change small-ROI rule
 
 ---
 
-# 十二、P7 — W09 A-only 模型评价
+# 十三、P7 — W09 A-only 模型评价
 
 ## 子智能体 S7
 
@@ -1462,7 +1547,7 @@ per-patient held-out prediction frequency
 
 ---
 
-# 十三、P8 — W10 Prespecified Sensitivity
+# 十四、P8 — W10 Prespecified Sensitivity
 
 ## 子智能体 S8
 
@@ -1507,7 +1592,7 @@ M2-R
 
 ---
 
-# 十四、P9 — W11 Final Architecture Decision
+# 十五、P9 — W11 Final Architecture Decision
 
 ## 子智能体 S9
 
@@ -1562,7 +1647,7 @@ no B information used
 
 ---
 
-# 十五、P10 — W12 Full-A Final Refit
+# 十六、P10 — W12 Full-A Final Refit
 
 ## 子智能体 S10
 
@@ -1593,7 +1678,7 @@ deployment preprocessing
 
 ---
 
-# 十六、P11 — W13 Model Freeze
+# 十七、P11 — W13 Model Freeze
 
 ## 子智能体 S11
 
@@ -1637,7 +1722,7 @@ B_validation_unlocked = true
 
 ---
 
-# 十七、子智能体统一任务包模板
+# 十八、子智能体统一任务包模板
 
 总控智能体每次分包必须使用以下格式。
 
@@ -1695,7 +1780,7 @@ Handoff summary:
 
 ---
 
-# 十八、总控智能体合并规则
+# 十九、总控智能体合并规则
 
 ## 可以并行
 
@@ -1746,9 +1831,11 @@ P3C
 
 ```text
 P3
-→ G2
+→ G2R
 → P4
-→ P5
+→ P5 implementation
+→ G2R2
+→ P5 technical-only
 → G3
 → P6
 ```
@@ -1768,7 +1855,7 @@ P6
 
 ---
 
-# 十九、禁止总控智能体做的事情
+# 二十、禁止总控智能体做的事情
 
 不得因为子智能体报告“模型跑不动”而自动：
 
@@ -1790,14 +1877,18 @@ P6
 
 ---
 
-# 二十、最终门禁矩阵
+# 二十一、最终门禁矩阵
 
 | Gate | 必须通过的内容 | 失败后 |
 |---|---|---|
 | P0 | baseline snapshot | 不开始整改 |
 | G1 | reader + integrity + ROI + modeling 决策 | 不写 amendment |
-| G2 | synthetic/regression 全通过 | 不执行真实 preflight |
-| G3 | 50-fold technical preflight PASS | 不执行正式 W08 |
+| G2/G2R | synthetic/regression 全通过 | 不执行真实 preflight |
+| P4 | post-remediation integrity audit PASS | 不开始 P5 implementation |
+| P5 implementation | fail-closed technical-only 入口就绪 | 不执行真实 P5 |
+| G2R2 | 新 P5 入口回归通过 | 不执行真实 P5 |
+| P5 | 50-fold technical preflight PASS | 不执行正式 W08 |
+| G3 | 50-fold technical preflight、可估计性和完整性均通过 | 不执行正式 W08 |
 | W08 Gate | formal 50 folds 完整 | 不进入 W09 |
 | W09/W10 Gate | A-only结果完整 | 不选 final architecture |
 | W11 Gate | final architecture 可审计 | 不 full-A refit |
@@ -1806,15 +1897,16 @@ P6
 
 ---
 
-# 二十一、当前整改优先级
+# 二十二、当前整改优先级
 
 ## P0 — 当前必须完成
 
 ```text
-1. fold-specific small-ROI rule
-2. custom reader authorization bypass
-3. W07A amendment freeze
+1. P4 post-freeze integrity audit
+2. P5 technical-only entry implementation
+3. G2R2 regression gate
 4. 50-fold technical-only preflight
+5. G3 release gate
 ```
 
 ---
@@ -1822,10 +1914,10 @@ P6
 ## P1 — 建议同轮完成
 
 ```text
-5. freeze integrity addendum
-6. PROJECT_STATUS correction
-7. clinical ridge stability prespecification
-8. explicit high-dimensional penalty semantics
+6. freeze integrity addendum
+7. PROJECT_STATUS and document-entry synchronization
+8. clinical ridge stability prespecification
+9. explicit high-dimensional penalty semantics
 ```
 
 ---
@@ -1833,19 +1925,19 @@ P6
 ## P2 — 工程增强
 
 ```text
-9. full tamper-test matrix
-10. future closed schema v2
-11. immutable freeze bundle / crash-atomic pointer
+10. full tamper-test matrix
+11. future closed schema v2
+12. immutable freeze bundle / crash-atomic pointer
 ```
 
 P2 不作为当前 W08 release blocker，除非在实施过程中发现真实 artifact mismatch。
 
 ---
 
-# 二十二、当前总控应向所有子智能体广播的统一状态
+# 二十三、当前总控应向所有子智能体广播的统一状态
 
 ```text
-CURRENT_HEAD = 78b0e8f48becd64413859027e8809e155ecded5e
+REMEDIATION_BASELINE_COMMIT = 78b0e8f48becd64413859027e8809e155ecded5e
 
 W01-W07 = historical completed; do not rerun
 
@@ -1868,8 +1960,8 @@ W07 splits = unchanged
 
 Current allowed work:
 post-freeze integrity remediation
-reader authorization remediation
-W07A protocol amendment
+P5 technical-only entry implementation
+G2R2 regression gate
 technical-only 50-fold preflight
 
 Formal model evaluation is prohibited

@@ -1,5 +1,13 @@
 # T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书
 
+> 文档角色：Scientific Master Protocol
+>
+> 状态：FROZEN / ACTIVE
+>
+> 用途：定义科学问题、冻结原则、模型层级和 A/B 数据隔离。
+>
+> 本文件不作为当前逐阶段执行入口。当前唯一执行 SOP：`T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md`。
+
 ## 当前分析性质
 
 > **探索性影像生境预后研究。**
