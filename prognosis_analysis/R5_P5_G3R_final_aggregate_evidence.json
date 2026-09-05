@@ -1,0 +1,256 @@
+{
+  "schema": "P5_G3R_aggregate_evidence",
+  "version": "2.0",
+  "stage": "G3R",
+  "status": "PASS",
+  "scope": "A-only technical preflight aggregate and release evidence",
+  "successor": {
+    "current_output": "prognosis_analysis/output/p5_technical_preflight_A_G3R",
+    "successor_of": "prognosis_analysis/output/p5_technical_preflight_A",
+    "legacy_output_preserved": true,
+    "legacy_artifact_sha256": {
+      "P5_fold_feasibility.csv": "42060342b677bb8587eaa7333639ae544cd6ed4e1b38ea3e76de7c5fe0cf3fca",
+      "P5_release_gate.json": "7e29b3ef16004bd4f7394a5dd83cd3f4f5cb04bc59cd4e80c3a1f2aac032ed58",
+      "P5_technical_preflight_summary.json": "df7a69a3831c8cc9bd466de1dde49d4fdd044be0e7e0a4684c271a202377e2ae"
+    }
+  },
+  "certificate_generation": {
+    "technical_execution_code_commit": "fd2c06949369f218fabfe84dee043f267a5131aa",
+    "generated_at_utc": "2026-09-05T21:45:19Z",
+    "generator": "prognosis_analysis/scripts/w08_technical_preflight_a.py",
+    "certificate": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_release_gate.json",
+    "aggregate_summary": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_technical_preflight_summary.json",
+    "sha256_manifest": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_sha256_manifest.json",
+    "observed_elapsed_seconds": 168.186
+  },
+  "release_binding": {
+    "schema": "P5_G3R_strict_release_binding",
+    "version": "2.0",
+    "technical_execution_code_commit": "fd2c06949369f218fabfe84dee043f267a5131aa",
+    "evidence_binding_commit": "0000000000000000000000000000000000000000",
+    "successor_mode": "evidence_only_append_only",
+    "allowed_paths": [
+      "prognosis_analysis/R5_P5_G3R_final_aggregate_evidence.json",
+      "prognosis_analysis/R5_P5_G3R_final_audit.md"
+    ]
+  },
+  "coverage": {
+    "outer_repeats": 10,
+    "outer_folds": 5,
+    "fold_units": 50,
+    "required_runs": 17,
+    "run_rows": 850,
+    "row_definition": "one fixed run_id by frozen W07 outer repeat/fold technical feasibility row",
+    "fold_definition": "one frozen W07 outer repeat/fold with training-only patient-balanced K=2 centre fitting and fold-specific boundary assignment",
+    "rows_per_run": 50,
+    "run_ids": [
+      "M0",
+      "M1",
+      "M2",
+      "M0_W_available",
+      "M5",
+      "M2_R_low",
+      "M3L",
+      "M2_R_high",
+      "M3H",
+      "M2_dual_radiomics",
+      "M3L_dual_radiomics",
+      "M3H_dual_radiomics",
+      "M4",
+      "M0-R",
+      "M1-R",
+      "M2-R",
+      "M3L_vs_M3H"
+    ],
+    "min_train_events": 62,
+    "min_validation_events": 13,
+    "min_train_censors": 210,
+    "min_validation_censors": 49,
+    "inner_5fold_feasible": true,
+    "all_folds_complete": true,
+    "all_required_runs_estimable": true,
+    "all_paired_populations_equal": true
+  },
+  "frozen_inputs_and_rules": {
+    "population": "W06 A modeling population",
+    "outer_splits": "W07 frozen 10 repeats x 5 folds",
+    "habitat_assets": "frozen SLIC/supervoxel assets",
+    "centre_fitting": "training-only patient-balanced K=2",
+    "R_low_candidate_count": 49,
+    "R_high_candidate_count": 10,
+    "minimumROISize": 10,
+    "support_states": {
+      "structural_absence": "voxel_count == 0",
+      "technical_small_roi": "1 <= voxel_count < 10",
+      "extractable": "voxel_count >= 10",
+      "zero_distinct_from_one_to_nine": true
+    },
+    "eligibility": "model-specific fold eligibility before preprocessing",
+    "paired_population_rule": "identical fold-specific eligible sets and boundary for each comparator"
+  },
+  "technical_freeze": {
+    "P5_technical_preflight": "PASS",
+    "bindings_verified": true,
+    "event_censor_feasibility": "PASS",
+    "inner_cv_feasibility": "PASS",
+    "paired_population_audit": "PASS",
+    "aggregate_only": true,
+    "compatibility_provenance": {
+      "compatibility_code_path": "prognosis_analysis/scripts/w08_formal_run_a.py",
+      "compatibility_code_sha256": "19617e84afd9ded1ef994e09875a805b8dd2310b21f0bd199963078d737208a4",
+      "compatibility_config_path": "prognosis_analysis/configs/w02_habitat_radiomics.json",
+      "compatibility_config_sha256": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f",
+      "compatibility_reason": "PyRadiomics 3.0.1 strict <= semantics and precheck count>=10",
+      "effective_backend_minimum_size": null,
+      "precheck_count_threshold": ">=10",
+      "protocol_minimumROISize": 10,
+      "pyradiomics_version": "3.0.1",
+      "scientific_minimumROISize": 10
+    }
+  },
+  "locked_environment": {
+    "fingerprint_source": "prognosis_analysis/G2_environment_fingerprint.json",
+    "fingerprint_source_sha256": "a6151d7a135ea19a3f529199996c4063f2fd7b3da4484aa920a73599939ab74b",
+    "conda_environment": "t2_radiomics",
+    "python": "3.7.12",
+    "numpy": "1.21.6",
+    "pandas": "1.3.5",
+    "scipy": "1.7.3",
+    "scikit_learn": "1.0.2",
+    "matplotlib": "3.5.3",
+    "PyYAML": "6.0",
+    "openpyxl": "3.0.10",
+    "PyRadiomics": "3.0.1",
+    "SimpleITK": "2.2.1"
+  },
+  "access_and_release_boundary": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "performance_generated": false,
+    "patient_level_outputs_written": false,
+    "predictions_generated": false,
+    "risk_scores_generated": false,
+    "cox_fit_generated": false,
+    "model_artifacts_generated": false,
+    "model_freeze_lock_present": false,
+    "formal_W08_started": false,
+    "formal_new_run_started": false,
+    "current_r5_formal_W08_started": false,
+    "historical_attempt_001_failed": {
+      "archive": "prognosis_analysis/output/w08_formal_A/attempts/attempt_001_failed",
+      "status": "failed",
+      "failure_stage": "nested_cv_modeling_radiomics_extraction",
+      "preserved_as_failed_archive": true
+    }
+  },
+  "current_artifact_sha256": {
+    "P5_fold_feasibility.csv": "a3fb7a7bb09193c58579d6ebdc90978083c197c86e7ba2b535373ca43f758326",
+    "P5_release_gate.json": "5cdd3cadf9fa53ac907dc280168c9aebb525b1856daa90c62ede3233e5ec4077",
+    "P5_sha256_manifest.json": "dac8dd5eb3c053b2fa46d6f6811ea58b4c5ffefe1229b01327e051d94f72d456",
+    "P5_technical_preflight_summary.json": "e00ad5b4b1f7da39cf3b9750d74ae8f4c9a6e860ffb5079b87b986db6450404f"
+  },
+  "technical_execution_code_commit": "fd2c06949369f218fabfe84dee043f267a5131aa",
+  "protected_code_config_manifest": {
+    "feature_extract/scripts/build_manifest.py": "42965d0d4d5ed96bcbbb39a75ad3d34e2684debb4f935956adf66e84d91d5d92",
+    "feature_extract/scripts/compute_sigma_a.py": "a86977bd4328e597d73313d2bd8b67f07fa64bfb2cd28be4f85fc7077b84e668",
+    "feature_extract/scripts/compute_sigma_a_filters.py": "72256fe3d9e75497710a058852dac89573aa5a7309b7ed279b43c7c12c8e5747",
+    "feature_extract/scripts/data_split_guard.py": "2e9b878ac193bc544684cc269e506342a79c9bc42d3af1d12e9123c45a5aa634",
+    "feature_extract/scripts/export_roi_review_cases.py": "9678ffa0095afe58d83601cc2aeae785038e1f9531ace840697e3504c1f7bb12",
+    "feature_extract/scripts/extract_features.py": "9ba41afab05d328827a72b4607a943166136249d6e38d73a7563925a60305b85",
+    "feature_extract/scripts/extract_features_filters.py": "82a6d4a91f67cce5c20ed3b6807068ddd8b0cd07d9753c2a59e9e5c84e03a142",
+    "feature_extract/scripts/n4_pilot.py": "aa7a623e269a3bb4b4eb506b2beabd46190eca1a25eddf26e6cad99db7187d96",
+    "feature_extract/scripts/preprocess.py": "cb767de478acf4389caca6809d71cca268b47c8364ca325396c3f20b2bb04c45",
+    "feature_extract/scripts/preprocess_core.py": "f540ded27ca5b8bb21d7092bfb81f7da38291829278f689a4ae8c47462b707d8",
+    "feature_extract/scripts/qc_normalization.py": "04179a7a4c64cc81b9cea886019035538305bcd5a8eb6ad08e8c9beb29be4be5",
+    "feature_extract/scripts/scan_dicom.py": "eabdeb2928d048634a07c98997bbd3c1242aa830d752cfbb64d27fe1b1449086",
+    "feature_extract/scripts/sigma_guard.py": "821fdc1c137de9f00a18c2593027cb704b8c738ce2552a739dd9397198a5e901",
+    "feature_extract/scripts/verify_preprocess.py": "e6b529a85eb999af42ed7b073fd38dd27de7287056263477b57fb345a4e0cae2",
+    "feature_extract/scripts/workflow_utils.py": "349aa213948a8cad383eff95c72da5c5a89eb863fa3b215d494d43af49ab7a57",
+    "habitat_analysis/configs/endpoints.yaml": "d663c3756edc6125d21be2f37eb667610dc0a2347c8c4d63d05d68822461dfe5",
+    "habitat_analysis/configs/main_cross_case_kmeans_k2_4mm.json": "fc2f856b3bc3fcd3d358f4476fd87a8117568712b3fc382c5e24e315e976bb3f",
+    "prognosis_analysis/configs/w02_habitat_radiomics.json": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f",
+    "prognosis_analysis/configs/w03_habitat_radiomics.json": "cfd98e5aa68f5cfcbe070287c702bd9582112c7e27f6ff4641748a78abd34307",
+    "prognosis_analysis/configs/w07_outer_splits.json": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
+    "prognosis_analysis/configs/w08_audit_schema.json": "5444287b46caea3ba314fdb3452899f256581e8427242e7984e04142f779ed2e",
+    "prognosis_analysis/configs/w08_nested_cv.json": "f432b9741071a37be37fb63361e2007978ee6f47d4ce269b36a8692aa4fcbe7a",
+    "prognosis_analysis/configs/w08_results_schema.json": "6ccf363ba1b9dd55c30c1b7ce04240b499273416e91247db0e6ec84073ad6e45",
+    "prognosis_analysis/modeling_protocol.json": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+    "prognosis_analysis/scripts/build_model_dataset.py": "ffe43bc930aa4f55d43ed2ae52c9d521492e6e61a5a46178a3a75880b5c3be58",
+    "prognosis_analysis/scripts/build_model_dataset_a.py": "60ac418341f06e28220825cd663c0d6adccbdc063b78bd5ab5a835d589ae75f8",
+    "prognosis_analysis/scripts/model_freeze_lock.py": "b12c1f9c3b689e7d775959b8690b3d3b9d5b3b50bc7615023913dac2157f6a6a",
+    "prognosis_analysis/scripts/provenance_reconciliation.py": "bbebccd3483540c4f4205675f633174b6f21f027dd2cfcc1ae16d6fc82cf0a75",
+    "prognosis_analysis/scripts/stage6_qc.py": "458955763d6862e0669f745accf8f31e590c6449b7bb51bd717edbb4388d8ca8",
+    "prognosis_analysis/scripts/w02_habitat_radiomics.py": "eafce7d459d04758b7e1f9a8174533ec791397d933dc089199571ca421839d63",
+    "prognosis_analysis/scripts/w03_habitat_radiomics.py": "1c582a89a8694d7cc022c7634758f65ca8e06cabb4ee6c9cf3839caf783e7a92",
+    "prognosis_analysis/scripts/w06_endpoint_qc.py": "0f6c20db236971a162f6c024778c5910cd78afe3b330bd07ab9e78fae125ed01",
+    "prognosis_analysis/scripts/w07_outer_splits.py": "a74a6358d54f545b3b3226002462ea709c128b180361caa9e044cb9f8108f7d9",
+    "prognosis_analysis/scripts/w08_formal_run_a.py": "19617e84afd9ded1ef994e09875a805b8dd2310b21f0bd199963078d737208a4",
+    "prognosis_analysis/scripts/w08_nested_cv.py": "7bee63c3bd81df96b240dd24ef4af07228c6a6d8031174efa288974df2436259",
+    "prognosis_analysis/scripts/w08_technical_preflight_a.py": "72f8f616f76303ba04f87e52ffe6c210638ee18ce09c3076a86bff3990bd55ad"
+  },
+  "protected_code_config_tree_sha256": "26b5504165743bd01e234409352a9b395f51725a3da258f4c774be78738970f3",
+  "binding_hashes": {
+    "P4R_reconciliation": "374ddc9f6ecd01c04ff957576f032fec18f0ebbb53f6651a725ad0b6aff7786d",
+    "W03_candidate_freeze": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
+    "W04_modeling_protocol": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+    "W07A_amendment_json": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14",
+    "W07A_protocol": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+    "W07_outer_split_artifact": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+    "W07_outer_split_config": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217"
+  },
+  "historical_exception": {
+    "name": "historical_source_snapshot_unrecoverable",
+    "scope": "W07A source provenance",
+    "P4R_status": "approved_reconciliation",
+    "exact_verification": false,
+    "scientific_parameters_changed": false
+  },
+  "provenance_register": {
+    "W04_modeling_protocol": {
+      "path": "prognosis_analysis/modeling_protocol.json",
+      "sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe"
+    },
+    "W04_scientific_master_protocol": {
+      "path": "T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md",
+      "sha256": "cc881c008629a1acc0a2b4e6570b4ef277faa27ed5c9f12f908ee947b42381dd"
+    },
+    "W04_pre_W08_workflow": {
+      "path": "T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md",
+      "sha256": "08b5d92519b3ee79a8519386585336a980788bc6345d7729115f8693bef807e3"
+    },
+    "W03_candidate_freeze": {
+      "path": "prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json",
+      "sha256": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2"
+    },
+    "W07_outer_split_config": {
+      "path": "prognosis_analysis/configs/w07_outer_splits.json",
+      "sha256": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217"
+    },
+    "W07_outer_split_artifact": {
+      "path": "prognosis_analysis/output/outer_splits_A.csv",
+      "sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502"
+    },
+    "W07A_protocol": {
+      "path": "prognosis_analysis/W07A_pre_W08_protocol_amendment.md",
+      "sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70"
+    },
+    "W07A_amendment_json": {
+      "path": "prognosis_analysis/W07A_pre_W08_protocol_amendment.json",
+      "sha256": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14"
+    },
+    "P4_integrity_audit": {
+      "path": "prognosis_analysis/W07A_pre_W08_integrity_audit.md",
+      "sha256": "6baae4a1bf97a6e85bce3d71a6235fba7b6945a3aec71fa51c184502c6cbbb83"
+    },
+    "P4R_reconciliation": {
+      "path": "prognosis_analysis/W07A_pre_W08_provenance_reconciliation.json",
+      "sha256": "374ddc9f6ecd01c04ff957576f032fec18f0ebbb53f6651a725ad0b6aff7786d"
+    },
+    "G2_environment_fingerprint": {
+      "path": "prognosis_analysis/G2_environment_fingerprint.json",
+      "sha256": "a6151d7a135ea19a3f529199996c4063f2fd7b3da4484aa920a73599939ab74b"
+    }
+  }
+}
