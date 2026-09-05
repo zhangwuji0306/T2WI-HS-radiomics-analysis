@@ -95,6 +95,23 @@ COMPATIBILITY_CODE_RELATIVE = os.path.join(
 COMPATIBILITY_CONFIG_RELATIVE = os.path.join(
     "prognosis_analysis", "configs", "w02_habitat_radiomics.json")
 
+# The release certificate protects the complete code/config surface that can
+# affect the technical-only entry point or the downstream W08 compatibility
+# gate.  The manifest is derived from the committed tree so additions,
+# removals, and edits inside a protected root are all binding failures.
+PROTECTED_CODE_CONFIG_ROOTS = (
+    "feature_extract/scripts/",
+    "prognosis_analysis/scripts/",
+    "prognosis_analysis/configs/",
+    "habitat_analysis/configs/",
+)
+PROTECTED_CODE_CONFIG_EXPLICIT_PATHS = (
+    "prognosis_analysis/modeling_protocol.json",
+)
+PROTECTED_CODE_CONFIG_EXTENSIONS = (
+    ".py", ".json", ".yaml", ".yml", ".toml", ".cfg", ".ini",
+)
+
 FROZEN_CANDIDATE_HASHES = {
     "R_low": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
     "R_high": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
@@ -171,6 +188,47 @@ def _sha256_file(path):
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _git_tree_paths(project_root, commit):
+    """Return the committed protected code/config paths for ``commit``."""
+    try:
+        output = subprocess.check_output(
+            ["git", "-C", project_root, "ls-tree", "-r", "--name-only", commit],
+            stderr=subprocess.STDOUT).decode("utf-8")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise P5ValidationError(
+            "protected code/config tree cannot be listed: %s" % exc)
+    paths = set(PROTECTED_CODE_CONFIG_EXPLICIT_PATHS)
+    for path in output.splitlines():
+        if (path.startswith(PROTECTED_CODE_CONFIG_ROOTS) and
+                path.endswith(PROTECTED_CODE_CONFIG_EXTENSIONS)):
+            paths.add(path)
+    return tuple(sorted(paths))
+
+
+def _git_file_sha256(project_root, commit, relative_path):
+    try:
+        data = subprocess.check_output(
+            ["git", "-C", project_root, "show",
+             "%s:%s" % (commit, relative_path)], stderr=subprocess.STDOUT)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise P5ValidationError(
+            "protected code/config file cannot be read: %s" % relative_path)
+    return hashlib.sha256(data).hexdigest()
+
+
+def protected_code_config_manifest(project_root, commit):
+    """Return an exact committed code/config file manifest and tree digest."""
+    files = OrderedDict(
+        (path, _git_file_sha256(project_root, commit, path))
+        for path in _git_tree_paths(project_root, commit))
+    payload = json.dumps(list(files.items()), ensure_ascii=False,
+                         separators=(",", ":"), sort_keys=False).encode("utf-8")
+    return {
+        "files": files,
+        "tree_sha256": hashlib.sha256(payload).hexdigest(),
+    }
 
 
 def _sha256_text(value):
@@ -888,7 +946,9 @@ def _assemble_preflight_result(fold_frame, binding_hashes, production_verified,
         if not isinstance(production_metadata, dict):
             raise P5ValidationError("production metadata is missing")
         required = ("code_commit", "certificate_generated_at_utc",
-                    "compatibility_provenance", "successor_of")
+                    "compatibility_provenance", "successor_of",
+                    "protected_code_config_manifest",
+                    "protected_code_config_tree_sha256")
         if any(key not in production_metadata for key in required):
             raise P5ValidationError("production metadata is incomplete")
         for section in (result["summary"], result["release_gate"]):
@@ -900,6 +960,10 @@ def _assemble_preflight_result(fold_frame, binding_hashes, production_verified,
                 "compatibility_provenance": production_metadata[
                     "compatibility_provenance"],
                 "successor_of": production_metadata["successor_of"],
+                "protected_code_config_manifest": production_metadata[
+                    "protected_code_config_manifest"],
+                "protected_code_config_tree_sha256": production_metadata[
+                    "protected_code_config_tree_sha256"],
             })
     return result
 
@@ -1138,6 +1202,7 @@ def run_production(output_root=DEFAULT_OUTPUT, project_root=PROJECT_ROOT):
     code_commit = _git_head(project_root)
     certificate_generated_at_utc = _utc_timestamp()
     compatibility = _compatibility_provenance(project_root)
+    protected_manifest = protected_code_config_manifest(project_root, code_commit)
     population, split_frame, supervoxels, availability = load_authorized_a_inputs(project_root)
     fold_frame = _run_preflight_core(
         population, split_frame, supervoxels, availability,
@@ -1150,6 +1215,8 @@ def run_production(output_root=DEFAULT_OUTPUT, project_root=PROJECT_ROOT):
             "certificate_generated_at_utc": certificate_generated_at_utc,
             "compatibility_provenance": compatibility,
             "successor_of": "prognosis_analysis/output/p5_technical_preflight_A",
+            "protected_code_config_manifest": protected_manifest["files"],
+            "protected_code_config_tree_sha256": protected_manifest["tree_sha256"],
         })
     write_outputs(result, output_root)
     return result

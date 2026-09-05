@@ -24,6 +24,12 @@ B_FLAGS = (
     "B_data_read", "B_reader_invoked", "B_source_opened",
     "B_statistics_generated",
 )
+FROZEN_BINDINGS = {
+    "P4R_reconciliation": "1",
+    "W04_modeling_protocol": "1",
+    "W07_outer_split_config": "1",
+    "W07A_protocol": "1",
+}
 
 
 def _status(b_data_read=False, failed=False, commit=CURRENT_COMMIT,
@@ -135,9 +141,9 @@ def _write_r0_compatible_attempt(output_root):
 def _write_r5_successor_fixture(project_root, execution_commit=EXECUTION_COMMIT,
                                  binding_commit=BINDING_COMMIT):
     aggregate_path = os.path.join(
-        project_root, "prognosis_analysis", "R5_P5_G3R_aggregate_evidence.json")
+        project_root, *formal.R5_AGGREGATE_EVIDENCE_RELATIVE.split("/"))
     audit_path = os.path.join(
-        project_root, "prognosis_analysis", "R5_P5_G3R_audit.md")
+        project_root, *formal.R5_AUDIT_RELATIVE.split("/"))
     current_root = os.path.join(
         project_root, "prognosis_analysis", "output",
         "p5_technical_preflight_A_G3R")
@@ -156,10 +162,15 @@ def _write_r5_successor_fixture(project_root, execution_commit=EXECUTION_COMMIT,
     legacy_sha = formal._sha256(os.path.join(legacy_root, "P5_release_gate.json"))
     aggregate = {
         "schema": "P5_G3R_aggregate_evidence",
-        "version": "1.0",
+        "version": "2.0",
         "stage": "G3R",
         "status": "PASS",
-        "certificate_generation": {"code_commit": execution_commit},
+        "certificate_generation": {
+            "technical_execution_code_commit": execution_commit},
+        "technical_execution_code_commit": execution_commit,
+        "binding_hashes": dict(FROZEN_BINDINGS),
+        "protected_code_config_manifest": {"code.py": "1" * 64},
+        "protected_code_config_tree_sha256": "3" * 64,
         "successor": {
             "current_output": "prognosis_analysis/output/p5_technical_preflight_A_G3R",
             "successor_of": "prognosis_analysis/output/p5_technical_preflight_A",
@@ -168,11 +179,11 @@ def _write_r5_successor_fixture(project_root, execution_commit=EXECUTION_COMMIT,
         },
         "current_artifact_sha256": {"P5_release_gate.json": artifact_sha},
         "release_binding": {
-            "schema": "P5_G3R_release_binding",
-            "version": "1.0",
-            "execution_code_commit": execution_commit,
-            "current_evidence_binding_commit": binding_commit,
-            "successor_mode": "evidence_only_append_only",
+            "schema": formal.R5_BINDING_SCHEMA,
+            "version": formal.R5_BINDING_VERSION,
+            "technical_execution_code_commit": execution_commit,
+            "evidence_binding_commit": binding_commit,
+            "successor_mode": "evidence_only_finalization",
             "allowed_paths": list(formal.R5_ALLOWED_SUCCESSOR_PATHS),
         },
     }
@@ -212,6 +223,7 @@ class W08ReleaseGateTests(unittest.TestCase):
                         formal, name, return_value=value)
                 stack.enter_context(patcher)
             with mock.patch.object(formal, "_git_head", return_value=CURRENT_COMMIT), \
+                    mock.patch.object(formal, "_git_worktree_status", return_value=""), \
                     mock.patch.object(formal, "_git_commit_resolves", return_value=True):
                 return formal.validate_w08_release_gate(
                     output_root=output_root, project_root=ROOT)
@@ -279,21 +291,23 @@ class W08ReleaseGateTests(unittest.TestCase):
                         {"P4R_reconciliation": "1"})
 
     def _validate_successor_fixture(self, project_root, diff=None,
-                                     aggregate_overrides=None,
-                                     resolves=True, ancestor=True):
+                                     final_diff=None, aggregate_overrides=None,
+                                     aggregate_fields=None,
+                                     resolves=True, ancestor=True,
+                                     worktree_status="", frozen_bindings=None):
         aggregate, snapshot = _write_r5_successor_fixture(project_root)
         if aggregate_overrides:
             aggregate["release_binding"].update(aggregate_overrides)
-            with open(os.path.join(
-                    project_root, "prognosis_analysis",
-                    "R5_P5_G3R_aggregate_evidence.json"), "w",
+        if aggregate_fields:
+            aggregate.update(aggregate_fields)
+        with open(os.path.join(
+                project_root, *formal.R5_AGGREGATE_EVIDENCE_RELATIVE.split("/")), "w",
                     encoding="utf-8") as handle:
                 json.dump(aggregate, handle, indent=2, sort_keys=True)
         current_aggregate_path = os.path.join(
-            project_root, "prognosis_analysis",
-            "R5_P5_G3R_aggregate_evidence.json")
+            project_root, *formal.R5_AGGREGATE_EVIDENCE_RELATIVE.split("/"))
         current_audit_path = os.path.join(
-            project_root, "prognosis_analysis", "R5_P5_G3R_audit.md")
+            project_root, *formal.R5_AUDIT_RELATIVE.split("/"))
         with open(current_aggregate_path, "rb") as handle:
             current_aggregate_bytes = handle.read()
         with open(current_audit_path, "rb") as handle:
@@ -306,7 +320,9 @@ class W08ReleaseGateTests(unittest.TestCase):
                 "compatibility_code_sha256": "1" * 64,
                 "compatibility_config_path": "config.json",
                 "compatibility_config_sha256": "2" * 64,
-            }
+            },
+            "protected_code_config_manifest": {"code.py": "1" * 64},
+            "protected_code_config_tree_sha256": "3" * 64,
         }
 
         def show_bytes(_root, commit, path):
@@ -322,29 +338,58 @@ class W08ReleaseGateTests(unittest.TestCase):
                 return b"frozen"
             raise AssertionError("unexpected Git snapshot: %s:%s" % (commit, path))
 
-        with mock.patch.object(formal, "_git_commit_resolves",
-                               side_effect=lambda _root, commit: resolves), \
-                mock.patch.object(formal, "_git_commit_is_ancestor",
-                                   return_value=ancestor), \
+        def parent(_root, commit):
+            if commit == BINDING_COMMIT:
+                return EXECUTION_COMMIT
+            if commit == CURRENT_COMMIT:
+                return BINDING_COMMIT
+            raise RuntimeError("current HEAD parent cannot validate evidence binding: %s" % commit)
+
+        with mock.patch.object(formal, "_git_head", return_value=CURRENT_COMMIT), \
+                 mock.patch.object(formal, "_git_worktree_status",
+                                    return_value=worktree_status), \
+                 mock.patch.object(formal, "_git_commit_parent", side_effect=parent), \
+                 mock.patch.object(formal, "_git_commit_resolves",
+                                side_effect=lambda _root, commit: resolves), \
                 mock.patch.object(formal, "_git_diff_name_status",
-                                   return_value=(diff or [
+                                    side_effect=lambda _root, older, newer:
+                                    (diff if newer == BINDING_COMMIT and diff is not None
+                                     else final_diff if newer == CURRENT_COMMIT and
+                                     final_diff is not None else ([
                                        ("A", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
-                                       ("A", formal.R5_AUDIT_RELATIVE)])), \
+                                       ("A", formal.R5_AUDIT_RELATIVE)] if
+                                       newer == BINDING_COMMIT else [
+                                       ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                                       ("M", formal.R5_AUDIT_RELATIVE)]))), \
                 mock.patch.object(formal, "_git_show_bytes",
                                    side_effect=show_bytes), \
+                mock.patch.object(formal, "_protected_code_config_manifest",
+                                   return_value={
+                                       "files": {"code.py": "1" * 64},
+                                       "tree_sha256": "3" * 64}), \
+                 mock.patch.object(formal, "_live_protected_code_config_manifest",
+                                   return_value={
+                                       "files": {"code.py": "1" * 64},
+                                       "tree_sha256": "3" * 64}), \
+                 mock.patch.object(formal, "_validate_frozen_bindings",
+                                    return_value=(frozen_bindings or
+                                                  dict(FROZEN_BINDINGS))), \
                 mock.patch.object(formal, "_git_snapshot_sha256",
                                    side_effect=lambda _root, _commit, path:
                                    certificate["compatibility_provenance"][
                                        "compatibility_code_sha256" if path == "code.py"
                                        else "compatibility_config_sha256"]):
             return formal._validate_r5_successor_binding(
-                project_root, EXECUTION_COMMIT, CURRENT_COMMIT, certificate)
+                project_root, EXECUTION_COMMIT, CURRENT_COMMIT, certificate,
+                binding_hashes=(
+                    dict(FROZEN_BINDINGS)
+                    if frozen_bindings is not None else None))
 
     def test_evidence_only_successor_accepts_strict_binding(self):
         with tempfile.TemporaryDirectory() as project_root:
             result = self._validate_successor_fixture(project_root)
-        self.assertEqual(result["execution_code_commit"], EXECUTION_COMMIT)
-        self.assertEqual(result["current_evidence_binding_commit"], BINDING_COMMIT)
+        self.assertEqual(result["technical_execution_code_commit"], EXECUTION_COMMIT)
+        self.assertEqual(result["evidence_binding_commit"], BINDING_COMMIT)
 
     def test_successor_rejects_code_change(self):
         with tempfile.TemporaryDirectory() as project_root:
@@ -355,17 +400,61 @@ class W08ReleaseGateTests(unittest.TestCase):
                           ("A", formal.R5_AUDIT_RELATIVE),
                           ("M", "prognosis_analysis/scripts/w08_formal_run_a.py")])
 
+    def test_current_head_code_change_after_evidence_fails_closed(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "final evidence commit"):
+                self._validate_successor_fixture(
+                    project_root,
+                    final_diff=[
+                        ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                        ("M", formal.R5_AUDIT_RELATIVE),
+                        ("M", "prognosis_analysis/scripts/w08_technical_preflight_a.py")])
+
+    def test_dirty_worktree_fails_closed(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "clean worktree"):
+                self._validate_successor_fixture(
+                    project_root, worktree_status=" M prognosis_analysis/configs/w07_outer_splits.json")
+
     def test_successor_rejects_wrong_execution_commit(self):
         with tempfile.TemporaryDirectory() as project_root:
             with self.assertRaisesRegex(RuntimeError, "execution commit"):
                 self._validate_successor_fixture(
                     project_root,
-                    aggregate_overrides={"execution_code_commit": OLD_COMMIT})
+                    aggregate_overrides={
+                        "technical_execution_code_commit": OLD_COMMIT})
 
     def test_successor_rejects_forged_successor(self):
         with tempfile.TemporaryDirectory() as project_root:
             with self.assertRaisesRegex(RuntimeError, "binding commit"):
                 self._validate_successor_fixture(project_root, resolves=False)
+
+    def test_successor_rejects_wrong_evidence_commit(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "current HEAD"):
+                self._validate_successor_fixture(
+                    project_root,
+                    aggregate_overrides={"evidence_binding_commit": OLD_COMMIT})
+
+    def test_aggregate_hash_tamper_fails_closed(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "artifact hash mismatch"):
+                self._validate_successor_fixture(
+                    project_root,
+                    aggregate_fields={
+                        "current_artifact_sha256": {"P5_release_gate.json": "0" * 64}})
+
+    def test_frozen_binding_tamper_fails_closed(self):
+        for label in ("P4R_reconciliation", "W04_modeling_protocol",
+                      "W07_outer_split_config", "W07A_protocol"):
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as project_root:
+                    with self.assertRaisesRegex(RuntimeError, "frozen input binding"):
+                        tampered = dict(FROZEN_BINDINGS)
+                        tampered[label] = "0" * 64
+                        self._validate_successor_fixture(
+                            project_root,
+                            frozen_bindings=tampered)
 
     def test_model_freeze_presence_blocks_formal_release(self):
         with tempfile.TemporaryDirectory() as output_root:
