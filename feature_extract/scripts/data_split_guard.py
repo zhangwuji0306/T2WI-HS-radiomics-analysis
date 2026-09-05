@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import math
 import os
 import re
 import sys
@@ -58,6 +59,25 @@ FROZEN_A_SPLIT_ROLES = ("train", "validation")
 FROZEN_A_SPLIT_REPEATS = 10
 FROZEN_A_SPLIT_FOLDS = 5
 FROZEN_A_SPLIT_SEED_ROOT = 12345
+
+# The P5 technical preflight consumes repeated supervoxel rows: one patient
+# may legitimately have several rows, but each (patient, sv_label) pair is a
+# unique technical record.  This reader is deliberately separate from the
+# ordinary unique-ID reader below.
+FROZEN_A_SUPERVOXEL_RELATIVE_PATH = os.path.join(
+    "habitat_analysis", "output", "local_global_diagnostic_A_post_slic_fix",
+    "supervoxel_mean_A.csv")
+FROZEN_A_SUPERVOXEL_COLUMNS = [
+    "影像号", "reader", "sv_label", "n_tumor_voxels", "Mean"]
+# The producer currently writes these fixed diagnostic metadata columns in
+# addition to the five fields consumed by P5.  They are accepted only as this
+# complete known source schema; arbitrary extra columns remain invalid.
+FROZEN_A_SUPERVOXEL_SOURCE_COLUMNS = [
+    "影像号", "reader", "sv_label", "sv_total_voxels",
+    "n_tumor_voxels", "physical_volume_mm3", "Mean",
+    "slic_requested_scale_mm", "slic_supergrid_voxels_xyz",
+    "slic_actual_supergrid_mm_xyz",
+]
 
 
 def resolve_cohort_membership(manifest, scanner):
@@ -263,6 +283,108 @@ def read_frozen_A_split(path, project_root, allowed_ids=None):
             FROZEN_A_SPLIT_CANONICAL_SHA256:
         raise RuntimeError("frozen W07 split canonical hash mismatch")
     return frame
+
+
+def _parse_frozen_supervoxel_number(raw, column, integer=False, positive=False):
+    value = "" if raw is None else str(raw).strip()
+    if not value:
+        raise RuntimeError("frozen A supervoxel has invalid %s" % column)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError("frozen A supervoxel has invalid %s" % column)
+    if not math.isfinite(number):
+        raise RuntimeError("frozen A supervoxel has invalid %s" % column)
+    if integer and not number.is_integer():
+        raise RuntimeError("frozen A supervoxel has non-integer %s" % column)
+    if positive and number <= 0:
+        raise RuntimeError("frozen A supervoxel has nonpositive %s" % column)
+    return int(number) if integer else number
+
+
+def read_frozen_A_supervoxels(path, project_root, allowed_ids=None,
+                              reader=None, *args, **kwargs):
+    """Read the locked A supervoxel source with its repeated-row contract.
+
+    Unlike ordinary technical sources, this artifact is keyed by
+    ``(影像号, sv_label)`` rather than by ``影像号`` alone.  The source path,
+    header, reader, numeric fields, and key uniqueness are all checked before
+    a DataFrame is returned.  Rows outside the authorized A allow-list are
+    rejected while streaming and are never returned.
+    """
+    if reader is not None:
+        raise RuntimeError(
+            "arbitrary custom readers are not authorized; use the built-in "
+            "frozen A supervoxel CSV reader"
+        )
+    if args or kwargs:
+        raise ValueError(
+            "frozen A supervoxel reader accepts no custom read options")
+    allowlist = _normalize_allowlist(allowed_ids)
+    if not allowlist:
+        raise RuntimeError(
+            "frozen A supervoxel read requires a non-empty A allow-list")
+
+    expected_path = os.path.join(
+        os.fspath(project_root), FROZEN_A_SUPERVOXEL_RELATIVE_PATH)
+    supplied_path = _absolute_path(path)
+    if supplied_path != _absolute_path(expected_path) or \
+            _absolute_path(os.path.realpath(path)) != \
+            _absolute_path(os.path.realpath(expected_path)):
+        raise RuntimeError(
+            "frozen A supervoxel path is not the project-locked A artifact")
+    if not os.path.isfile(path):
+        raise RuntimeError("frozen A supervoxel artifact is missing")
+    if os.path.splitext(str(path))[1].lower() != ".csv":
+        raise RuntimeError("frozen A supervoxel artifact must be CSV")
+
+    rows = []
+    seen_keys = set()
+    with open(path, "r", newline="", encoding="utf-8-sig") as handle:
+        source = csv.DictReader(handle)
+        fieldnames = source.fieldnames
+        if fieldnames not in (FROZEN_A_SUPERVOXEL_COLUMNS,
+                              FROZEN_A_SUPERVOXEL_SOURCE_COLUMNS):
+            raise RuntimeError(
+                "frozen A supervoxel columns do not match the contract")
+        for row in source:
+            if None in row or any(row.get(column) is None
+                                  for column in fieldnames):
+                raise RuntimeError(
+                    "frozen A supervoxel contains malformed rows")
+
+            identifier = str(row["影像号"]).strip()
+            if not identifier:
+                raise RuntimeError(
+                    "frozen A supervoxel contains a blank identifier")
+            if identifier not in allowlist:
+                raise RuntimeError(
+                    "frozen A supervoxel contains an identifier outside the "
+                    "allow-list")
+            if str(row["reader"]).strip() != "R1":
+                raise RuntimeError(
+                    "frozen A supervoxel contains a non-R1 reader")
+
+            label = _parse_frozen_supervoxel_number(
+                row["sv_label"], "sv_label", integer=True)
+            support = _parse_frozen_supervoxel_number(
+                row["n_tumor_voxels"], "n_tumor_voxels",
+                integer=True, positive=True)
+            mean = _parse_frozen_supervoxel_number(row["Mean"], "Mean")
+            key = (identifier, label)
+            if key in seen_keys:
+                raise RuntimeError(
+                    "frozen A supervoxel contains duplicate patient_id+sv_label")
+            seen_keys.add(key)
+            rows.append({
+                "影像号": identifier,
+                "reader": "R1",
+                "sv_label": label,
+                "n_tumor_voxels": support,
+                "Mean": mean,
+            })
+
+    return pd.DataFrame(rows, columns=FROZEN_A_SUPERVOXEL_COLUMNS)
 
 
 def _stream_csv(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):

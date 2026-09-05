@@ -854,6 +854,20 @@ def _read_authorized_a(path, allowed_ids=None, allow_full=False, usecols=None,
     return read_technical_A(path, **kwargs)
 
 
+def _read_authorized_a_supervoxels(path, allowed_ids, project_root=PROJECT_ROOT):
+    """Read the frozen repeated-row A supervoxel artifact."""
+    feature_scripts = os.path.join(PROJECT_ROOT, "feature_extract", "scripts")
+    if feature_scripts not in sys.path:
+        sys.path.insert(0, feature_scripts)
+    from data_split_guard import read_frozen_A_supervoxels
+    try:
+        return read_frozen_A_supervoxels(
+            path, project_root=project_root,
+            allowed_ids=set(str(value).strip() for value in allowed_ids))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise P5ValidationError(str(exc)) from exc
+
+
 def _read_authorized_a_outcomes(path, allowed_ids):
     """Read only the two A outcome fields after technical IDs are authorized."""
     feature_scripts = os.path.join(PROJECT_ROOT, "feature_extract", "scripts")
@@ -979,10 +993,8 @@ def load_authorized_a_inputs(project_root=PROJECT_ROOT):
     split_frame = _load_frozen_split_authorized(
         split_path, population, bindings["W07_outer_split_artifact"],
         project_root=root)
-    supervoxels = _read_authorized_a(
-        supervoxel_path, allowed_ids=ids,
-        usecols=["影像号", "reader", "sv_label", "n_tumor_voxels", "Mean"],
-        dtype={"影像号": str})
+    supervoxels = _read_authorized_a_supervoxels(
+        supervoxel_path, allowed_ids=ids, project_root=root)
     supervoxels = _normalise_supervoxels(supervoxels)
     low_available = _available_from_w03(w03_low, ids)
     high_available = _available_from_w03(w03_high, ids)

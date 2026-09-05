@@ -256,6 +256,7 @@ class TechnicalPreflightTests(unittest.TestCase):
             "影像号": ids, "读者": ["R1"] * len(ids),
         })
         technical_calls = []
+        supervoxel_calls = []
         outcome_calls = []
         frozen_split_calls = []
         events = []
@@ -266,16 +267,20 @@ class TechnicalPreflightTests(unittest.TestCase):
             usecols = set(kwargs.get("usecols", []))
             if {"technical_cohort", "modeling_eligible"}.issubset(usecols):
                 return technical_population.copy()
-            if "sv_label" in usecols:
-                return supervoxel_frame.copy()
             if {"reader", "status"}.issubset(usecols):
                 return availability_frame.copy()
             if "读者" in usecols:
                 return whole_tumour_frame.copy()
             raise AssertionError("unexpected technical reader call: %s" % kwargs)
 
+        def fake_supervoxels(path, project_root, allowed_ids):
+            supervoxel_calls.append((path, project_root, set(allowed_ids)))
+            events.append("supervoxels")
+            return supervoxel_frame.copy()
+
         def fake_frozen_split(path, project_root, allowed_ids):
             frozen_split_calls.append((path, project_root, set(allowed_ids)))
+            events.append("split")
             return self.splits.copy()
 
         def fake_outcomes(path, **kwargs):
@@ -297,6 +302,8 @@ class TechnicalPreflightTests(unittest.TestCase):
                                  return_value=p5.W07_OUTER_SPLIT_SHA256), \
                     patch.object(data_split_guard, "read_technical_A",
                                  side_effect=fake_technical), \
+                    patch.object(data_split_guard, "read_frozen_A_supervoxels",
+                                 side_effect=fake_supervoxels), \
                     patch.object(data_split_guard, "read_frozen_A_split",
                                  side_effect=fake_frozen_split), \
                     patch.object(data_split_guard, "read_A_outcomes",
@@ -313,18 +320,34 @@ class TechnicalPreflightTests(unittest.TestCase):
         self.assertIn("bindings", events)
         self.assertEqual(events[0], "bindings")
         self.assertLess(events.index("technical"), events.index("outcome"))
+        self.assertLess(events.index("outcome"), events.index("split"))
+        self.assertLess(events.index("split"), events.index("supervoxels"))
         self.assertTrue(outcome_calls)
         self.assertEqual(len(frozen_split_calls), 1)
         self.assertEqual(frozen_split_calls[0][2], set(ids))
+        self.assertEqual(len(supervoxel_calls), 1)
+        expected_supervoxel_path = os.path.join(
+            root, "habitat_analysis", "output",
+            "local_global_diagnostic_A_post_slic_fix", "supervoxel_mean_A.csv")
+        self.assertEqual(os.path.normcase(os.path.abspath(supervoxel_calls[0][0])),
+                         os.path.normcase(os.path.abspath(expected_supervoxel_path)))
+        self.assertEqual(os.path.normcase(os.path.abspath(supervoxel_calls[0][1])),
+                         os.path.normcase(os.path.abspath(root)))
+        self.assertEqual(supervoxel_calls[0][2], set(ids))
         self.assertEqual(outcome_calls[0][1]["usecols"],
                          ["影像号", "DFS_time", "DFS_event"])
         for _, kwargs in technical_calls:
             self.assertFalse(set(kwargs.get("usecols", [])) &
                              {"DFS_time", "DFS_event"})
+            self.assertNotIn("sv_label", kwargs.get("usecols", []))
         self.assertNotIn("pd.read_csv", inspect.getsource(
             p5.load_authorized_a_inputs))
         self.assertNotIn("pd.read_csv", inspect.getsource(
             p5._load_frozen_split_authorized))
+        self.assertNotIn("pd.read_csv", inspect.getsource(
+            p5._read_authorized_a_supervoxels))
+        self.assertNotIn("pd.read_csv", inspect.getsource(p5.run_production))
+        self.assertNotIn("pd.read_csv", inspect.getsource(p5.main))
 
     def test_frozen_split_config_and_roi_tamper_fail_closed(self):
         altered = self.splits.copy()

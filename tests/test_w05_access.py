@@ -48,6 +48,12 @@ def _write_split(path, frame):
     return hashlib.sha256(raw).hexdigest()
 
 
+def _write_supervoxels(path, rows, columns=None):
+    columns = columns or data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS
+    pd.DataFrame(rows, columns=columns).to_csv(
+        path, index=False, encoding="utf-8-sig")
+
+
 def _model_lock():
     digest = "b" * 64
     return {
@@ -223,6 +229,78 @@ class W05ReaderTests(unittest.TestCase):
                     RuntimeError, "authorized data contains duplicate identifiers"):
                 data_split_guard.read_technical_A(
                     path, allowed_ids=["A1"])
+
+    def test_frozen_a_supervoxel_reader_allows_repeated_patient_ids(self):
+        rows = [
+            [" A1 ", "R1", 1, 5, 1.2],
+            ["A1", "R1", 2, 10, 3.4],
+            ["A2", "R1", 1, 7, 2.1],
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(
+                tmp, data_split_guard.FROZEN_A_SUPERVOXEL_RELATIVE_PATH)
+            os.makedirs(os.path.dirname(path))
+            _write_supervoxels(path, rows)
+            result = data_split_guard.read_frozen_A_supervoxels(
+                path, project_root=tmp, allowed_ids=["A1", "A2"])
+        self.assertEqual(
+            list(result.columns), data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS)
+        self.assertEqual(result["影像号"].tolist(), ["A1", "A1", "A2"])
+        self.assertEqual(result["sv_label"].tolist(), [1, 2, 1])
+        self.assertEqual(result["n_tumor_voxels"].tolist(), [5, 10, 7])
+
+    def test_frozen_a_supervoxel_reader_rejects_contract_violations(self):
+        base = [
+            ["A1", "R1", 1, 5, 1.2],
+            ["A1", "R1", 2, 10, 3.4],
+        ]
+        cases = (
+            ("duplicate case label", base + [["A1", "R1", 1, 8, 2.0]],
+             data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS,
+             "duplicate patient_id\\+sv_label"),
+            ("extra column", [row + ["unexpected"] for row in base],
+             data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS + ["unexpected"],
+             "columns"),
+            ("missing column", [row[:-1] for row in base],
+             data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS[:-1], "columns"),
+            ("non-R1", [["A1", "R2", 1, 5, 1.2]],
+             data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS, "non-R1"),
+            ("nonpositive support", [["A1", "R1", 1, 0, 1.2]],
+             data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS, "nonpositive"),
+            ("noninteger support", [["A1", "R1", 1, 1.5, 1.2]],
+             data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS, "non-integer"),
+            ("malformed numeric", [["A1", "R1", 1, 5, "bad"]],
+             data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS, "invalid Mean"),
+            ("blank identifier", [[" ", "R1", 1, 5, 1.2]],
+             data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS, "blank identifier"),
+            ("out of allow-list", [["B1", "R1", 1, 5, 1.2]],
+             data_split_guard.FROZEN_A_SUPERVOXEL_COLUMNS, "outside the allow-list"),
+        )
+        for name, rows, columns, message in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as tmp:
+                path = os.path.join(
+                    tmp, data_split_guard.FROZEN_A_SUPERVOXEL_RELATIVE_PATH)
+                os.makedirs(os.path.dirname(path))
+                _write_supervoxels(path, rows, columns=columns)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    data_split_guard.read_frozen_A_supervoxels(
+                        path, project_root=tmp, allowed_ids=["A1"])
+
+    def test_frozen_a_supervoxel_reader_rejects_custom_reader_and_wrong_path(self):
+        reader = mock.Mock(side_effect=AssertionError("reader executed"))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(
+                tmp, data_split_guard.FROZEN_A_SUPERVOXEL_RELATIVE_PATH)
+            os.makedirs(os.path.dirname(path))
+            _write_supervoxels(path, [["A1", "R1", 1, 5, 1.2]])
+            with self.assertRaisesRegex(RuntimeError, "custom readers"):
+                data_split_guard.read_frozen_A_supervoxels(
+                    path, project_root=tmp, allowed_ids=["A1"], reader=reader)
+            with self.assertRaisesRegex(RuntimeError, "project-locked"):
+                data_split_guard.read_frozen_A_supervoxels(
+                    os.path.join(tmp, "wrong.csv"), project_root=tmp,
+                    allowed_ids=["A1"])
+        reader.assert_not_called()
 
     def test_arbitrary_custom_reader_is_rejected_before_b_row_materialization(self):
         calls = {"reader": 0, "b_rows": 0}
