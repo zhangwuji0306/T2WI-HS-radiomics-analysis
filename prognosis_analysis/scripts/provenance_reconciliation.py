@@ -106,6 +106,43 @@ APPROVED_SUCCESSORS = {
     },
 }
 
+APPROVED_RECONCILIATION_RELATIONSHIPS = {
+    "w04_taskbook": (
+        "W04 preserves the historical taskbook revision; the current same-path "
+        "Scientific Master Protocol is an approved maintenance successor, while "
+        "W04 scientific and modeling freeze authority remains the recorded "
+        "modeling_protocol.json revision."),
+    "w04_workflow_path_migration": (
+        "The W04 root workflow binding is closed by an exact archive path "
+        "migration; the archive remains historical and the current Pre-W08 SOP "
+        "is the approved operational successor."),
+    "w07a_workflow": (
+        "The current authoritative Pre-W08 SOP is an approved successor to the "
+        "recorded W07A workflow source; the historical source hash is retained "
+        "and its unrecoverability is an explicit exception."),
+}
+
+APPROVED_SEMANTIC_REVIEW_CONCLUSIONS = {
+    "w04_taskbook": (
+        "The current successor adds document-role, status, use, and current-SOP "
+        "metadata without changing the frozen scientific question, model "
+        "hierarchy, technical parameters, or A/B access boundary."),
+    "w04_workflow_path_migration": (
+        "The archive preserves the W04 workflow bytes and historical role; the "
+        "current successor SOP carries the later gated operational workflow "
+        "without changing W04 frozen scientific or modeling parameters."),
+    "w07a_workflow": (
+        "The current successor's operational additions and restructuring do not "
+        "alter the already-frozen W07A scientific decisions, technical "
+        "parameters, or A/B access boundary; later P5 and governance text is "
+        "not retroactively treated as W07A freeze content."),
+}
+
+APPROVED_W07A_UNRECOVERABLE_REASON = (
+    "The exact pre-amendment byte snapshot is not present as a recoverable Git "
+    "object/path in the available repository history; no byte-exact "
+    "reconstruction is claimed.")
+
 
 class ProvenanceReconciliationError(ValueError):
     """Raised when the reconciliation cannot be closed fail-closed."""
@@ -153,6 +190,16 @@ def _exact_keys(value, expected, label, errors):
 def _expect_string(value, label, errors, nonempty=True):
     if not isinstance(value, str) or (nonempty and not value):
         errors.append("%s must be a non-empty string" % label)
+        return False
+    return True
+
+
+def _expect_canonical_text(value, label, approved, errors):
+    if not isinstance(value, str):
+        errors.append("%s must be an approved canonical string" % label)
+        return False
+    if value not in approved:
+        errors.append("%s is not an approved canonical value" % label)
         return False
     return True
 
@@ -307,14 +354,19 @@ def _validate_successor(root, successor_id, successor, errors):
         errors.append("%s current/Git verification failed: %s" % (label, exc))
 
 
-def _validate_semantic_review(review, label, errors):
+def _validate_semantic_review(review, label, reconciliation_id, errors):
     expected_keys = ("status", "conclusion", "scientific_parameters_changed",
                      "outcome_performance_informed")
     if not _exact_keys(review, expected_keys, label, errors):
         return
     if review.get("status") != "approved":
         errors.append("%s status must be approved" % label)
-    _expect_string(review.get("conclusion"), label + ".conclusion", errors)
+    approved = APPROVED_SEMANTIC_REVIEW_CONCLUSIONS.get(reconciliation_id)
+    if approved is None:
+        errors.append("%s has no registered reconciliation semantic conclusion" % label)
+    else:
+        _expect_canonical_text(review.get("conclusion"), label + ".conclusion",
+                               (approved,), errors)
     if review.get("scientific_parameters_changed") is not False:
         errors.append("%s scientific_parameters_changed must be false" % label)
     if review.get("outcome_performance_informed") is not False:
@@ -349,9 +401,11 @@ def _validate_w04_taskbook(root, item, successors, errors):
                            errors)
     if item.get("current_successor_id") != "scientific_master_protocol":
         errors.append("%s current successor is not the approved taskbook successor" % label)
-    _expect_string(item.get("relationship"), label + ".relationship", errors)
+    approved_relationship = APPROVED_RECONCILIATION_RELATIONSHIPS.get("w04_taskbook")
+    _expect_canonical_text(item.get("relationship"), label + ".relationship",
+                           (approved_relationship,), errors)
     _validate_semantic_review(item.get("semantic_review"),
-                              label + ".semantic_review", errors)
+                              label + ".semantic_review", "w04_taskbook", errors)
     if isinstance(item.get("historical_exact_recovery"), dict):
         snapshot = item["historical_exact_recovery"]
         if snapshot.get("git_commit") != "78b0e8f48becd64413859027e8809e155ecded5e":
@@ -398,9 +452,13 @@ def _validate_w04_migration(root, item, successors, errors):
             errors.append("%s archive must remain historical-only" % label)
     if item.get("current_successor_id") != "pre_w08_sop":
         errors.append("%s current successor is not the approved Pre-W08 SOP" % label)
-    _expect_string(item.get("relationship"), label + ".relationship", errors)
-    _validate_semantic_review(item.get("semantic_review"),
-                              label + ".semantic_review", errors)
+    approved_relationship = APPROVED_RECONCILIATION_RELATIONSHIPS.get(
+        "w04_workflow_path_migration")
+    _expect_canonical_text(item.get("relationship"), label + ".relationship",
+                           (approved_relationship,), errors)
+    _validate_semantic_review(
+        item.get("semantic_review"), label + ".semantic_review",
+        "w04_workflow_path_migration", errors)
     if isinstance(item.get("archive_exact_recovery"), dict):
         snapshot = item["archive_exact_recovery"]
         expected_archive = (
@@ -447,14 +505,18 @@ def _validate_w07a_workflow(item, successors, errors):
             errors.append("%s unrecoverable history must not claim a Git recovery" % label)
         if recovery.get("exact_verification") is not False:
             errors.append("%s exact_verification must be false" % label)
-        _expect_string(recovery.get("unrecoverable_reason"),
-                       label + ".historical_exact_recovery.unrecoverable_reason",
-                       errors)
+        _expect_canonical_text(
+            recovery.get("unrecoverable_reason"),
+            label + ".historical_exact_recovery.unrecoverable_reason",
+            (APPROVED_W07A_UNRECOVERABLE_REASON,), errors)
     if item.get("current_successor_id") != "pre_w08_sop":
         errors.append("%s current successor is not the approved Pre-W08 SOP" % label)
-    _expect_string(item.get("relationship"), label + ".relationship", errors)
+    approved_relationship = APPROVED_RECONCILIATION_RELATIONSHIPS.get(
+        "w07a_workflow")
+    _expect_canonical_text(item.get("relationship"), label + ".relationship",
+                           (approved_relationship,), errors)
     _validate_semantic_review(item.get("semantic_review"),
-                              label + ".semantic_review", errors)
+                              label + ".semantic_review", "w07a_workflow", errors)
     exception = item.get("exception")
     exception_keys = ("id", "required", "exact_verification",
                       "byte_exact_pass", "acceptance")

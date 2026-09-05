@@ -54,10 +54,10 @@ the next execution stage.
 ## Validation evidence
 
 - Manifest CLI: `python prognosis_analysis/scripts/provenance_reconciliation.py --root .` — **PASS**.
-- Provenance tests: `python -m unittest discover -s tests -p "test_provenance_reconciliation.py"` — **10 tests, 0 failures**.
+- Provenance tests: `python -m unittest discover -s tests -p "test_provenance_reconciliation.py"` — **12 tests, 0 failures**.
 - Modeling protocol tests: `python -m unittest discover -s tests -p "test_modeling_protocol.py"` — **7 tests, 0 failures**.
 - The modeling protocol source-revision test now delegates to the version-aware validator; it does not reduce validation to file existence.
-- Fail-closed regression coverage includes missing/forged W07A exception, W04 Git-object mismatch, modified successor SHA, unapproved successor, and unregistered successor revision.
+- Fail-closed regression coverage includes missing/forged W07A exception, W07A byte-exact/refreeze relationship mutation, W04 outcome/performance-informed protocol-change conclusion mutation, W04 Git-object mismatch, modified successor SHA, unapproved successor, and unregistered successor revision.
 - The validator requires Git, verifies recoverable historical bytes, verifies the approved successor's current and Git-snapshot SHA-256 values, rejects unregistered schema/version changes, and preserves `W07A exact_verification=false`.
 
 ## Preserved state

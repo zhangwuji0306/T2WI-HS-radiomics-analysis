@@ -98,6 +98,20 @@ class ProvenanceReconciliationTests(unittest.TestCase):
 
         self._validate_modified_manifest(forge_exception)
 
+    def test_w07a_byte_exact_refreeze_relationship_fails_closed(self):
+        def forge_relationship(manifest):
+            manifest["reconciliations"]["w07a_workflow"]["relationship"] = (
+                "W07A byte-exact PASS and refreeze is approved.")
+
+        self._validate_modified_manifest(forge_relationship)
+
+    def test_w04_outcome_performance_protocol_change_conclusion_fails_closed(self):
+        def forge_conclusion(manifest):
+            manifest["reconciliations"]["w04_taskbook"]["semantic_review"][
+                "conclusion"] = "Outcome/performance changed the protocol."
+
+        self._validate_modified_manifest(forge_conclusion)
+
     def test_modified_successor_sha_fails_closed(self):
         def modify_successor(manifest):
             manifest["approved_successors"]["pre_w08_sop"]["sha256"] = "0" * 64
