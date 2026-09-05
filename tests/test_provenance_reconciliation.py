@@ -171,6 +171,51 @@ class ProvenanceReconciliationTests(unittest.TestCase):
                             revision["content_introducing_commit"])
         validate_manifest(root=ROOT, manifest_path=MANIFEST_PATH)
 
+    def test_current_revision_requires_the_exact_approved_review_head(self):
+        revision = self.manifest["successor_revision_history"]["pre_w08_sop"][1]
+        self.assertEqual(
+            revision["reviewed_repository_head"],
+            "496e7800268df489f01dd71d71ff9f1e5b13e5c2")
+        validate_manifest(root=ROOT, manifest_path=MANIFEST_PATH)
+
+    def test_current_revision_review_head_tampering_fails_closed(self):
+        revision = self.manifest["successor_revision_history"]["pre_w08_sop"][1]
+        current_head = subprocess.check_output(
+            ["git", "-C", ROOT, "rev-parse", "HEAD"]).decode("ascii").strip()
+        mutations = (
+            None,
+            revision["content_introducing_commit"],
+            current_head,
+            "78e24da5109938fadf5ae41510994d6471c6a629",
+            "f" * 40,
+            "malformed-review-head",
+        )
+        for reviewed_head in mutations:
+            with self.subTest(reviewed_repository_head=reviewed_head):
+                def mutate(manifest, reviewed_head=reviewed_head):
+                    manifest["successor_revision_history"]["pre_w08_sop"][1][
+                        "reviewed_repository_head"] = reviewed_head
+
+                self._validate_modified_manifest(mutate)
+
+    def test_current_revision_missing_review_head_fails_closed(self):
+        def remove_review_head(manifest):
+            del manifest["successor_revision_history"]["pre_w08_sop"][1][
+                "reviewed_repository_head"]
+
+        self._validate_modified_manifest(remove_review_head)
+
+    def test_exact_review_head_accepts_later_descendant_repository_head(self):
+        revision = self.manifest["successor_revision_history"]["pre_w08_sop"][1]
+        review_head = revision["reviewed_repository_head"]
+        current_head = subprocess.check_output(
+            ["git", "-C", ROOT, "rev-parse", "HEAD"]).decode("ascii").strip()
+        self.assertNotEqual(review_head, current_head)
+        subprocess.check_call([
+            "git", "-C", ROOT, "merge-base", "--is-ancestor",
+            review_head, current_head])
+        validate_manifest(root=ROOT, manifest_path=MANIFEST_PATH)
+
     def test_current_successor_path_commit_blob_and_raw_sha_mismatch_fail_closed(self):
         fields = ("path", "content_introducing_commit", "git_blob", "raw_sha256")
         mutations = {

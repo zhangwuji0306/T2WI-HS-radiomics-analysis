@@ -137,6 +137,8 @@ CURRENT_PRE_W08_REVISION = {
         "08b5d92519b3ee79a8519386585336a980788bc6345d7729115f8693bef807e3"),
     "lf_normalized_sha256": (
         "9f12476e66f987de187d7af51acc803d147f71da8b20cec4eb9dee756e963cda"),
+    "reviewed_repository_head": (
+        "496e7800268df489f01dd71d71ff9f1e5b13e5c2"),
     "approved_successor": True,
     "status": "current",
     "role": (
@@ -458,6 +460,12 @@ def _validate_revision_record(root, revision, label, expected, errors):
         except RuntimeError as exc:
             errors.append("%s content-introducing commit is not before the reviewed repository head: %s" %
                           (label, exc))
+        try:
+            _run_git(root, ["merge-base", "--is-ancestor",
+                            review_head, "HEAD"])
+        except RuntimeError as exc:
+            errors.append("%s reviewed repository head is not an ancestor of current HEAD: %s" %
+                          (label, exc))
         actual_blob = _git_blob_id(root, content_commit, revision["path"])
         if actual_blob != revision.get("git_blob"):
             errors.append("%s content-introducing Git blob mismatch" % label)
@@ -734,7 +742,6 @@ def _validate_successor_history(manifest, root, errors):
     historical_expected["reviewed_repository_head"] = (
         "54e1b2ad75949bcdc06ee9dffd8138ea63654c69")
     current_expected = dict(CURRENT_PRE_W08_REVISION)
-    current_expected["reviewed_repository_head"] = None
     _validate_revision_record(
         root, revisions[0],
         "manifest.successor_revision_history.pre_w08_sop[0]",
