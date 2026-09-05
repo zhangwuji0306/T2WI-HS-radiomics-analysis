@@ -109,6 +109,13 @@ W08_P5_LEGACY_OUTPUT_RELATIVE = \
     "prognosis_analysis/output/p5_technical_preflight_A"
 W08_P5_CURRENT_OUTPUT_RELATIVE = \
     "prognosis_analysis/output/p5_technical_preflight_A_G3R"
+R5_AGGREGATE_EVIDENCE_RELATIVE = \
+    "prognosis_analysis/R5_P5_G3R_aggregate_evidence.json"
+R5_AUDIT_RELATIVE = "prognosis_analysis/R5_P5_G3R_audit.md"
+R5_ALLOWED_SUCCESSOR_PATHS = (
+    R5_AGGREGATE_EVIDENCE_RELATIVE,
+    R5_AUDIT_RELATIVE,
+)
 B_ACCESS_FLAGS = (
     "B_data_read", "B_reader_invoked", "B_source_opened",
     "B_statistics_generated",
@@ -461,6 +468,183 @@ def _git_commit_resolves(project_root, commit):
     return resolved == commit.lower()
 
 
+def _git_commit_is_ancestor(project_root, ancestor, descendant):
+    if not (_git_commit_resolves(project_root, ancestor) and
+            _git_commit_resolves(project_root, descendant)):
+        return False
+    try:
+        subprocess.check_call(
+            ["git", "-C", project_root, "merge-base", "--is-ancestor",
+             ancestor, descendant],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return True
+
+
+def _git_show_bytes(project_root, commit, relative_path):
+    try:
+        return subprocess.check_output(
+            ["git", "-C", project_root, "show",
+             "%s:%s" % (commit, relative_path)], stderr=subprocess.STDOUT)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            "Git snapshot cannot be read: %s:%s" %
+            (commit, relative_path)) from exc
+
+
+def _git_diff_name_status(project_root, older, newer):
+    try:
+        output = subprocess.check_output(
+            ["git", "-C", project_root, "diff", "--name-status",
+             "--no-renames", "%s..%s" % (older, newer)],
+            stderr=subprocess.STDOUT).decode("utf-8", "replace")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            "Git successor diff cannot be read: %s..%s" % (older, newer)) from exc
+    changes = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split("\t")
+        if len(fields) != 2:
+            raise RuntimeError("Git successor diff has an invalid record")
+        changes.append((fields[0], fields[1]))
+    return changes
+
+
+def _git_snapshot_sha256(project_root, commit, relative_path):
+    return hashlib.sha256(
+        _git_show_bytes(project_root, commit, relative_path)).hexdigest()
+
+
+def _validate_r5_successor_binding(project_root, execution_commit,
+                                   current_head, certificate):
+    """Validate an evidence-only successor without rewriting execution facts."""
+    aggregate_path = _project_path(
+        project_root, R5_AGGREGATE_EVIDENCE_RELATIVE)
+    aggregate = _read_json_path(aggregate_path, "R5 aggregate evidence")
+    binding = aggregate.get("release_binding")
+    expected_keys = (
+        "schema", "version", "execution_code_commit",
+        "current_evidence_binding_commit", "successor_mode", "allowed_paths")
+    if not isinstance(binding, dict) or set(binding) != set(expected_keys):
+        raise RuntimeError("R5 aggregate evidence release binding schema is invalid")
+    if binding.get("schema") != "P5_G3R_release_binding" or \
+            binding.get("version") != "1.0" or \
+            binding.get("successor_mode") != "evidence_only_append_only":
+        raise RuntimeError("R5 aggregate evidence successor semantics are invalid")
+    if binding.get("execution_code_commit") != execution_commit:
+        raise RuntimeError("R5 successor execution commit differs from G3 certificate")
+    allowed_paths = binding.get("allowed_paths")
+    if allowed_paths != list(R5_ALLOWED_SUCCESSOR_PATHS):
+        raise RuntimeError("R5 successor allowed paths are not fixed evidence paths")
+
+    evidence_commit = binding.get("current_evidence_binding_commit")
+    if not _git_commit_resolves(project_root, evidence_commit):
+        raise RuntimeError("R5 successor binding commit does not resolve")
+    if not _git_commit_is_ancestor(project_root, execution_commit,
+                                   evidence_commit):
+        raise RuntimeError("R5 successor binding is not after the execution commit")
+    if not _git_commit_is_ancestor(project_root, evidence_commit, current_head):
+        raise RuntimeError("R5 successor binding is not an ancestor of current HEAD")
+
+    expected_changes = [("A", path) for path in R5_ALLOWED_SUCCESSOR_PATHS]
+    actual_changes = sorted(
+        _git_diff_name_status(project_root, execution_commit, evidence_commit))
+    if actual_changes != sorted(expected_changes):
+        raise RuntimeError(
+            "R5 successor contains non-evidence changes: %s" %
+            ",".join("%s:%s" % change for change in actual_changes))
+
+    # The current checkout must be exactly the committed release binding tree.
+    for relative_path in R5_ALLOWED_SUCCESSOR_PATHS:
+        current_path = _project_path(project_root, relative_path)
+        if not os.path.isfile(current_path):
+            raise RuntimeError("R5 successor evidence is missing: %s" % relative_path)
+        with open(current_path, "rb") as handle:
+            current_bytes = handle.read()
+        head_bytes = _git_show_bytes(project_root, current_head, relative_path)
+        if current_bytes != head_bytes:
+            raise RuntimeError(
+                "R5 successor evidence differs from current HEAD: %s" % relative_path)
+
+    # The evidence content introduced at the binding commit is immutable.  The
+    # later binding record is the only permitted metadata addition to the JSON.
+    binding_snapshot = json.loads(_git_show_bytes(
+        project_root, evidence_commit, R5_AGGREGATE_EVIDENCE_RELATIVE).decode(
+            "utf-8"))
+    current_without_binding = dict(aggregate)
+    current_without_binding.pop("release_binding", None)
+    if current_without_binding != binding_snapshot:
+        raise RuntimeError("R5 aggregate evidence history was altered")
+    with open(_project_path(project_root, R5_AUDIT_RELATIVE), "rb") as handle:
+        current_audit = handle.read()
+    if current_audit != _git_show_bytes(project_root, evidence_commit,
+                                        R5_AUDIT_RELATIVE):
+        raise RuntimeError("R5 audit history was altered")
+
+    generation = aggregate.get("certificate_generation", {})
+    if not isinstance(generation, dict) or \
+            generation.get("code_commit") != execution_commit:
+        raise RuntimeError("R5 aggregate evidence rewrites the execution commit")
+    if aggregate.get("schema") != "P5_G3R_aggregate_evidence" or \
+            aggregate.get("version") != "1.0" or \
+            aggregate.get("stage") != "G3R" or \
+            aggregate.get("status") != "PASS":
+        raise RuntimeError("R5 aggregate evidence is not a PASS certificate")
+
+    compatibility = certificate.get("compatibility_provenance")
+    if not isinstance(compatibility, dict):
+        raise RuntimeError("G3 certificate compatibility provenance is missing")
+    code_path = compatibility.get("compatibility_code_path")
+    config_path = compatibility.get("compatibility_config_path")
+    code_sha = compatibility.get("compatibility_code_sha256")
+    config_sha = compatibility.get("compatibility_config_sha256")
+    for label, path, expected_sha in (
+            ("compatibility code", code_path, code_sha),
+            ("compatibility config", config_path, config_sha)):
+        if not isinstance(path, str) or path.startswith(("/", "\\")) or \
+                ".." in path.split("/") or \
+                not isinstance(expected_sha, str):
+            raise RuntimeError("R5 %s provenance is invalid" % label)
+        execution_sha = _git_snapshot_sha256(
+            project_root, execution_commit, path)
+        successor_sha = _git_snapshot_sha256(
+            project_root, evidence_commit, path)
+        if execution_sha != expected_sha or successor_sha != expected_sha:
+            raise RuntimeError("R5 %s changed between execution and successor" % label)
+
+    # The aggregate evidence is the immutable, de-identified hash register for
+    # the predecessor and current technical-only outputs.
+    successor = aggregate.get("successor", {})
+    if not isinstance(successor, dict) or \
+            successor.get("current_output") != W08_P5_CURRENT_OUTPUT_RELATIVE or \
+            successor.get("successor_of") != W08_P5_LEGACY_OUTPUT_RELATIVE or \
+            successor.get("legacy_output_preserved") is not True:
+        raise RuntimeError("R5 predecessor/successor output relation is invalid")
+    hash_sets = (
+        (successor.get("legacy_artifact_sha256"), W08_P5_LEGACY_OUTPUT_RELATIVE),
+        (aggregate.get("current_artifact_sha256"), W08_P5_CURRENT_OUTPUT_RELATIVE),
+    )
+    for hashes, relative_root in hash_sets:
+        if not isinstance(hashes, dict):
+            raise RuntimeError("R5 artifact hash register is missing")
+        for name, expected_sha in hashes.items():
+            if not isinstance(name, str) or "/" in name or "\\" in name or \
+                    not isinstance(expected_sha, str):
+                raise RuntimeError("R5 artifact hash register contains an invalid path")
+            path = _project_path(project_root, "%s/%s" % (relative_root, name))
+            if not os.path.isfile(path) or _sha256(path).lower() != expected_sha.lower():
+                raise RuntimeError("R5 artifact hash mismatch: %s/%s" %
+                                   (relative_root, name))
+    return {
+        "execution_code_commit": execution_commit,
+        "current_evidence_binding_commit": evidence_commit,
+        "successor_mode": binding.get("successor_mode"),
+    }
+
+
 def _safe_exception_text(exc, project_root=None, output_root=None):
     text = str(exc).replace("\r", " ").replace("\n", " ").strip()
     for path, replacement in ((project_root, "<project_root>"),
@@ -648,11 +832,16 @@ def _validate_g3_certificate(project_root, code_commit, binding_hashes):
             summary.get("binding_hashes") != dict(binding_hashes):
         raise RuntimeError("G3 binding manifest differs from frozen bindings")
     certificate_commit = _extract_certificate_code_commit(certificate)
-    if certificate_commit != code_commit:
-        raise RuntimeError(
-            "G3 release certificate is bound to a stale code commit")
+    summary_commit = summary.get("code_commit")
+    if summary_commit != certificate_commit or \
+            summary.get("code_commit_at_release") != certificate_commit:
+        raise RuntimeError("G3 certificate and summary code bindings differ")
     if not _git_commit_resolves(project_root, certificate_commit):
         raise RuntimeError("G3 release certificate code commit does not resolve")
+    successor_binding = None
+    if certificate_commit != code_commit:
+        successor_binding = _validate_r5_successor_binding(
+            project_root, certificate_commit, code_commit, certificate)
     if os.path.basename(os.path.normpath(certificate_root)) == \
             "p5_technical_preflight_A_G3R":
         if not isinstance(certificate.get("certificate_generated_at_utc"), str) or \
@@ -670,6 +859,9 @@ def _validate_g3_certificate(project_root, code_commit, binding_hashes):
         "certificate": "P5_release_gate.json",
         "summary": "P5_technical_preflight_summary.json",
         "code_commit": certificate_commit,
+        "current_release_binding_commit": (
+            successor_binding.get("current_evidence_binding_commit")
+            if successor_binding else code_commit),
     }
 
 

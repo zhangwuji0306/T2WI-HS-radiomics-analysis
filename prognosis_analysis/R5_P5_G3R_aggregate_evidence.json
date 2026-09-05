@@ -22,6 +22,17 @@
     "aggregate_summary": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_technical_preflight_summary.json",
     "sha256_manifest": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_sha256_manifest.json"
   },
+  "release_binding": {
+    "schema": "P5_G3R_release_binding",
+    "version": "1.0",
+    "execution_code_commit": "77cddd970f176533fd44fe1fbaaac880651fc84f",
+    "current_evidence_binding_commit": "ed58c08cbb08dd3dd8705a0a4c355ef9f5fa3ca9",
+    "successor_mode": "evidence_only_append_only",
+    "allowed_paths": [
+      "prognosis_analysis/R5_P5_G3R_aggregate_evidence.json",
+      "prognosis_analysis/R5_P5_G3R_audit.md"
+    ]
+  },
   "coverage": {
     "outer_repeats": 10,
     "outer_folds": 5,
