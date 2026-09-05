@@ -606,6 +606,12 @@ def _build_pair_lookup():
     return pairs
 
 
+def _assert_frozen_runtime_constants():
+    if (MINIMUM_ROI_SIZE, N_OUTER_REPEATS, N_OUTER_FOLDS,
+            N_INNER_FOLDS, BASE_SEED) != (10, 10, 5, 5, 12345):
+        raise P5ValidationError("P5 runtime constants differ from the frozen protocol")
+
+
 def run_technical_preflight(population, split_frame, supervoxels,
                            availability=None, binding_hashes=None,
                            expected_split_hash=None):
@@ -615,6 +621,7 @@ def run_technical_preflight(population, split_frame, supervoxels,
     Production callers must obtain ``binding_hashes`` from
     :func:`verify_frozen_bindings` first.
     """
+    _assert_frozen_runtime_constants()
     if not isinstance(binding_hashes, dict):
         raise P5ValidationError("P5 requires a verified frozen binding manifest")
     required_bindings = set(_BINDING_FILES)
