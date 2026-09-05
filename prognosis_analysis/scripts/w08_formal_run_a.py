@@ -15,6 +15,7 @@ from __future__ import absolute_import
 import argparse
 import hashlib
 import json
+import operator
 import os
 import sys
 import time
@@ -49,6 +50,11 @@ WORK_ROOT = os.path.join(OUTPUT_ROOT, "work")
 SLIC_CACHE_ROOT = os.path.join(WORK_ROOT, "slic_cache")
 
 MINIMUM_ROI_SIZE = 10
+# PyRadiomics 3.0.1 treats its minimumROISize as a strict lower bound
+# (``roiSize <= minimumROISize``).  W08 keeps the public P3B threshold at 10;
+# this backend-only value disables the duplicated, off-by-one check after the
+# provider has already classified the mask using the frozen contract.
+_PYRADIOMICS_COMPATIBILITY_MINIMUM_ROI_SIZE = None
 RADIOMICS_STATE_STRUCTURALLY_ABSENT = "structurally_absent"
 RADIOMICS_STATE_TECHNICALLY_UNEXTRACTABLE_SMALL_ROI = \
     "technically_unextractable_small_ROI"
@@ -138,7 +144,12 @@ def _six_neighbor_interface(habitat, roi, spacing_xyz):
 
 def _radiomics_support_state(voxel_count):
     """Classify one fold-specific habitat mask by its voxel support."""
-    voxel_count = int(voxel_count)
+    if isinstance(voxel_count, bool):
+        raise RuntimeError("radiomics mask voxel count must be an integer")
+    try:
+        voxel_count = operator.index(voxel_count)
+    except TypeError:
+        raise RuntimeError("radiomics mask voxel count must be an integer")
     if voxel_count < 0:
         raise RuntimeError("radiomics mask voxel count cannot be negative")
     if voxel_count == 0:
@@ -146,6 +157,42 @@ def _radiomics_support_state(voxel_count):
     if voxel_count < MINIMUM_ROI_SIZE:
         return RADIOMICS_STATE_TECHNICALLY_UNEXTRACTABLE_SMALL_ROI
     return RADIOMICS_STATE_EXTRACTABLE
+
+
+def _backend_compatibility_settings(config):
+    """Build backend settings without changing the frozen public threshold."""
+    settings = w02.extractor_settings(config)
+    if type(MINIMUM_ROI_SIZE) is not int or MINIMUM_ROI_SIZE != 10:
+        raise w08.W08ValidationError(
+            "W08 public minimumROISize is not the frozen value 10")
+    setting = settings.get("setting")
+    if not isinstance(setting, dict) or \
+            setting.get("minimumROISize") != MINIMUM_ROI_SIZE:
+        raise w08.W08ValidationError(
+            "W08 public/config minimumROISize is inconsistent")
+    backend = dict(settings)
+    backend["setting"] = dict(setting)
+    backend["setting"]["minimumROISize"] = \
+        _PYRADIOMICS_COMPATIBILITY_MINIMUM_ROI_SIZE
+    return backend
+
+
+def _build_backend_compatible_extractor(config=None):
+    """Create the locked PyRadiomics extractor with the boundary shim only."""
+    if config is None:
+        config = w02.load_config()
+    settings = _backend_compatibility_settings(config)
+    return w02.featureextractor.RadiomicsFeatureExtractor(settings)
+
+
+def _mask_label_voxel_count(mask):
+    """Count label-1 voxels without changing the SimpleITK mask."""
+    mask_array = w02.sitk.GetArrayFromImage(mask)
+    labels = np.unique(mask_array)
+    if not np.isin(labels, [0, 1]).all():
+        raise w08.W08ValidationError(
+            "radiomics compatibility mask must be binary with label 1")
+    return int(np.count_nonzero(mask_array == 1))
 
 
 def _read_header(path):
@@ -273,8 +320,7 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         self._state_cache = {}
         self.fit_calls = []
         self.transform_calls = []
-        self._extractor = w02.featureextractor.RadiomicsFeatureExtractor(
-            w02.extractor_settings(w02.load_config()))
+        self._extractor = _build_backend_compatible_extractor()
 
     @staticmethod
     def _normalise_supervoxel_table(table):
@@ -430,7 +476,16 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         habitat[~roi] = -1
         return habitat
 
-    def _radiomics_for_mask(self, image, mask, block):
+    def _radiomics_for_mask(self, image, mask, block, expected_voxel_count):
+        actual_voxel_count = _mask_label_voxel_count(mask)
+        if type(expected_voxel_count) is not int or \
+                actual_voxel_count != expected_voxel_count:
+            raise w08.W08ValidationError(
+                "radiomics compatibility mask voxel count is inconsistent")
+        if _radiomics_support_state(actual_voxel_count) != \
+                RADIOMICS_STATE_EXTRACTABLE:
+            raise w08.W08ValidationError(
+                "radiomics compatibility backend received an ineligible mask")
         result = self._extractor.execute(image, mask)
         output = {}
         for feature in w08.FROZEN_CANDIDATE_FEATURES[block]:
@@ -489,14 +544,16 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         if low_state == RADIOMICS_STATE_EXTRACTABLE:
             low_image_mask = w02.make_habitat_mask(
                 image, low_mask.astype(np.uint8), 1)
-            row.update(self._radiomics_for_mask(image, low_image_mask, "R_low"))
+            row.update(self._radiomics_for_mask(
+                image, low_image_mask, "R_low", low_voxel_count))
         else:
             row.update({w08.RADIOMICS_PREFIXES["R_low"] + feature: np.nan
                         for feature in w08.FROZEN_CANDIDATE_FEATURES["R_low"]})
         if high_state == RADIOMICS_STATE_EXTRACTABLE:
             high_image_mask = w02.make_habitat_mask(
                 image, high_mask.astype(np.uint8), 1)
-            row.update(self._radiomics_for_mask(image, high_image_mask, "R_high"))
+            row.update(self._radiomics_for_mask(
+                image, high_image_mask, "R_high", high_voxel_count))
         else:
             row.update({w08.RADIOMICS_PREFIXES["R_high"] + feature: np.nan
                         for feature in w08.FROZEN_CANDIDATE_FEATURES["R_high"]})

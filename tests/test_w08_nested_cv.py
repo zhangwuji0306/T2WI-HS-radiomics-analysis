@@ -8,6 +8,7 @@ from unittest import mock
 
 import numpy as np
 import pandas as pd
+import SimpleITK as sitk
 
 
 SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
@@ -16,6 +17,7 @@ if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
 import w07_outer_splits as w07  # noqa: E402
+import w08_formal_run_a as formal  # noqa: E402
 import w08_nested_cv as w08  # noqa: E402
 
 
@@ -379,6 +381,105 @@ class W08NestedCVTests(unittest.TestCase):
         self.assertTrue(all(
             row["candidate_failed"]
             for row in raised.exception.audit["candidate_records"]))
+
+
+class W08FormalRadiomicsBoundaryCompatibilityTests(unittest.TestCase):
+    @staticmethod
+    def synthetic_image_mask(voxel_count):
+        image_array = np.arange(30, dtype=np.float32).reshape(2, 3, 5)
+        mask_array = np.zeros((2, 3, 5), dtype=np.uint8)
+        mask_array[0, :2, :5].reshape(-1)[:voxel_count] = 1
+        image = sitk.GetImageFromArray(image_array)
+        mask = sitk.GetImageFromArray(mask_array)
+        image.SetSpacing((1.0, 1.0, 2.0))
+        mask.CopyInformation(image)
+        return image, mask
+
+    @staticmethod
+    def provider_with(extractor):
+        provider = formal.AOnlyFoldFeatureProvider.__new__(
+            formal.AOnlyFoldFeatureProvider)
+        provider._extractor = extractor
+        return provider
+
+    def test_support_classification_remains_exactly_frozen(self):
+        self.assertEqual(formal._radiomics_support_state(0),
+                         formal.RADIOMICS_STATE_STRUCTURALLY_ABSENT)
+        for count in (1, 9):
+            self.assertEqual(
+                formal._radiomics_support_state(count),
+                formal.RADIOMICS_STATE_TECHNICALLY_UNEXTRACTABLE_SMALL_ROI)
+        for count in (10, 11):
+            self.assertEqual(formal._radiomics_support_state(count),
+                             formal.RADIOMICS_STATE_EXTRACTABLE)
+        with self.assertRaises(RuntimeError):
+            formal._radiomics_support_state(9.5)
+
+    def test_ineligible_masks_never_reach_pyradiomics(self):
+        class ExplodingExtractor(object):
+            def __init__(self):
+                self.calls = 0
+
+            def execute(self, image, mask):
+                self.calls += 1
+                raise AssertionError("ineligible mask reached PyRadiomics")
+
+        extractor = ExplodingExtractor()
+        provider = self.provider_with(extractor)
+        for count in (0, 1, 9):
+            image, mask = self.synthetic_image_mask(count)
+            with self.subTest(voxel_count=count):
+                with self.assertRaises(w08.W08ValidationError):
+                    provider._radiomics_for_mask(
+                        image, mask, "R_low", count)
+        self.assertEqual(extractor.calls, 0)
+
+    def test_exactly_ten_voxels_reaches_locked_backend_through_compatibility_layer(self):
+        image, mask = self.synthetic_image_mask(10)
+        image_before = sitk.GetArrayFromImage(image).copy()
+        mask_before = sitk.GetArrayFromImage(mask).copy()
+        image_spacing_before = image.GetSpacing()
+        mask_spacing_before = mask.GetSpacing()
+        extractor = formal._build_backend_compatible_extractor()
+        provider = self.provider_with(extractor)
+
+        result = provider._radiomics_for_mask(
+            image, mask, "R_low", expected_voxel_count=10)
+
+        self.assertEqual(extractor.settings["minimumROISize"], None)
+        self.assertEqual(len(result), len(w08.FROZEN_CANDIDATE_FEATURES["R_low"]))
+        self.assertTrue(any(np.isfinite(value) for value in result.values()))
+        np.testing.assert_array_equal(sitk.GetArrayFromImage(image), image_before)
+        np.testing.assert_array_equal(sitk.GetArrayFromImage(mask), mask_before)
+        self.assertEqual(image.GetSpacing(), image_spacing_before)
+        self.assertEqual(mask.GetSpacing(), mask_spacing_before)
+
+    def test_public_minimum_roi_size_stays_ten_and_backend_override_is_isolated(self):
+        settings = formal.w02.extractor_settings(formal.w02.load_config())
+        self.assertEqual(formal.MINIMUM_ROI_SIZE, 10)
+        self.assertEqual(settings["setting"]["minimumROISize"], 10)
+        backend = formal._backend_compatibility_settings(formal.w02.load_config())
+        self.assertEqual(settings["setting"]["minimumROISize"], 10)
+        self.assertIsNone(backend["setting"]["minimumROISize"])
+
+    def test_tampered_or_inconsistent_boundary_fails_closed(self):
+        image, mask = self.synthetic_image_mask(10)
+        extractor = mock.Mock()
+        provider = self.provider_with(extractor)
+        with self.assertRaises(w08.W08ValidationError):
+            provider._radiomics_for_mask(image, mask, "R_low", 9)
+        extractor.execute.assert_not_called()
+
+        altered_settings = formal.w02.extractor_settings(formal.w02.load_config())
+        altered_settings["setting"]["minimumROISize"] = 11
+        with mock.patch.object(formal.w02, "extractor_settings",
+                               return_value=altered_settings):
+            with self.assertRaises(w08.W08ValidationError):
+                formal._build_backend_compatible_extractor()
+
+        with mock.patch.object(formal, "MINIMUM_ROI_SIZE", 11):
+            with self.assertRaises(w08.W08ValidationError):
+                formal._build_backend_compatible_extractor()
 
 
 if __name__ == "__main__":
