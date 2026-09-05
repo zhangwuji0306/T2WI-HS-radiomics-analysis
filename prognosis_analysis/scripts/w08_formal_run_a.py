@@ -18,9 +18,11 @@ import json
 import operator
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 import numpy as np
 import pandas as pd
@@ -94,16 +96,24 @@ W_BATCHES = (
      ("影像号", "读者", "split", "normalization", "f")),
 )
 
-W08_FINAL_OUTPUT_NAMES = (
+W08_REQUIRED_OUTPUT_NAMES = (
     "predictions.csv", "fold_results.csv", "selection_results.csv",
     "audit.json", "run_metadata.json",
 )
+W08_OUTPUT_MANIFEST_NAME = "formal_output_manifest.json"
+W08_FINAL_OUTPUT_NAMES = W08_REQUIRED_OUTPUT_NAMES + (W08_OUTPUT_MANIFEST_NAME,)
 W08_RELEASE_GATE_NAME = "release_gate.json"
 W08_RUN_STATE_NAME = "run_state.json"
+W08_ATTEMPT_STATE_NAME = "attempt_state.json"
 B_ACCESS_FLAGS = (
     "B_data_read", "B_reader_invoked", "B_source_opened",
     "B_statistics_generated",
 )
+
+PYRADIOMICS_VERSION = "3.0.1"
+COMPATIBILITY_REASON = (
+    "PyRadiomics 3.0.1 strict <= semantics and precheck count>=10")
+PRECHECK_COUNT_THRESHOLD = ">=10"
 
 
 class W08ReleaseGateError(RuntimeError):
@@ -144,6 +154,266 @@ def _atomic_csv(frame, path):
     temporary = path + ".tmp"
     frame.to_csv(temporary, index=False, encoding="utf-8-sig")
     os.replace(temporary, path)
+
+
+def _compatibility_provenance():
+    """Return the frozen public/backend ROI compatibility provenance."""
+    return {
+        "protocol_minimumROISize": MINIMUM_ROI_SIZE,
+        "scientific_minimumROISize": MINIMUM_ROI_SIZE,
+        "effective_backend_minimum_size":
+            _PYRADIOMICS_COMPATIBILITY_MINIMUM_ROI_SIZE,
+        "compatibility_reason": COMPATIBILITY_REASON,
+        "precheck_count_threshold": PRECHECK_COUNT_THRESHOLD,
+        "pyradiomics_version": PYRADIOMICS_VERSION,
+    }
+
+
+def _new_attempt_id():
+    """Create a unique, path-safe identifier for one formal W08 attempt."""
+    return "attempt_%d_%s" % (int(time.time() * 1000000),
+                              uuid.uuid4().hex[:12])
+
+
+def _canonical_output_paths(output_root):
+    return dict((name, os.path.join(output_root, name))
+                for name in W08_FINAL_OUTPUT_NAMES)
+
+
+def _staging_dirs(output_root):
+    attempts_root = os.path.join(output_root, "attempts")
+    if not os.path.isdir(attempts_root):
+        return []
+    return sorted(
+        os.path.join(attempts_root, name)
+        for name in os.listdir(attempts_root)
+        if name.endswith(".staging") and
+        os.path.isdir(os.path.join(attempts_root, name)))
+
+
+def _begin_attempt(output_root, code_commit, started_epoch):
+    """Create an exclusive staging directory before any W08 model work."""
+    output_root = os.path.abspath(os.fspath(output_root))
+    os.makedirs(output_root, exist_ok=True)
+    canonical = _canonical_output_paths(output_root)
+    existing = [name for name, path in canonical.items()
+                if os.path.exists(path)]
+    if existing:
+        raise RuntimeError(
+            "canonical W08 outputs already exist; refusing rerun: %s" %
+            ",".join(existing))
+    stale_staging = _staging_dirs(output_root)
+    if stale_staging:
+        raise RuntimeError(
+            "stale W08 staging attempt blocks rerun: %s" %
+            ",".join(os.path.basename(path) for path in stale_staging))
+
+    attempts_root = os.path.join(output_root, "attempts")
+    os.makedirs(attempts_root, exist_ok=True)
+    while True:
+        attempt_id = _new_attempt_id()
+        staging_root = os.path.join(attempts_root, attempt_id + ".staging")
+        try:
+            os.makedirs(staging_root)
+            break
+        except OSError:
+            if os.path.exists(staging_root):
+                continue
+            raise
+    _atomic_json(os.path.join(staging_root, W08_ATTEMPT_STATE_NAME), {
+        "stage": "W08",
+        "status": "staging",
+        "attempt_id": attempt_id,
+        "code_commit_at_attempt": code_commit,
+        "started_at_epoch": started_epoch,
+        "final_outputs_generated": False,
+    })
+    return {
+        "attempt_id": attempt_id,
+        "staging_root": staging_root,
+        "output_root": output_root,
+        "code_commit": code_commit,
+        "started_at_epoch": started_epoch,
+        "status": "staging",
+    }
+
+
+def _validate_manifest_hex(value, label):
+    if not isinstance(value, str) or len(value) != 64 or \
+            any(char not in "0123456789abcdefABCDEF" for char in value):
+        raise RuntimeError("%s is not a SHA-256 digest" % label)
+
+
+def _validate_formal_output_manifest(path, expected_attempt_id=None,
+                                     expected_code_commit=None):
+    """Validate the W08 commit marker and every promoted output digest."""
+    path = os.path.abspath(os.fspath(path))
+    manifest = _read_json_path(path, "formal W08 output manifest")
+    if manifest.get("schema") != "w08_formal_output_manifest" or \
+            manifest.get("schema_version") != "1.0":
+        raise RuntimeError("formal W08 output manifest schema is invalid")
+    if manifest.get("stage") != "W08" or \
+            manifest.get("status") != "complete":
+        raise RuntimeError("formal W08 output manifest is not complete")
+    attempt_id = manifest.get("attempt_id")
+    if not _nonempty_text(attempt_id) or "/" in attempt_id or "\\" in attempt_id:
+        raise RuntimeError("formal W08 output manifest has an invalid attempt_id")
+    if expected_attempt_id is not None and attempt_id != expected_attempt_id:
+        raise RuntimeError("formal W08 output manifest attempt_id mismatch")
+    code_commit = manifest.get("code_commit")
+    if not isinstance(code_commit, str) or len(code_commit) != 40 or \
+            any(char not in "0123456789abcdefABCDEF" for char in code_commit):
+        raise RuntimeError("formal W08 output manifest has an invalid code commit")
+    if expected_code_commit is not None and \
+            code_commit.lower() != str(expected_code_commit).lower():
+        raise RuntimeError("formal W08 output manifest code commit mismatch")
+
+    compatibility = manifest.get("compatibility_provenance")
+    expected_compatibility = _compatibility_provenance()
+    if compatibility != expected_compatibility:
+        raise RuntimeError("formal W08 compatibility provenance mismatch")
+    protocol = manifest.get("protocol")
+    if not isinstance(protocol, dict) or \
+            protocol.get("minimumROISize") != MINIMUM_ROI_SIZE or \
+            protocol.get("W04_protocol_sha256") != w08.W04_PROTOCOL_SHA256 or \
+            protocol.get("W07_outer_split_sha256") != w08.W07_OUTER_SPLIT_SHA256:
+        raise RuntimeError("formal W08 output protocol binding is invalid")
+
+    outputs = manifest.get("outputs")
+    if not isinstance(outputs, dict) or \
+            set(outputs) != set(W08_REQUIRED_OUTPUT_NAMES):
+        raise RuntimeError("formal W08 output manifest list is incomplete")
+    output_root = os.path.dirname(path)
+    for name in W08_REQUIRED_OUTPUT_NAMES:
+        entry = outputs.get(name)
+        if not isinstance(entry, dict) or entry.get("path") != name:
+            raise RuntimeError("formal W08 output manifest entry is invalid: %s" % name)
+        digest = entry.get("sha256")
+        _validate_manifest_hex(digest, "output %s" % name)
+        output_path = os.path.join(output_root, name)
+        if not os.path.isfile(output_path):
+            raise RuntimeError("formal W08 output is missing: %s" % name)
+        if _sha256(output_path).lower() != digest.lower():
+            raise RuntimeError("formal W08 output SHA-256 mismatch: %s" % name)
+        if entry.get("size_bytes") != os.path.getsize(output_path):
+            raise RuntimeError("formal W08 output size mismatch: %s" % name)
+
+    audit = _read_json_path(os.path.join(output_root, "audit.json"),
+                            "formal W08 audit")
+    metadata = _read_json_path(os.path.join(output_root, "run_metadata.json"),
+                               "formal W08 metadata")
+    for label, payload in (("audit", audit), ("metadata", metadata)):
+        if payload.get("stage") != "W08" or \
+                payload.get("status") != "formal_complete" or \
+                payload.get("attempt_id") != attempt_id or \
+                payload.get("code_commit") != code_commit:
+            raise RuntimeError("formal W08 %s is not bound to the manifest" % label)
+    if audit.get("compatibility_provenance") != expected_compatibility or \
+            metadata.get("compatibility_provenance") != expected_compatibility:
+        raise RuntimeError("formal W08 compatibility audit is incomplete")
+    return manifest
+
+
+def _write_attempt_failure(context, project_root, stage, exception):
+    """Close a staging attempt as an explicit failed archive."""
+    if not context or context.get("status") in ("failed", "promoted"):
+        return
+    staging_root = context.get("staging_root")
+    if not staging_root or not os.path.isdir(staging_root):
+        context["status"] = "failed"
+        return
+    output_root = context["output_root"]
+    failure = {
+        "attempt_id": context["attempt_id"],
+        "stage": "W08",
+        "status": "failed",
+        "failure_stage": stage,
+        "exception_summary": _safe_exception_text(
+            exception, project_root, output_root),
+        "code_commit_at_attempt": context.get("code_commit"),
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+    }
+    failed_state = {
+        "stage": "W08",
+        "status": "failed",
+        "formal_run": True,
+        "failure_stage": stage,
+        "exception_class": exception.__class__.__name__,
+        "failure_reason": _safe_exception_text(
+            exception, project_root, output_root),
+        "code_commit": context.get("code_commit"),
+        "code_commit_at_attempt": context.get("code_commit"),
+        "attempt_id": context["attempt_id"],
+        "started_at_epoch": context.get("started_at_epoch"),
+        "ended_at_epoch": time.time(),
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+    }
+    _atomic_json(os.path.join(staging_root, "failure_audit.json"), failure)
+    _atomic_json(os.path.join(staging_root, W08_RUN_STATE_NAME), failed_state)
+    _atomic_json(os.path.join(staging_root, W08_ATTEMPT_STATE_NAME), {
+        "stage": "W08",
+        "status": "failed",
+        "attempt_id": context["attempt_id"],
+        "code_commit_at_attempt": context.get("code_commit"),
+        "failure_stage": stage,
+        "final_outputs_generated": False,
+    })
+    failed_root = os.path.join(
+        os.path.dirname(staging_root), context["attempt_id"] + "_failed")
+    if os.path.exists(failed_root):
+        raise RuntimeError("failed W08 attempt archive already exists")
+    os.replace(staging_root, failed_root)
+    context["status"] = "failed"
+    context["failed_root"] = failed_root
+
+
+def _promote_staged_outputs(context):
+    """Promote validated files with the manifest moved last as commit marker."""
+    staging_root = context["staging_root"]
+    output_root = context["output_root"]
+    manifest_path = os.path.join(staging_root, W08_OUTPUT_MANIFEST_NAME)
+    _validate_formal_output_manifest(
+        manifest_path, expected_attempt_id=context["attempt_id"],
+        expected_code_commit=context.get("code_commit"))
+    canonical = _canonical_output_paths(output_root)
+    existing = [name for name, path in canonical.items()
+                if os.path.exists(path)]
+    if existing:
+        raise RuntimeError(
+            "canonical W08 outputs appeared during promotion: %s" %
+            ",".join(existing))
+    promoted = []
+    try:
+        for name in W08_REQUIRED_OUTPUT_NAMES + (W08_OUTPUT_MANIFEST_NAME,):
+            os.replace(os.path.join(staging_root, name), canonical[name])
+            promoted.append(name)
+        _validate_formal_output_manifest(
+            canonical[W08_OUTPUT_MANIFEST_NAME],
+            expected_attempt_id=context["attempt_id"],
+            expected_code_commit=context.get("code_commit"))
+    except Exception:
+        for name in promoted:
+            try:
+                os.remove(canonical[name])
+            except OSError:
+                pass
+        raise
+    context["status"] = "promoted"
+    context["manifest"] = canonical[W08_OUTPUT_MANIFEST_NAME]
+    try:
+        shutil.rmtree(staging_root)
+    except OSError:
+        # The manifest is already validated and is the completion marker;
+        # a cleanup failure must not turn a committed output into a failure.
+        pass
 
 
 def _project_path(project_root, relative_path):
@@ -464,6 +734,12 @@ def _validate_reconciled_attempts(project_root, output_root, status):
     if final_paths:
         raise RuntimeError(
             "prior final outputs exist: %s" % ",".join(final_paths))
+
+    stale_staging = _staging_dirs(output_root)
+    if stale_staging:
+        raise RuntimeError(
+            "unfinalized W08 staging attempts exist: %s" %
+            ",".join(os.path.basename(path) for path in stale_staging))
 
     root_run_state_path = os.path.join(output_root, W08_RUN_STATE_NAME)
     if os.path.isfile(root_run_state_path):
@@ -1110,84 +1386,157 @@ def _serialise_complex(value):
                       separators=(",", ":"))
 
 
-def write_results(result, config, population, started_epoch, output_root):
-    os.makedirs(output_root, exist_ok=True)
-    predictions = result["predictions"].copy()
-    fold_results = result["fold_results"].copy()
-    selections = result["selection_results"].copy()
+def write_results(result, config, population, started_epoch, output_root,
+                  attempt=None, code_commit=None):
+    """Write, validate, and transactionally promote the complete W08 result."""
+    output_root = os.path.abspath(os.fspath(output_root))
+    if code_commit is None:
+        code_commit = _git_head(PROJECT_ROOT)
+    if attempt is None:
+        attempt = _begin_attempt(output_root, code_commit, started_epoch)
+    elif os.path.abspath(attempt["output_root"]) != output_root:
+        raise RuntimeError("W08 attempt output root mismatch")
 
-    prediction_columns = [
-        "run_id", "model_id", "population", "repeat", "fold", "patient_id",
-        "DFS_time", "DFS_event", "risk_score", "training_id_hash",
-        "validation_id_hash", "outer_split_hash",
-        "outer_validation_used_for_selection",
-    ]
-    _atomic_csv(predictions[prediction_columns],
-                os.path.join(output_root, "predictions.csv"))
+    staging_root = attempt["staging_root"]
+    try:
+        _atomic_json(os.path.join(staging_root, W08_ATTEMPT_STATE_NAME), {
+            "stage": "W08",
+            "status": "writing",
+            "attempt_id": attempt["attempt_id"],
+            "code_commit_at_attempt": code_commit,
+            "started_at_epoch": started_epoch,
+            "final_outputs_generated": False,
+        })
+        predictions = result["predictions"].copy()
+        fold_results = result["fold_results"].copy()
+        selections = result["selection_results"].copy()
 
-    complex_fold = ["centers", "representation_metadata", "preprocessing_audit",
-                    "selected_features", "stability_actions",
-                    "linear_predictor_clipping"]
-    for column in complex_fold:
-        if column in fold_results.columns:
-            fold_results[column] = fold_results[column].map(_serialise_complex)
-    _atomic_csv(fold_results, os.path.join(output_root, "fold_results.csv"))
+        prediction_columns = [
+            "run_id", "model_id", "population", "repeat", "fold", "patient_id",
+            "DFS_time", "DFS_event", "risk_score", "training_id_hash",
+            "validation_id_hash", "outer_split_hash",
+            "outer_validation_used_for_selection",
+        ]
+        _atomic_csv(predictions[prediction_columns],
+                    os.path.join(staging_root, "predictions.csv"))
 
-    if "inner_records" in selections.columns:
-        selections["inner_records"] = selections["inner_records"].map(
-            _serialise_complex)
-    if "linear_predictor_clipping" in selections.columns:
-        selections["linear_predictor_clipping"] = selections[
-            "linear_predictor_clipping"].map(_serialise_complex)
-    _atomic_csv(selections, os.path.join(output_root, "selection_results.csv"))
+        complex_fold = ["centers", "representation_metadata", "preprocessing_audit",
+                        "selected_features", "stability_actions",
+                        "linear_predictor_clipping"]
+        for column in complex_fold:
+            if column in fold_results.columns:
+                fold_results[column] = fold_results[column].map(_serialise_complex)
+        _atomic_csv(fold_results, os.path.join(staging_root, "fold_results.csv"))
 
-    outer_summary = result["audit"]["outer_split_validation"]
-    audit = dict(result["audit"])
-    audit.update({
-        "status": "formal_complete",
-        "formal_run": True,
-        "patient_level_outputs_written": True,
-        "output_scope": "local_sensitive_prognosis_analysis_output_only",
-        "W06_population_sha256": _sha256(W06_POPULATION),
-        "W07_outer_split_sha256": w08.W07_OUTER_SPLIT_SHA256,
-        "W04_protocol_sha256": w08.W04_PROTOCOL_SHA256,
-        "n_population": int(len(population)),
-        "prediction_rows_written": int(len(predictions)),
-        "folds_expected": 50,
-        "fold_results_expected": 650,
-        "runs_expected": 13,
-        "metrics_ready_schema": "prognosis_analysis/configs/w08_results_schema.json",
-        "audit_schema": "prognosis_analysis/configs/w08_audit_schema.json",
-        "created_at_epoch": time.time(),
-        "started_at_epoch": started_epoch,
-        "completed_at_epoch": time.time(),
-        "outer_split_summary_copy": outer_summary,
-        "model_freeze_lock_created": False,
-    })
-    _atomic_json(os.path.join(output_root, "audit.json"), audit)
+        if "inner_records" in selections.columns:
+            selections["inner_records"] = selections["inner_records"].map(
+                _serialise_complex)
+        if "linear_predictor_clipping" in selections.columns:
+            selections["linear_predictor_clipping"] = selections[
+                "linear_predictor_clipping"].map(_serialise_complex)
+        _atomic_csv(selections, os.path.join(staging_root, "selection_results.csv"))
 
-    metadata = {
-        "stage": "W08",
-        "status": "formal_complete",
-        "formal_run": True,
-        "runs": list(w08.FIXED_RUN_IDS),
-        "models": list(w08.MODEL_SPECS),
-        "outer_split_hash": w08.W07_OUTER_SPLIT_SHA256,
-        "W04_protocol_sha256": w08.W04_PROTOCOL_SHA256,
-        "B_data_read": False,
-        "B_reader_invoked": False,
-        "B_source_opened": False,
-        "B_statistics_generated": False,
-        "outer_validation_used_for_selection": False,
-        "patient_level_outputs_written": True,
-        "outputs": {
-            "predictions": "predictions.csv",
-            "fold_results": "fold_results.csv",
-            "selection_results": "selection_results.csv",
-            "audit": "audit.json",
-        },
-    }
-    _atomic_json(os.path.join(output_root, "run_metadata.json"), metadata)
+        compatibility = _compatibility_provenance()
+        outer_summary = result["audit"]["outer_split_validation"]
+        audit = dict(result["audit"])
+        audit.update({
+            "stage": "W08",
+            "status": "formal_complete",
+            "formal_run": True,
+            "attempt_id": attempt["attempt_id"],
+            "code_commit": code_commit,
+            "patient_level_outputs_written": True,
+            "output_scope": "local_sensitive_prognosis_analysis_output_only",
+            "W06_population_sha256": _sha256(W06_POPULATION),
+            "W07_outer_split_sha256": w08.W07_OUTER_SPLIT_SHA256,
+            "W04_protocol_sha256": w08.W04_PROTOCOL_SHA256,
+            "n_population": int(len(population)),
+            "prediction_rows_written": int(len(predictions)),
+            "folds_expected": 50,
+            "fold_results_expected": 650,
+            "runs_expected": 13,
+            "metrics_ready_schema": "prognosis_analysis/configs/w08_results_schema.json",
+            "audit_schema": "prognosis_analysis/configs/w08_audit_schema.json",
+            "created_at_epoch": time.time(),
+            "started_at_epoch": started_epoch,
+            "completed_at_epoch": time.time(),
+            "outer_split_summary_copy": outer_summary,
+            "model_freeze_lock_created": False,
+            "compatibility_provenance": compatibility,
+        })
+        _atomic_json(os.path.join(staging_root, "audit.json"), audit)
+
+        metadata = {
+            "stage": "W08",
+            "status": "formal_complete",
+            "formal_run": True,
+            "attempt_id": attempt["attempt_id"],
+            "code_commit": code_commit,
+            "runs": list(w08.FIXED_RUN_IDS),
+            "models": list(w08.MODEL_SPECS),
+            "outer_split_hash": w08.W07_OUTER_SPLIT_SHA256,
+            "W04_protocol_sha256": w08.W04_PROTOCOL_SHA256,
+            "B_data_read": False,
+            "B_reader_invoked": False,
+            "B_source_opened": False,
+            "B_statistics_generated": False,
+            "outer_validation_used_for_selection": False,
+            "patient_level_outputs_written": True,
+            "compatibility_provenance": compatibility,
+            "outputs": {
+                "predictions": "predictions.csv",
+                "fold_results": "fold_results.csv",
+                "selection_results": "selection_results.csv",
+                "audit": "audit.json",
+                "run_metadata": "run_metadata.json",
+                "formal_output_manifest": W08_OUTPUT_MANIFEST_NAME,
+            },
+        }
+        _atomic_json(os.path.join(staging_root, "run_metadata.json"), metadata)
+
+        outputs = {}
+        for name in W08_REQUIRED_OUTPUT_NAMES:
+            output_path = os.path.join(staging_root, name)
+            if not os.path.isfile(output_path):
+                raise RuntimeError("required W08 output was not staged: %s" % name)
+            outputs[name] = {
+                "path": name,
+                "size_bytes": os.path.getsize(output_path),
+                "sha256": _sha256(output_path),
+            }
+        manifest = {
+            "schema": "w08_formal_output_manifest",
+            "schema_version": "1.0",
+            "stage": "W08",
+            "status": "complete",
+            "attempt_id": attempt["attempt_id"],
+            "code_commit": code_commit,
+            "created_at_epoch": time.time(),
+            "promoted_at_epoch": time.time(),
+            "outputs": outputs,
+            "protocol": {
+                "minimumROISize": MINIMUM_ROI_SIZE,
+                "W04_protocol_sha256": w08.W04_PROTOCOL_SHA256,
+                "W07_outer_split_sha256": w08.W07_OUTER_SPLIT_SHA256,
+            },
+            "compatibility_provenance": compatibility,
+        }
+        _atomic_json(os.path.join(staging_root, W08_OUTPUT_MANIFEST_NAME), manifest)
+        _validate_formal_output_manifest(
+            os.path.join(staging_root, W08_OUTPUT_MANIFEST_NAME),
+            expected_attempt_id=attempt["attempt_id"],
+            expected_code_commit=code_commit)
+        _promote_staged_outputs(attempt)
+        return _validate_formal_output_manifest(
+            os.path.join(output_root, W08_OUTPUT_MANIFEST_NAME),
+            expected_attempt_id=attempt["attempt_id"],
+            expected_code_commit=code_commit)
+    except Exception as exc:
+        try:
+            _write_attempt_failure(attempt, PROJECT_ROOT, "result_write", exc)
+        except Exception:
+            pass
+        raise
 
 
 def _load_population_and_provider(output_root=OUTPUT_ROOT):
@@ -1262,10 +1611,15 @@ def preflight_fold(output_root=OUTPUT_ROOT):
 
 
 def _write_failure_state(output_root, project_root, stage, started_epoch,
-                         formal_run_started, exception):
+                         formal_run_started, exception, attempt=None):
     """Persist a non-success state without ever emitting a running state."""
     output_root = os.path.abspath(os.fspath(output_root))
     project_root = os.path.abspath(project_root)
+    if attempt is not None and attempt.get("status") not in ("failed", "promoted"):
+        try:
+            _write_attempt_failure(attempt, project_root, stage, exception)
+        except Exception:
+            pass
     try:
         code_commit = _git_head(project_root)
     except Exception:
@@ -1297,6 +1651,12 @@ def _write_failure_state(output_root, project_root, stage, started_epoch,
         "final_outputs_generated": False,
         "partial_final_outputs": partial_outputs,
     }
+    if attempt is not None:
+        state["attempt_id"] = attempt.get("attempt_id")
+        state["attempt_status"] = attempt.get("status")
+        state["attempt_archive"] = os.path.relpath(
+            attempt.get("failed_root", ""), output_root) \
+            if attempt.get("failed_root") else None
     if isinstance(exception, W08ReleaseGateError):
         state["release_gate"] = exception.result
         try:
@@ -1319,6 +1679,7 @@ def formal(output_root=OUTPUT_ROOT):
     started = time.time()
     stage = "release_gate"
     formal_run_started = False
+    attempt = None
     try:
         release_gate = validate_w08_release_gate(
             output_root=output_root, project_root=PROJECT_ROOT)
@@ -1328,22 +1689,26 @@ def formal(output_root=OUTPUT_ROOT):
 
         stage = "initialisation"
         formal_run_started = True
+        attempt = _begin_attempt(output_root, release_gate["code_commit"], started)
         _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
             "stage": "W08", "status": "running", "formal_run": True,
             "B_data_read": False, "B_reader_invoked": False,
             "B_source_opened": False, "B_statistics_generated": False,
             "final_outputs_generated": False, "started_at_epoch": started,
             "code_commit": release_gate["code_commit"],
+            "attempt_id": attempt["attempt_id"],
         })
 
         stage = "a_input_load"
-        population, frame, provider = _load_population_and_provider(output_root)
+        population, frame, provider = _load_population_and_provider(
+            attempt["staging_root"])
         _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
             "stage": "W08", "status": "modeling", "formal_run": True,
             "B_data_read": False, "B_reader_invoked": False,
             "B_source_opened": False, "B_statistics_generated": False,
             "final_outputs_generated": False, "started_at_epoch": started,
             "code_commit": release_gate["code_commit"],
+            "attempt_id": attempt["attempt_id"],
             "A_population": int(len(population)), "W_columns": 1130,
             "slic_cache_cases": int(len(provider._case_cache)),
         })
@@ -1351,7 +1716,9 @@ def formal(output_root=OUTPUT_ROOT):
         stage = "nested_cv_modeling"
         result = w08.run_w08(frame, provider)
         stage = "result_write"
-        write_results(result, w08.load_config(), population, started, output_root)
+        manifest = write_results(
+            result, w08.load_config(), population, started, output_root,
+            attempt=attempt, code_commit=release_gate["code_commit"])
         _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
             "stage": "W08", "status": "complete", "formal_run": True,
             "B_data_read": False, "B_reader_invoked": False,
@@ -1359,6 +1726,8 @@ def formal(output_root=OUTPUT_ROOT):
             "final_outputs_generated": True, "started_at_epoch": started,
             "completed_at_epoch": time.time(),
             "code_commit": release_gate["code_commit"],
+            "attempt_id": attempt["attempt_id"],
+            "formal_output_manifest": W08_OUTPUT_MANIFEST_NAME,
             "n_fold_results": int(len(result["fold_results"])),
             "n_predictions": int(len(result["predictions"])),
         })
@@ -1367,12 +1736,13 @@ def formal(output_root=OUTPUT_ROOT):
             "n_fold_results": int(len(result["fold_results"])),
             "n_predictions": int(len(result["predictions"])),
             "B_data_read": False,
+            "attempt_id": manifest["attempt_id"],
             "output_root": "prognosis_analysis/output/w08_formal_A",
             "elapsed_seconds": round(time.time() - started, 3),
         }, ensure_ascii=False, sort_keys=True))
     except Exception as exc:
         _write_failure_state(output_root, PROJECT_ROOT, stage, started,
-                             formal_run_started, exc)
+                             formal_run_started, exc, attempt=attempt)
         raise
 
 
