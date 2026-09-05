@@ -17,6 +17,8 @@ import hashlib
 import json
 import operator
 import os
+import platform
+import subprocess
 import sys
 import time
 
@@ -39,6 +41,8 @@ for _script_root in (FEATURE_SCRIPT_ROOT, HABITAT_SCRIPT_ROOT):
 import w02_habitat_radiomics as w02  # noqa: E402
 import w07_outer_splits as w07  # noqa: E402
 import w08_nested_cv as w08  # noqa: E402
+import provenance_reconciliation as provenance  # noqa: E402
+import w08_technical_preflight_a as technical_preflight  # noqa: E402
 from data_split_guard import read_technical_A  # noqa: E402
 import technical_dry_run_A as technical  # noqa: E402
 
@@ -90,6 +94,29 @@ W_BATCHES = (
      ("影像号", "读者", "split", "normalization", "f")),
 )
 
+W08_FINAL_OUTPUT_NAMES = (
+    "predictions.csv", "fold_results.csv", "selection_results.csv",
+    "audit.json", "run_metadata.json",
+)
+W08_RELEASE_GATE_NAME = "release_gate.json"
+W08_RUN_STATE_NAME = "run_state.json"
+B_ACCESS_FLAGS = (
+    "B_data_read", "B_reader_invoked", "B_source_opened",
+    "B_statistics_generated",
+)
+
+
+class W08ReleaseGateError(RuntimeError):
+    """Raised when formal W08 is not authorized by the release gate."""
+
+    def __init__(self, result):
+        self.result = result
+        failures = result.get("failure_reasons", [])
+        message = "W08 formal release gate failed"
+        if failures:
+            message += ": " + "; ".join(failures)
+        super(W08ReleaseGateError, self).__init__(message)
+
 
 def _sha256(path):
     digest = hashlib.sha256()
@@ -117,6 +144,392 @@ def _atomic_csv(frame, path):
     temporary = path + ".tmp"
     frame.to_csv(temporary, index=False, encoding="utf-8-sig")
     os.replace(temporary, path)
+
+
+def _project_path(project_root, relative_path):
+    return os.path.join(project_root, *relative_path.split("/"))
+
+
+def _read_json_path(path, label):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("%s cannot be read: %s" % (label, exc))
+    if not isinstance(value, dict):
+        raise RuntimeError("%s must contain a JSON object" % label)
+    return value
+
+
+def _git_head(project_root):
+    try:
+        value = subprocess.check_output(
+            ["git", "-C", project_root, "rev-parse", "HEAD"],
+            stderr=subprocess.STDOUT)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError("current Git commit cannot be resolved: %s" % exc)
+    commit = value.decode("ascii", "replace").strip().lower()
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        raise RuntimeError("current Git commit is not a 40-hex object ID")
+    return commit
+
+
+def _git_commit_resolves(project_root, commit):
+    if not isinstance(commit, str) or len(commit) != 40:
+        return False
+    try:
+        resolved = subprocess.check_output(
+            ["git", "-C", project_root, "rev-parse", "--verify",
+             commit + "^{commit}"],
+            stderr=subprocess.STDOUT).decode("ascii", "replace").strip().lower()
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return resolved == commit.lower()
+
+
+def _safe_exception_text(exc, project_root=None, output_root=None):
+    text = str(exc).replace("\r", " ").replace("\n", " ").strip()
+    for path, replacement in ((project_root, "<project_root>"),
+                              (output_root, "<output_root>")):
+        if path:
+            text = text.replace(os.path.abspath(path), replacement)
+    return text[:1000]
+
+
+def _environment_fingerprint(project_root):
+    fingerprint_path = _project_path(
+        project_root, "prognosis_analysis/G2_environment_fingerprint.json")
+    return {
+        "python_version": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "executable_name": os.path.basename(sys.executable),
+        "platform": platform.system(),
+        "G2_environment_fingerprint_sha256": (
+            _sha256(fingerprint_path) if os.path.isfile(fingerprint_path) else None),
+    }
+
+
+def _validate_p4r_reconciliation(project_root):
+    return provenance.validate_manifest(root=project_root)
+
+
+def _validate_frozen_bindings(project_root):
+    return technical_preflight.verify_frozen_bindings(project_root)
+
+
+def _validate_w08_configuration():
+    config = w08.load_config()
+    w08._validate_config(config)
+    return config
+
+
+def _validate_execution_status(project_root):
+    return provenance.validate_execution_status(root=project_root)
+
+
+def _validate_technical_freeze(project_root):
+    path = _project_path(project_root, "habitat_analysis/freeze_lock.json")
+    payload = _read_json_path(path, "technical freeze lock")
+    expected = {
+        "freeze_schema_version": "1.0",
+        "habitat_technical_freeze": True,
+        "A_outcome_unlock": True,
+        "B_unlock": False,
+        "bootstrap_mode": "formal",
+        "bootstrap_requested": 1000,
+        "bootstrap_completed": 1000,
+        "bootstrap_completion_status": "complete",
+        "bootstrap_operational_pass": 1,
+        "formal_eligible": 1,
+        "outcome_columns_read": False,
+        "B_data_read": False,
+        "eligibility_threshold_fraction": 0.001,
+        "eligibility_threshold_role": "minimum_imaging_presence",
+        "threshold_selection_performed": False,
+        "threshold_audit_conclusion": "NEUTRAL_WITH_TECHNICAL_CAUTION",
+    }
+    mismatches = [key for key, value in expected.items()
+                  if type(payload.get(key)) is not type(value) or
+                  payload.get(key) != value]
+    if mismatches:
+        raise RuntimeError(
+            "technical freeze fields changed: %s" % ",".join(mismatches))
+    if payload.get("git_commit") != provenance.TECHNICAL_FREEZE_GIT_COMMIT:
+        raise RuntimeError("technical freeze Git binding changed")
+    if _sha256(path).lower() != provenance.TECHNICAL_FREEZE_SHA256:
+        raise RuntimeError("technical freeze SHA-256 changed")
+    return payload
+
+
+def _validate_w05_access_boundary(project_root):
+    protocol_path = _project_path(
+        project_root, "prognosis_analysis/modeling_protocol.json")
+    protocol = _read_json_path(protocol_path, "W04 modeling protocol")
+    if protocol.get("status") != "frozen_before_first_DFS_read":
+        raise RuntimeError("W05 access boundary requires the frozen W04 protocol")
+    access_gate = protocol.get("access_gate")
+    if not isinstance(access_gate, dict):
+        raise RuntimeError("W05 access boundary is missing")
+    if access_gate.get("B_unlock") is not False:
+        raise RuntimeError("W05 access boundary does not keep B locked")
+    if access_gate.get("B_access_authority") != \
+            "prognosis_analysis/model_freeze_lock.json only after W13 strict validation":
+        raise RuntimeError("W05 B access authority changed")
+    lock = access_gate.get("model_freeze_lock", {})
+    if not isinstance(lock, dict) or lock.get("exists_at_W04_freeze") is not False or \
+            lock.get("status_at_W04_freeze") != "not_generated":
+        raise RuntimeError("W05 model-freeze boundary changed")
+    first_stage = access_gate.get("A_only_gate_before_first_DFS_read", {})
+    required = first_stage.get("required_in_order", []) if isinstance(first_stage, dict) else []
+    if "W05 A-only reader and centralized split resolver pass" not in required:
+        raise RuntimeError("W05 A-only reader requirement is not registered")
+    if first_stage.get("first_DFS_read_stage") != "W06" or \
+            first_stage.get("missing_requirement_action") != \
+            "hard_fail_and_do_not_read_DFS":
+        raise RuntimeError("W05 first-outcome-read boundary changed")
+    reader_path = _project_path(
+        project_root, "feature_extract/scripts/data_split_guard.py")
+    if not os.path.isfile(reader_path):
+        raise RuntimeError("W05 centralized access reader is absent")
+    with open(reader_path, "r", encoding="utf-8") as handle:
+        reader_source = handle.read()
+    required_markers = (
+        "def read_technical_A", "def read_A_outcomes",
+        "def read_B_validation", "def require_a_outcome_unlock",
+        "def require_b_unlock",
+    )
+    missing = [marker for marker in required_markers
+               if marker not in reader_source]
+    if missing:
+        raise RuntimeError("W05 reader contract is incomplete: %s" % ",".join(missing))
+    return {"status": "PASS", "reader": "data_split_guard"}
+
+
+def _extract_certificate_code_commit(certificate):
+    candidates = (
+        ("code_commit", certificate.get("code_commit")),
+        ("code_commit_at_release", certificate.get("code_commit_at_release")),
+        ("binding.code_commit",
+         certificate.get("binding", {}).get("code_commit")
+         if isinstance(certificate.get("binding"), dict) else None),
+        ("release_binding.code_commit",
+         certificate.get("release_binding", {}).get("code_commit")
+         if isinstance(certificate.get("release_binding"), dict) else None),
+        ("verification.code_commit",
+         certificate.get("verification", {}).get("code_commit")
+         if isinstance(certificate.get("verification"), dict) else None),
+    )
+    present = [(label, value) for label, value in candidates if value is not None]
+    if not present:
+        raise RuntimeError("G3 release certificate has no code-commit binding")
+    distinct = {str(value).lower() for _, value in present}
+    if len(distinct) != 1:
+        raise RuntimeError("G3 release certificate has conflicting code bindings")
+    label, value = present[0]
+    if not isinstance(value, str) or len(value) != 40 or \
+            any(char not in "0123456789abcdefABCDEF" for char in value):
+        raise RuntimeError("G3 release certificate %s is not a Git commit" % label)
+    return value.lower()
+
+
+def _validate_g3_certificate(project_root, code_commit, binding_hashes):
+    certificate_path = _project_path(
+        project_root, "prognosis_analysis/output/p5_technical_preflight_A/P5_release_gate.json")
+    summary_path = _project_path(
+        project_root, "prognosis_analysis/output/p5_technical_preflight_A/P5_technical_preflight_summary.json")
+    certificate = _read_json_path(certificate_path, "G3 release certificate")
+    summary = _read_json_path(summary_path, "G3 technical summary")
+    if certificate.get("stage") != "G3" or certificate.get("status") != "PASS":
+        raise RuntimeError("G3 release certificate is not PASS")
+    if certificate.get("P5_technical_preflight") != "PASS":
+        raise RuntimeError("G3 technical preflight certificate is not PASS")
+    for key in ("all_required_runs_estimable", "all_paired_populations_equal"):
+        if certificate.get(key) is not True:
+            raise RuntimeError("G3 certificate %s is not true" % key)
+    for key in B_ACCESS_FLAGS + ("performance_generated", "patient_level_outputs_written"):
+        if certificate.get(key) is not False:
+            raise RuntimeError("G3 certificate %s is not false" % key)
+    if summary.get("stage") != "P5" or \
+            summary.get("status") != "technical_only_complete":
+        raise RuntimeError("G3 technical summary is not complete")
+    if summary.get("fold_units") != 50 or summary.get("run_rows") != 850 or \
+            summary.get("required_runs") != 17 or summary.get("minimumROISize") != 10:
+        raise RuntimeError("G3 technical summary coverage is incomplete")
+    for key in B_ACCESS_FLAGS + ("performance_generated", "patient_level_outputs_written"):
+        if summary.get(key) is not False:
+            raise RuntimeError("G3 technical summary %s is not false" % key)
+    if not isinstance(binding_hashes, dict) or \
+            summary.get("binding_hashes") != dict(binding_hashes):
+        raise RuntimeError("G3 binding manifest differs from frozen bindings")
+    certificate_commit = _extract_certificate_code_commit(certificate)
+    if certificate_commit != code_commit:
+        raise RuntimeError(
+            "G3 release certificate is bound to a stale code commit")
+    if not _git_commit_resolves(project_root, certificate_commit):
+        raise RuntimeError("G3 release certificate code commit does not resolve")
+    return {
+        "certificate": "P5_release_gate.json",
+        "summary": "P5_technical_preflight_summary.json",
+        "code_commit": certificate_commit,
+    }
+
+
+def _validate_model_freeze_absent(project_root):
+    path = _project_path(project_root, "prognosis_analysis/model_freeze_lock.json")
+    if os.path.exists(path):
+        raise RuntimeError("model_freeze_lock.json exists; W08 formal is not authorized")
+    return {"status": "absent"}
+
+
+def _validate_reconciled_attempts(project_root, output_root, status):
+    final_paths = [name for name in W08_FINAL_OUTPUT_NAMES
+                   if os.path.exists(os.path.join(output_root, name))]
+    if final_paths:
+        raise RuntimeError(
+            "prior final outputs exist: %s" % ",".join(final_paths))
+
+    root_run_state_path = os.path.join(output_root, W08_RUN_STATE_NAME)
+    if os.path.isfile(root_run_state_path):
+        root_run_state = _read_json_path(root_run_state_path, "W08 run state")
+        if root_run_state.get("status") not in ("failed",):
+            raise RuntimeError("prior W08 output state is incomplete or completed")
+        if not root_run_state.get("failure_stage") or \
+                root_run_state.get("final_outputs_generated") is not False:
+            raise RuntimeError("prior W08 failed state is not fail-closed")
+
+    attempts_root = os.path.join(output_root, "attempts")
+    attempt_dirs = []
+    if os.path.isdir(attempts_root):
+        attempt_dirs = sorted(
+            child for child in os.listdir(attempts_root)
+            if os.path.isdir(os.path.join(attempts_root, child)))
+    last_attempt = status.get("last_attempt", {}) if isinstance(status, dict) else {}
+    execution = status.get("execution", {}) if isinstance(status, dict) else {}
+    if attempt_dirs and last_attempt.get("status") != "failed" or \
+            attempt_dirs and execution.get("last_attempt_status") != "failed":
+        raise RuntimeError("prior failed attempt is not explicitly reconciled")
+
+    for attempt_id in attempt_dirs:
+        if not attempt_id.endswith("_failed"):
+            raise RuntimeError("unreconciled prior attempt: %s" % attempt_id)
+        attempt_root = os.path.join(attempts_root, attempt_id)
+        failure_path = os.path.join(attempt_root, "failure_audit.json")
+        run_state_path = os.path.join(attempt_root, W08_RUN_STATE_NAME)
+        if not os.path.isfile(failure_path) or not os.path.isfile(run_state_path):
+            raise RuntimeError("failed attempt lacks reconciliation artifacts: %s" % attempt_id)
+        failure = _read_json_path(failure_path, "failed attempt audit")
+        run_state = _read_json_path(run_state_path, "failed attempt run state")
+        if failure.get("attempt_id") != attempt_id or failure.get("status") != "failed":
+            raise RuntimeError("failed attempt identity/status mismatch: %s" % attempt_id)
+        if run_state.get("stage") != "W08" or run_state.get("status") == "complete":
+            raise RuntimeError("failed attempt run state is not fail-closed: %s" % attempt_id)
+        for key in B_ACCESS_FLAGS + ("final_outputs_generated",):
+            if failure.get(key) is not False:
+                raise RuntimeError("failed attempt %s has unsafe %s" % (attempt_id, key))
+        failure_commit = failure.get("code_commit_at_attempt")
+        if not _git_commit_resolves(project_root, failure_commit):
+            raise RuntimeError("failed attempt code commit does not resolve: %s" % attempt_id)
+        if last_attempt.get("attempt_id") != attempt_id or \
+                last_attempt.get("code_commit_at_attempt") != failure_commit or \
+                last_attempt.get("failure_stage") != failure.get("failure_stage"):
+            raise RuntimeError("failed attempt is not reconciled in execution_status: %s" % attempt_id)
+        if any(os.path.exists(os.path.join(attempt_root, name))
+               for name in W08_FINAL_OUTPUT_NAMES):
+            raise RuntimeError("failed attempt contains final outputs: %s" % attempt_id)
+    if not attempt_dirs and last_attempt.get("status") == "failed":
+        raise RuntimeError("execution_status records a failed attempt without an archive")
+    return {"attempts_checked": attempt_dirs}
+
+
+def _run_gate_check(checks, failures, name, callback, project_root, output_root):
+    try:
+        value = callback()
+    except Exception as exc:
+        reason = "%s: %s" % (
+            name, _safe_exception_text(exc, project_root, output_root))
+        checks[name] = {"status": "FAIL", "reason": reason}
+        failures.append(reason)
+        return None
+    checks[name] = {"status": "PASS"}
+    return value
+
+
+def validate_w08_release_gate(output_root=OUTPUT_ROOT, project_root=PROJECT_ROOT):
+    """Validate every non-patient W08 release prerequisite before any A read."""
+    project_root = os.path.abspath(project_root)
+    output_root = os.path.abspath(os.fspath(output_root))
+    checks = {}
+    failures = []
+    code_commit = _run_gate_check(
+        checks, failures, "code_commit", lambda: _git_head(project_root),
+        project_root, output_root)
+    _run_gate_check(
+        checks, failures, "P4R_provenance_reconciliation",
+        lambda: _validate_p4r_reconciliation(project_root),
+        project_root, output_root)
+    bindings = _run_gate_check(
+        checks, failures, "frozen_W03_W04_W07_W07A_bindings",
+        lambda: _validate_frozen_bindings(project_root),
+        project_root, output_root)
+    _run_gate_check(
+        checks, failures, "W08_configuration", _validate_w08_configuration,
+        project_root, output_root)
+    execution_status = _run_gate_check(
+        checks, failures, "execution_status", lambda: _validate_execution_status(project_root),
+        project_root, output_root)
+    technical_freeze = _run_gate_check(
+        checks, failures, "technical_freeze", lambda: _validate_technical_freeze(project_root),
+        project_root, output_root)
+    _run_gate_check(
+        checks, failures, "W05_access_boundary",
+        lambda: _validate_w05_access_boundary(project_root),
+        project_root, output_root)
+    _run_gate_check(
+        checks, failures, "model_freeze_absent",
+        lambda: _validate_model_freeze_absent(project_root),
+        project_root, output_root)
+    _run_gate_check(
+        checks, failures, "prior_attempts_reconciled",
+        lambda: _validate_reconciled_attempts(project_root, output_root, execution_status),
+        project_root, output_root)
+    _run_gate_check(
+        checks, failures, "G3_release_certificate",
+        lambda: _validate_g3_certificate(project_root, code_commit, bindings),
+        project_root, output_root)
+
+    b_flags = dict((key, False) for key in B_ACCESS_FLAGS)
+    if isinstance(execution_status, dict):
+        recorded = execution_status.get("b_access", {})
+        if isinstance(recorded, dict):
+            for key in B_ACCESS_FLAGS:
+                if recorded.get(key) is not False:
+                    reason = "execution_status.%s is not false" % key
+                    checks["B_access_flags"] = {"status": "FAIL", "reason": reason}
+                    if reason not in failures:
+                        failures.append(reason)
+    if isinstance(technical_freeze, dict):
+        for key in ("B_data_read",):
+            if technical_freeze.get(key) is not False:
+                reason = "technical_freeze.%s is not false" % key
+                checks["B_access_flags"] = {"status": "FAIL", "reason": reason}
+                if reason not in failures:
+                    failures.append(reason)
+    if "B_access_flags" not in checks:
+        checks["B_access_flags"] = {"status": "PASS"}
+
+    result = {
+        "stage": "W08_FORMAL_RELEASE",
+        "status": "PASS" if not failures else "FAIL",
+        "formal_authorized": not bool(failures),
+        "code_commit": code_commit,
+        "checks": checks,
+        "failure_reasons": failures,
+        "B_access": b_flags,
+        "final_outputs_generated": False,
+    }
+    if failures:
+        raise W08ReleaseGateError(result)
+    return result
 
 
 def _normalise_ids(values):
@@ -739,46 +1152,118 @@ def preflight_fold(output_root=OUTPUT_ROOT):
     }, ensure_ascii=False, sort_keys=True))
 
 
-def formal(output_root=OUTPUT_ROOT):
-    if os.path.exists(os.path.join(ROOT, "model_freeze_lock.json")):
-        raise RuntimeError("W08 must not create or consume model_freeze_lock.json")
-    final_names = ("predictions.csv", "fold_results.csv", "selection_results.csv",
-                   "audit.json", "run_metadata.json")
-    existing = [name for name in final_names
-                if os.path.exists(os.path.join(output_root, name))]
-    if existing:
-        raise RuntimeError("formal W08 output already exists; inspect before rerun: %s" %
-                           ",".join(existing))
-    started = time.time()
-    os.makedirs(output_root, exist_ok=True)
-    _atomic_json(os.path.join(output_root, "run_state.json"), {
-        "stage": "W08", "status": "running", "formal_run": True,
-        "B_data_read": False, "started_at_epoch": started,
-    })
-    population, frame, provider = _load_population_and_provider(output_root)
-    _atomic_json(os.path.join(output_root, "run_state.json"), {
-        "stage": "W08", "status": "modeling", "formal_run": True,
-        "B_data_read": False, "started_at_epoch": started,
-        "A_population": int(len(population)), "W_columns": 1130,
-        "slic_cache_cases": int(len(provider._case_cache)),
-    })
-    result = w08.run_w08(frame, provider)
-    write_results(result, w08.load_config(), population, started, output_root)
-    _atomic_json(os.path.join(output_root, "run_state.json"), {
-        "stage": "W08", "status": "complete", "formal_run": True,
-        "B_data_read": False, "started_at_epoch": started,
-        "completed_at_epoch": time.time(),
-        "n_fold_results": int(len(result["fold_results"])),
-        "n_predictions": int(len(result["predictions"])),
-    })
-    print(json.dumps({
-        "stage": "W08", "status": "formal_complete",
-        "n_fold_results": int(len(result["fold_results"])),
-        "n_predictions": int(len(result["predictions"])),
+def _write_failure_state(output_root, project_root, stage, started_epoch,
+                         formal_run_started, exception):
+    """Persist a non-success state without ever emitting a running state."""
+    output_root = os.path.abspath(os.fspath(output_root))
+    project_root = os.path.abspath(project_root)
+    try:
+        code_commit = _git_head(project_root)
+    except Exception:
+        code_commit = None
+    try:
+        environment = _environment_fingerprint(project_root)
+    except Exception as env_exc:
+        environment = {"fingerprint_error": _safe_exception_text(
+            env_exc, project_root, output_root)}
+    partial_outputs = [name for name in W08_FINAL_OUTPUT_NAMES
+                       if os.path.exists(os.path.join(output_root, name))]
+    state = {
+        "stage": "W08",
+        "status": "failed",
+        "formal_run": True,
+        "formal_run_started": bool(formal_run_started),
+        "started_at_epoch": started_epoch,
+        "ended_at_epoch": time.time(),
+        "failure_stage": stage,
+        "exception_class": exception.__class__.__name__,
+        "failure_reason": _safe_exception_text(
+            exception, project_root, output_root),
+        "code_commit": code_commit,
+        "environment_fingerprint": environment,
         "B_data_read": False,
-        "output_root": "prognosis_analysis/output/w08_formal_A",
-        "elapsed_seconds": round(time.time() - started, 3),
-    }, ensure_ascii=False, sort_keys=True))
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+        "partial_final_outputs": partial_outputs,
+    }
+    if isinstance(exception, W08ReleaseGateError):
+        state["release_gate"] = exception.result
+        try:
+            os.makedirs(output_root, exist_ok=True)
+            _atomic_json(os.path.join(output_root, W08_RELEASE_GATE_NAME),
+                         exception.result)
+        except Exception:
+            pass
+    try:
+        os.makedirs(output_root, exist_ok=True)
+        _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), state)
+    except Exception:
+        # Preserve the original execution exception if the local status file
+        # itself cannot be written.
+        pass
+
+
+def formal(output_root=OUTPUT_ROOT):
+    output_root = os.path.abspath(os.fspath(output_root))
+    started = time.time()
+    stage = "release_gate"
+    formal_run_started = False
+    try:
+        release_gate = validate_w08_release_gate(
+            output_root=output_root, project_root=PROJECT_ROOT)
+        os.makedirs(output_root, exist_ok=True)
+        _atomic_json(os.path.join(output_root, W08_RELEASE_GATE_NAME), release_gate)
+
+        stage = "initialisation"
+        formal_run_started = True
+        _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
+            "stage": "W08", "status": "running", "formal_run": True,
+            "B_data_read": False, "B_reader_invoked": False,
+            "B_source_opened": False, "B_statistics_generated": False,
+            "final_outputs_generated": False, "started_at_epoch": started,
+            "code_commit": release_gate["code_commit"],
+        })
+
+        stage = "a_input_load"
+        population, frame, provider = _load_population_and_provider(output_root)
+        _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
+            "stage": "W08", "status": "modeling", "formal_run": True,
+            "B_data_read": False, "B_reader_invoked": False,
+            "B_source_opened": False, "B_statistics_generated": False,
+            "final_outputs_generated": False, "started_at_epoch": started,
+            "code_commit": release_gate["code_commit"],
+            "A_population": int(len(population)), "W_columns": 1130,
+            "slic_cache_cases": int(len(provider._case_cache)),
+        })
+
+        stage = "nested_cv_modeling"
+        result = w08.run_w08(frame, provider)
+        stage = "result_write"
+        write_results(result, w08.load_config(), population, started, output_root)
+        _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
+            "stage": "W08", "status": "complete", "formal_run": True,
+            "B_data_read": False, "B_reader_invoked": False,
+            "B_source_opened": False, "B_statistics_generated": False,
+            "final_outputs_generated": True, "started_at_epoch": started,
+            "completed_at_epoch": time.time(),
+            "code_commit": release_gate["code_commit"],
+            "n_fold_results": int(len(result["fold_results"])),
+            "n_predictions": int(len(result["predictions"])),
+        })
+        print(json.dumps({
+            "stage": "W08", "status": "formal_complete",
+            "n_fold_results": int(len(result["fold_results"])),
+            "n_predictions": int(len(result["predictions"])),
+            "B_data_read": False,
+            "output_root": "prognosis_analysis/output/w08_formal_A",
+            "elapsed_seconds": round(time.time() - started, 3),
+        }, ensure_ascii=False, sort_keys=True))
+    except Exception as exc:
+        _write_failure_state(output_root, PROJECT_ROOT, stage, started,
+                             formal_run_started, exc)
+        raise
 
 
 def main():
