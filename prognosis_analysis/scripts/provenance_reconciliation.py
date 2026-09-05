@@ -95,11 +95,12 @@ APPROVED_SUCCESSORS = {
     "pre_w08_sop": {
         "path": W07A_WORKFLOW_PATH,
         "version": "current_authoritative_pre_w08_operational_sop",
-        "git_commit": "21f2bf7f0bb3cbbad2f8e4d1a305f748d60f60d2",
+        "git_commit": "54e1b2ad75949bcdc06ee9dffd8138ea63654c69",
+        "git_blob": "4f769bf481166eeced760e4946a9c4e4db6ccda4",
         "sha256": (
-            "0e9e48d8b02a101dad306cc76945249f051eb547f2319bd052fc75c3d49cd5ad"),
+            "b1d40dd24f586ba52c5832d1dc53761d5239699d25a76856b7abeac636f47c03"),
         "git_snapshot_sha256": (
-            "e5549211211fda3bfe1dfc8f6ba826b6be5f7e7943fb6d96ed4444899857603a"),
+            "85d03d86d3551ef8505234f3172482bc337b6c650c129724ae55adc31b6e6fc9"),
         "role": (
             "current authoritative operational SOP for post-freeze remediation "
             "and later gated stages"),
@@ -158,6 +159,23 @@ def _sha256_file(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _normalize_lf_bytes(data, label):
+    """Normalize CRLF/LF bytes while rejecting bare CR bytes."""
+    normalized = bytearray()
+    index = 0
+    while index < len(data):
+        value = data[index]
+        if value == 13:
+            if index + 1 >= len(data) or data[index + 1] != 10:
+                raise ValueError("%s contains a bare CR" % label)
+            normalized.append(10)
+            index += 2
+            continue
+        normalized.append(value)
+        index += 1
+    return bytes(normalized)
 
 
 def _is_sha256(value):
@@ -312,9 +330,33 @@ def _validate_git_snapshot(root, snapshot, label, expected_status, errors):
         errors.append("%s Git verification failed: %s" % (label, exc))
 
 
+def _validate_successor_content(current_bytes, committed_bytes, successor,
+                                label, errors):
+    """Require exact Git content, allowing only CRLF/LF representation changes."""
+    committed_sha = _sha256_bytes(committed_bytes)
+    if committed_sha != successor.get("git_snapshot_sha256"):
+        errors.append("%s approved Git snapshot SHA-256 mismatch" % label)
+    try:
+        current_normalized = _normalize_lf_bytes(
+            current_bytes, label + " current file")
+        committed_normalized = _normalize_lf_bytes(
+            committed_bytes, label + " Git snapshot")
+        if committed_normalized != committed_bytes:
+            errors.append("%s approved Git snapshot is not LF-only" % label)
+        if current_normalized != committed_bytes:
+            errors.append(
+                "%s current file differs from approved Git snapshot "
+                "outside CRLF/LF line endings" % label)
+    except ValueError as exc:
+        errors.append("%s line-ending validation failed: %s" % (label, exc))
+
+
 def _validate_successor(root, successor_id, successor, errors):
     expected_keys = ("path", "version", "git_commit", "sha256",
                      "git_snapshot_sha256", "approved_successor", "role")
+    if successor_id == "pre_w08_sop":
+        expected_keys = ("path", "version", "git_commit", "git_blob", "sha256",
+                         "git_snapshot_sha256", "approved_successor", "role")
     label = "approved_successors.%s" % successor_id
     if not _exact_keys(successor, expected_keys, label, errors):
         return
@@ -322,8 +364,11 @@ def _validate_successor(root, successor_id, successor, errors):
     if expected is None:
         errors.append("%s is not a registered successor" % label)
         return
-    for field in ("path", "version", "git_commit", "sha256",
-                  "git_snapshot_sha256", "role"):
+    approved_fields = ("path", "version", "git_commit", "sha256",
+                       "git_snapshot_sha256", "role")
+    if successor_id == "pre_w08_sop":
+        approved_fields += ("git_blob",)
+    for field in approved_fields:
         if successor.get(field) != expected[field]:
             errors.append("%s.%s differs from the approved successor" %
                           (label, field))
@@ -331,25 +376,28 @@ def _validate_successor(root, successor_id, successor, errors):
         errors.append("%s must declare approved_successor=true" % label)
     _expect_sha(successor.get("sha256"), label + ".sha256", errors)
     _expect_commit(successor.get("git_commit"), label + ".git_commit", errors)
+    if successor_id == "pre_w08_sop":
+        _expect_commit(successor.get("git_blob"), label + ".git_blob", errors)
     path = _repo_path(root, successor.get("path"), label + ".path", errors)
     if path is None or not os.path.isfile(path):
         errors.append("%s current file is absent" % label)
         return
     try:
-        current_sha = _sha256_file(path)
-        if current_sha not in (successor.get("sha256"),
-                               successor.get("git_snapshot_sha256")):
-            errors.append("%s current file SHA-256 mismatch" % label)
+        with open(path, "rb") as handle:
+            current_bytes = handle.read()
         commit = successor.get("git_commit")
         if _is_git_object_id(commit):
             if not _git_commit_exists(root, commit):
                 errors.append("%s Git commit does not resolve exactly" % label)
-            committed_sha = _sha256_bytes(_git_blob_bytes(root, commit,
-                                                          successor["path"]))
-            if committed_sha != successor.get("git_snapshot_sha256"):
-                errors.append("%s approved Git snapshot SHA-256 mismatch" % label)
+            actual_blob = _git_blob_id(root, commit, successor["path"])
+            if (successor_id == "pre_w08_sop" and
+                    actual_blob != successor.get("git_blob")):
+                errors.append("%s Git blob mismatch" % label)
+            committed_bytes = _git_blob_bytes(root, commit, successor["path"])
             _expect_sha(successor.get("git_snapshot_sha256"),
                         label + ".git_snapshot_sha256", errors)
+            _validate_successor_content(current_bytes, committed_bytes,
+                                         successor, label, errors)
     except (OSError, RuntimeError) as exc:
         errors.append("%s current/Git verification failed: %s" % (label, exc))
 

@@ -15,6 +15,8 @@ if SCRIPT_ROOT not in sys.path:
 
 from provenance_reconciliation import (  # noqa: E402
     ProvenanceReconciliationError,
+    _normalize_lf_bytes,
+    _validate_successor_content,
     validate_manifest,
 )
 
@@ -118,6 +120,79 @@ class ProvenanceReconciliationTests(unittest.TestCase):
 
         self._validate_modified_manifest(modify_successor)
 
+    def test_current_successor_revision_and_hashes_are_registered(self):
+        successor = self.manifest["approved_successors"]["pre_w08_sop"]
+        self.assertEqual(successor["git_commit"],
+                         "54e1b2ad75949bcdc06ee9dffd8138ea63654c69")
+        self.assertEqual(successor["git_blob"],
+                         "4f769bf481166eeced760e4946a9c4e4db6ccda4")
+        self.assertEqual(successor["sha256"],
+                         "b1d40dd24f586ba52c5832d1dc53761d5239699d25a76856b7abeac636f47c03")
+        self.assertEqual(successor["git_snapshot_sha256"],
+                         "85d03d86d3551ef8505234f3172482bc337b6c650c129724ae55adc31b6e6fc9")
+
+    def test_lf_and_crlf_variants_are_accepted_only_after_exact_normalization(self):
+        successor = self.manifest["approved_successors"]["pre_w08_sop"]
+        import provenance_reconciliation as reconciliation
+
+        committed = reconciliation._git_blob_bytes(
+            ROOT, successor["git_commit"], successor["path"])
+        crlf = committed.replace(b"\n", b"\r\n")
+        self.assertEqual(_normalize_lf_bytes(crlf, "test"), committed)
+        self.assertEqual(_normalize_lf_bytes(committed, "test"), committed)
+        for current in (committed, crlf):
+            errors = []
+            _validate_successor_content(current, committed, successor,
+                                        "test", errors)
+            self.assertEqual(errors, [])
+        mixed = committed.replace(b"\n", b"\r\n", 1)
+        errors = []
+        _validate_successor_content(mixed, committed, successor, "test", errors)
+        self.assertEqual(errors, [])
+
+    def test_one_character_add_delete_and_non_eol_whitespace_fail_closed(self):
+        successor = self.manifest["approved_successors"]["pre_w08_sop"]
+        import provenance_reconciliation as reconciliation
+
+        committed = reconciliation._git_blob_bytes(
+            ROOT, successor["git_commit"], successor["path"])
+        mutations = (
+            committed[:100] + b"x" + committed[100:],
+            committed[:-1],
+            committed.replace(b" ", b"\t", 1),
+        )
+        for mutated in mutations:
+            errors = []
+            _validate_successor_content(mutated, committed, successor,
+                                        "test", errors)
+            self.assertTrue(errors)
+
+    def test_bare_cr_fails_closed(self):
+        with self.assertRaises(ValueError):
+            _normalize_lf_bytes(b"line\rtext\n", "test")
+
+    def test_modified_successor_git_snapshot_sha_fails_closed(self):
+        def modify_successor(manifest):
+            manifest["approved_successors"]["pre_w08_sop"][
+                "git_snapshot_sha256"] = "0" * 64
+
+        self._validate_modified_manifest(modify_successor)
+
+    def test_successor_commit_blob_and_path_mismatch_fail_closed(self):
+        def modify_commit(manifest):
+            manifest["approved_successors"]["pre_w08_sop"]["git_commit"] = (
+                "21f2bf7f0bb3cbbad2f8e4d1a305f748d60f60d2")
+
+        def modify_blob(manifest):
+            manifest["approved_successors"]["pre_w08_sop"]["git_blob"] = "0" * 40
+
+        def modify_path(manifest):
+            manifest["approved_successors"]["pre_w08_sop"]["path"] = (
+                "prognosis_analysis/W07A_pre_W08_protocol_amendment.md")
+
+        for mutation in (modify_commit, modify_blob, modify_path):
+            self._validate_modified_manifest(mutation)
+
     def test_unapproved_successor_fails_closed(self):
         def unapprove_successor(manifest):
             manifest["approved_successors"]["pre_w08_sop"]["approved_successor"] = False
@@ -137,6 +212,13 @@ class ProvenanceReconciliationTests(unittest.TestCase):
                 "historical_exact_recovery"]["git_blob"] = "0" * 40
 
         self._validate_modified_manifest(modify_git_object)
+
+    def test_historical_hash_modification_fails_closed(self):
+        def modify_historical_hash(manifest):
+            manifest["reconciliations"]["w04_taskbook"][
+                "source_binding"]["sha256"] = "0" * 64
+
+        self._validate_modified_manifest(modify_historical_hash)
 
 
 if __name__ == "__main__":

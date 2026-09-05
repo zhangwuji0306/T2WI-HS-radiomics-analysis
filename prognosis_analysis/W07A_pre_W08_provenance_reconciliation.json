@@ -48,9 +48,10 @@
     "pre_w08_sop": {
       "path": "T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md",
       "version": "current_authoritative_pre_w08_operational_sop",
-      "git_commit": "21f2bf7f0bb3cbbad2f8e4d1a305f748d60f60d2",
-      "sha256": "0e9e48d8b02a101dad306cc76945249f051eb547f2319bd052fc75c3d49cd5ad",
-      "git_snapshot_sha256": "e5549211211fda3bfe1dfc8f6ba826b6be5f7e7943fb6d96ed4444899857603a",
+      "git_commit": "54e1b2ad75949bcdc06ee9dffd8138ea63654c69",
+      "git_blob": "4f769bf481166eeced760e4946a9c4e4db6ccda4",
+      "sha256": "b1d40dd24f586ba52c5832d1dc53761d5239699d25a76856b7abeac636f47c03",
+      "git_snapshot_sha256": "85d03d86d3551ef8505234f3172482bc337b6c650c129724ae55adc31b6e6fc9",
       "approved_successor": true,
       "role": "current authoritative operational SOP for post-freeze remediation and later gated stages"
     }
