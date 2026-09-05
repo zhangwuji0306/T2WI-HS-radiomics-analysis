@@ -390,11 +390,25 @@ class TechnicalPreflightTests(unittest.TestCase):
                 self.assertNotIn("c_index", text.lower())
                 self.assertNotIn("auc", text.lower())
                 self.assertNotIn("brier", text.lower())
+            manifest_path = os.path.join(tmp, "P5_sha256_manifest.json")
+            self.assertTrue(os.path.isfile(manifest_path))
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+            self.assertEqual(manifest["schema"], "P5_sha256_manifest")
+            self.assertEqual(set(manifest["files"]), {
+                "P5_technical_preflight_summary.json",
+                "P5_fold_feasibility.csv", "P5_release_gate.json"})
+            for name, digest in manifest["files"].items():
+                self.assertEqual(p5._sha256_file(os.path.join(tmp, name)), digest)
             with open(os.path.join(tmp, "P5_release_gate.json"),
                       "r", encoding="utf-8") as handle:
                 gate = json.load(handle)
             self.assertFalse(gate["performance_generated"])
             self.assertFalse(gate["B_data_read"])
+
+    def test_current_approved_p4r_binding_matches_the_code_lock(self):
+        self.assertEqual(p5._sha256_file(p5.DEFAULT_P4R),
+                         p5.P4R_MANIFEST_SHA256)
 
     def test_entry_point_is_structurally_isolated(self):
         path = os.path.join(SCRIPTS, "w08_technical_preflight_a.py")

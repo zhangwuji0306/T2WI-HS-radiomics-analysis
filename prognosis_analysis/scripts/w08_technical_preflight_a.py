@@ -13,9 +13,11 @@ never a production release PASS.
 from __future__ import absolute_import
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from collections import OrderedDict
 
@@ -35,7 +37,7 @@ W07_CONFIG_SHA256 = "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff486
 W07_OUTER_SPLIT_SHA256 = "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502"
 W07A_PROTOCOL_SHA256 = "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70"
 W07A_AMENDMENT_JSON_SHA256 = "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14"
-P4R_MANIFEST_SHA256 = "f5c6e14b098717d65b7709c6e8f10feb63c325b929fda64d3b2ccefa52a0cf6b"
+P4R_MANIFEST_SHA256 = "374ddc9f6ecd01c04ff957576f032fec18f0ebbb53f6651a725ad0b6aff7786d"
 
 MINIMUM_ROI_SIZE = 10
 N_OUTER_REPEATS = 10
@@ -82,6 +84,16 @@ DEFAULT_W_FEATURES = (
 )
 DEFAULT_OUTPUT = os.path.join(
     PROGNOSIS_ROOT, "output", "p5_technical_preflight_A")
+
+PYRADIOMICS_VERSION = "3.0.1"
+COMPATIBILITY_REASON = (
+    "PyRadiomics 3.0.1 strict <= semantics and precheck count>=10")
+PRECHECK_COUNT_THRESHOLD = ">=10"
+_PYRADIOMICS_COMPATIBILITY_MINIMUM_ROI_SIZE = None
+COMPATIBILITY_CODE_RELATIVE = os.path.join(
+    "prognosis_analysis", "scripts", "w08_" + "formal_run_a.py")
+COMPATIBILITY_CONFIG_RELATIVE = os.path.join(
+    "prognosis_analysis", "configs", "w02_habitat_radiomics.json")
 
 FROZEN_CANDIDATE_HASHES = {
     "R_low": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
@@ -163,6 +175,55 @@ def _sha256_file(path):
 
 def _sha256_text(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _git_head(project_root):
+    """Return the exact clean Git commit executing production P5."""
+    root = _normalise_root(project_root)
+    try:
+        head = subprocess.check_output(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=root, stderr=subprocess.STDOUT).decode("ascii").strip()
+        dirty = subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=root, stderr=subprocess.STDOUT).decode("utf-8").strip()
+    except (OSError, subprocess.CalledProcessError, UnicodeError) as exc:
+        raise P5ValidationError("cannot resolve a clean Git code commit: %s" %
+                                type(exc).__name__)
+    if len(head) != 40 or any(char not in "0123456789abcdefABCDEF"
+                              for char in head):
+        raise P5ValidationError("Git HEAD is not a commit SHA-1")
+    if dirty:
+        raise P5ValidationError("production P5 requires a clean Git worktree")
+    return head.lower()
+
+
+def _utc_timestamp():
+    return datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _compatibility_provenance(project_root):
+    """Bind the exact-10 compatibility code/config without importing W08."""
+    root = _normalise_root(project_root)
+    code_path = os.path.join(root, COMPATIBILITY_CODE_RELATIVE)
+    config_path = os.path.join(root, COMPATIBILITY_CONFIG_RELATIVE)
+    for path in (code_path, config_path):
+        if not os.path.isfile(path):
+            raise P5ValidationError("compatibility binding is missing")
+    return {
+        "protocol_minimumROISize": MINIMUM_ROI_SIZE,
+        "scientific_minimumROISize": MINIMUM_ROI_SIZE,
+        "effective_backend_minimum_size":
+            _PYRADIOMICS_COMPATIBILITY_MINIMUM_ROI_SIZE,
+        "compatibility_reason": COMPATIBILITY_REASON,
+        "precheck_count_threshold": PRECHECK_COUNT_THRESHOLD,
+        "pyradiomics_version": PYRADIOMICS_VERSION,
+        "compatibility_code_path": "prognosis_analysis/scripts/" +
+        "w08_" + "formal_run_a.py",
+        "compatibility_code_sha256": _sha256_file(code_path),
+        "compatibility_config_path": "prognosis_analysis/configs/w02_habitat_radiomics.json",
+        "compatibility_config_sha256": _sha256_file(config_path),
+    }
 
 
 def canonical_id_hash(ids):
@@ -776,12 +837,13 @@ def _run_preflight_core(population, split_frame, supervoxels,
     return result
 
 
-def _assemble_preflight_result(fold_frame, binding_hashes, production_verified):
-    """Build the unchanged aggregate schema with an explicit execution boundary."""
+def _assemble_preflight_result(fold_frame, binding_hashes, production_verified,
+                               production_metadata=None):
+    """Build the aggregate schema with an explicit execution boundary."""
     binding_hashes = _validate_binding_manifest(binding_hashes)
     status = "technical_only_complete" if production_verified else "test_only"
     gate_status = "PASS" if production_verified else "TEST_ONLY"
-    return {
+    result = {
         "summary": {
             "stage": "P5",
             "status": status,
@@ -822,6 +884,24 @@ def _assemble_preflight_result(fold_frame, binding_hashes, production_verified):
             "patient_level_outputs_written": False,
         },
     }
+    if production_verified:
+        if not isinstance(production_metadata, dict):
+            raise P5ValidationError("production metadata is missing")
+        required = ("code_commit", "certificate_generated_at_utc",
+                    "compatibility_provenance", "successor_of")
+        if any(key not in production_metadata for key in required):
+            raise P5ValidationError("production metadata is incomplete")
+        for section in (result["summary"], result["release_gate"]):
+            section.update({
+                "code_commit": production_metadata["code_commit"],
+                "code_commit_at_release": production_metadata["code_commit"],
+                "certificate_generated_at_utc": production_metadata[
+                    "certificate_generated_at_utc"],
+                "compatibility_provenance": production_metadata[
+                    "compatibility_provenance"],
+                "successor_of": production_metadata["successor_of"],
+            })
+    return result
 
 
 def run_technical_preflight(population, split_frame, supervoxels,
@@ -1023,7 +1103,9 @@ def write_outputs(result, output_root):
     os.makedirs(output_root, exist_ok=True)
     names = ("P5_technical_preflight_summary.json", "P5_fold_feasibility.csv",
              "P5_release_gate.json")
-    existing = [name for name in names if os.path.exists(os.path.join(output_root, name))]
+    manifest_name = "P5_sha256_manifest.json"
+    existing = [name for name in names + (manifest_name,)
+                if os.path.exists(os.path.join(output_root, name))]
     if existing:
         raise P5ValidationError("P5 output already exists: %s" % ",".join(existing))
     frame = result["fold_feasibility"].copy()
@@ -1032,6 +1114,19 @@ def write_outputs(result, output_root):
     frame.to_csv(os.path.join(output_root, names[1]), index=False, encoding="utf-8-sig")
     _atomic_json(os.path.join(output_root, names[0]), result["summary"])
     _atomic_json(os.path.join(output_root, names[2]), result["release_gate"])
+    manifest = {
+        "schema": "P5_sha256_manifest",
+        "version": "1.0",
+        "stage": "P5",
+        "successor_of": result["release_gate"].get("successor_of"),
+        "code_commit": result["release_gate"].get("code_commit"),
+        "certificate_generated_at_utc": result["release_gate"].get(
+            "certificate_generated_at_utc"),
+        "files": OrderedDict((name, _sha256_file(os.path.join(output_root, name)))
+                              for name in names),
+        "manifest_excludes_self": True,
+    }
+    _atomic_json(os.path.join(output_root, manifest_name), manifest)
     return [os.path.join(output_root, name) for name in names]
 
 
@@ -1040,13 +1135,22 @@ def run_production(output_root=DEFAULT_OUTPUT, project_root=PROJECT_ROOT):
     binding_hashes = _validate_binding_manifest(verify_frozen_bindings(project_root))
     if binding_hashes["W07_outer_split_artifact"] != W07_OUTER_SPLIT_SHA256:
         raise P5ValidationError("W07 split binding value is not the frozen hash")
+    code_commit = _git_head(project_root)
+    certificate_generated_at_utc = _utc_timestamp()
+    compatibility = _compatibility_provenance(project_root)
     population, split_frame, supervoxels, availability = load_authorized_a_inputs(project_root)
     fold_frame = _run_preflight_core(
         population, split_frame, supervoxels, availability,
         binding_hashes=binding_hashes,
         expected_split_hash=binding_hashes["W07_outer_split_artifact"])
     result = _assemble_preflight_result(
-        fold_frame, binding_hashes, production_verified=True)
+        fold_frame, binding_hashes, production_verified=True,
+        production_metadata={
+            "code_commit": code_commit,
+            "certificate_generated_at_utc": certificate_generated_at_utc,
+            "compatibility_provenance": compatibility,
+            "successor_of": "prognosis_analysis/output/p5_technical_preflight_A",
+        })
     write_outputs(result, output_root)
     return result
 

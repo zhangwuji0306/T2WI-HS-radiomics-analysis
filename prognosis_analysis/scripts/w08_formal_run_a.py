@@ -105,6 +105,10 @@ W08_FINAL_OUTPUT_NAMES = W08_REQUIRED_OUTPUT_NAMES + (W08_OUTPUT_MANIFEST_NAME,)
 W08_RELEASE_GATE_NAME = "release_gate.json"
 W08_RUN_STATE_NAME = "run_state.json"
 W08_ATTEMPT_STATE_NAME = "attempt_state.json"
+W08_P5_LEGACY_OUTPUT_RELATIVE = \
+    "prognosis_analysis/output/p5_technical_preflight_A"
+W08_P5_CURRENT_OUTPUT_RELATIVE = \
+    "prognosis_analysis/output/p5_technical_preflight_A_G3R"
 B_ACCESS_FLAGS = (
     "B_data_read", "B_reader_invoked", "B_source_opened",
     "B_statistics_generated",
@@ -602,11 +606,23 @@ def _extract_certificate_code_commit(certificate):
     return value.lower()
 
 
+def _p5_certificate_root(project_root):
+    """Prefer the append-only current-code successor over the legacy P5 set."""
+    candidates = (W08_P5_CURRENT_OUTPUT_RELATIVE,
+                  W08_P5_LEGACY_OUTPUT_RELATIVE)
+    for relative in candidates:
+        root = _project_path(project_root, relative)
+        if all(os.path.isfile(os.path.join(root, name)) for name in (
+                "P5_release_gate.json", "P5_technical_preflight_summary.json")):
+            return root
+    return _project_path(project_root, W08_P5_LEGACY_OUTPUT_RELATIVE)
+
+
 def _validate_g3_certificate(project_root, code_commit, binding_hashes):
-    certificate_path = _project_path(
-        project_root, "prognosis_analysis/output/p5_technical_preflight_A/P5_release_gate.json")
-    summary_path = _project_path(
-        project_root, "prognosis_analysis/output/p5_technical_preflight_A/P5_technical_preflight_summary.json")
+    certificate_root = _p5_certificate_root(project_root)
+    certificate_path = os.path.join(certificate_root, "P5_release_gate.json")
+    summary_path = os.path.join(
+        certificate_root, "P5_technical_preflight_summary.json")
     certificate = _read_json_path(certificate_path, "G3 release certificate")
     summary = _read_json_path(summary_path, "G3 technical summary")
     if certificate.get("stage") != "G3" or certificate.get("status") != "PASS":
@@ -637,6 +653,19 @@ def _validate_g3_certificate(project_root, code_commit, binding_hashes):
             "G3 release certificate is bound to a stale code commit")
     if not _git_commit_resolves(project_root, certificate_commit):
         raise RuntimeError("G3 release certificate code commit does not resolve")
+    if os.path.basename(os.path.normpath(certificate_root)) == \
+            "p5_technical_preflight_A_G3R":
+        if not isinstance(certificate.get("certificate_generated_at_utc"), str) or \
+                not certificate.get("certificate_generated_at_utc").strip():
+            raise RuntimeError("G3R release certificate lacks generation time")
+        compatibility = certificate.get("compatibility_provenance")
+        if not isinstance(compatibility, dict) or \
+                compatibility.get("protocol_minimumROISize") != 10 or \
+                compatibility.get("scientific_minimumROISize") != 10 or \
+                compatibility.get("effective_backend_minimum_size") is not None or \
+                compatibility.get("precheck_count_threshold") != ">=10" or \
+                compatibility.get("pyradiomics_version") != PYRADIOMICS_VERSION:
+            raise RuntimeError("G3R compatibility provenance is incomplete")
     return {
         "certificate": "P5_release_gate.json",
         "summary": "P5_technical_preflight_summary.json",
