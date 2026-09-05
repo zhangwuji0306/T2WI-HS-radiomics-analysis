@@ -5,6 +5,7 @@
 - Stage: `G3R`
 - Status: `PASS`
 - Technical execution code commit: `fd2c06949369f218fabfe84dee043f267a5131aa`
+- Evidence binding commit: `ddef0b91fd043c790dfaf570362e335db1046051`
 - P5 coverage: `10` repeats × `5` frozen W07 outer folds = `50/50` fold units
 - Aggregate coverage: `17` fixed technical runs × `50` folds = `850` rows
 - Observed P5 execution duration: `168.186` seconds
