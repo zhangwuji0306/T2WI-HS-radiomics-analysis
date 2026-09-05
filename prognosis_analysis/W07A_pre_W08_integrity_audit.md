@@ -78,6 +78,57 @@ W07A provenance failures above; the overall P4 gate remains **FAIL / HOLD**.
 - `B_data_read=false`; `B_reader_invoked=false`; `B_source_opened=false`;
   `B_statistics_generated=false`.
 
+## P4 remediation recheck and disposition
+
+- Recheck time: `2026-09-05T13:33:49+08:00`.
+- Recheck commit: `d0d28b4bc21b62c9faa5c47e245ee7b51db2f4a0`.
+- `origin/main` remains `21f2bf7f0bb3cbbad2f8e4d1a305f748d60f60d2`.
+- The recheck read only protocol documents, Git history/objects, exact file
+  bytes, hashes, and the existing lock/test code. No A clinical/outcome value,
+  B source, B validation data, model, prediction, or performance result was
+  read or generated.
+
+### Exact-byte and semantic comparison
+
+| Binding | Exact-byte evidence | Semantic/history evidence |
+|---|---|---|
+| W04 taskbook source | W04 records `0ba96334e37b5729356b947ffa41bd2d52649cc84f8d760ba4bbc51a129ffc3c`; the current taskbook is `cc881c008629a1acc0a2b4e6570b4ef277faa27ed5c9f12f908ee947b42381dd`. Both are LF-only; the historical matching object at `78b0e8f` is 20,385 bytes/1,346 LF, while the current file is 20,725 bytes/1,355 LF. | `git diff --ignore-space-at-eol 78b0e8f..21f2bf7` shows 8 added content lines at the document header (role/status/use/current-SOP metadata); the remaining raw difference is the final newline. Thus the mismatch is not a line-ending-only difference. The same old SHA is present at `94b897b`, but the taskbook in the W04 creation commit `544a33d` has SHA `78c7dce58b33d184190133a94f29fefce74584916aa75f1f0c042c453dc5934b`, not the recorded `0ba...`. Historical presence therefore does not close the current-path binding. |
+| W07A workflow provenance | W07A records `ef3db6abb0c51765d0d34f15ede9a19931f7301633fac2da01934e8017c21fd3`; the current workflow file is `0e9e48d8b02a101dad306cc76945249f051eb547f2319bd052fc75c3d49cd5ad`. The current worktree has mixed line endings (1,969 LF lines, 1,850 CRLF sequences); its LF-normalized SHA is `e5549211211fda3bfe1dfc8f6ba826b6be5f7e7943fb6d96ed4444899857603a`, whereas the first tracked workflow at `72d518c` has LF SHA `6b417f59b48bd7198cdc74e81334e0199943f79b11168815460a391ffbaf5bb3`. | `git diff --ignore-space-at-eol 72d518c..21f2bf7` still shows 125 additions and 33 deletions, including the current P5 implementation/G2R2 gate and current status/section restructuring. The mismatch therefore cannot be reduced to whitespace. W07A records `working_tree_head_before_amendment=bfdfc47`; the workflow path is absent at that commit and was first tracked by `72d518c`. The exact pre-commit byte source represented by `ef3...` is not a tracked object in this path history. |
+
+The archived historical workflow is a separate, valid closure only for the W04
+`workflow` entry: the root path was renamed 100% to
+`archive/protocol_history/三十二、具体执行工作流：从 formal PASS 至 A-only model freeze.md`,
+whose current SHA is the recorded `26be0bae34faf6dc0b22c7bb3f3e041988ed87cb85b5de1c72cfe8969bd1fd6d`.
+The archive README explicitly defines that file as historical rather than the
+current execution input. It does not reconcile the W07A `ef3...` provenance to
+the current authoritative SOP.
+
+### Existing-rule reconciliation check
+
+The W04 source-revision schema stores one exact path and SHA per source; it has
+no version alias, approved replacement pointer, or reconciliation field. The
+W07A companion JSON stores the exact amendment lock and a historical
+`source_provenance` snapshot; the amendment text requires the exact amendment
+hash but defines no procedure for accepting a changed current workflow source.
+The current W08 validation code binds W04, W07, and the W07A amendment hashes,
+not a current-SOP reconciliation. The existing
+`test_source_revisions_match_local_files` test also performs a direct exact-file
+comparison and currently fails on the taskbook SHA mismatch.
+
+Accordingly, no existing-rule-permitted, byte- and semantic-closed provenance
+reconciliation was found. The two mismatches remain blocking; this recheck does
+not authorize a hash-record edit, a shadow schema, a new lock, or a scientific
+rerun. The minimum formal decision required from the protocol owner is to name
+the authoritative source version for each mismatch and record an approved
+reconciliation under the project’s existing governance, including the exact
+path/version/SHA and an explicit confirmation that scientific meaning,
+technical parameters, and A/B access boundaries are unchanged. Until that
+decision is recorded, the current files cannot be treated as closed against
+the frozen records.
+
+**Remediation disposition: FAIL / HOLD.** P5 implementation, G2R2, 50-fold
+P5, G3, and formal W08 remain unauthorized.
+
 ## Read-only commands and results
 
 | Command/check | Result |
@@ -89,6 +140,9 @@ W07A provenance failures above; the overall P4 gate remains **FAIL / HOLD**.
 | Read-only Python hash verifier for W03 canonical candidate arrays, W04/W07/W07A/W08 bindings, W06 byte hashes, and G2 ancestry | W03 2/2 candidate hashes PASS; W06 3/3 hashes PASS; W07A audit basis 4/4 PASS; W04 source revisions 18 content matches and 1 mismatch; W07A workflow provenance FAIL. |
 | `git diff --quiet HEAD --` over immutable freeze/W04/W03/W07/W07A/G2R artifacts | PASS; no immutable artifact diff. |
 | `Test-Path prognosis_analysis/model_freeze_lock.json`; W08 output metadata scan | Model lock absent; 393 technical `.npz` cache files only; no formal-result filename hits. |
+| Exact-byte/hash and line-ending check for the taskbook, current SOP, historical `78b0e8f`/`72d518c` objects, and archived workflow | Taskbook and workflow mismatches reproduced; taskbook mismatch is not EOL-only; SOP remains semantically different after LF normalization; archived W04 workflow hash matches. |
+| `git log --follow`, `git diff --ignore-space-at-eol`, and `git diff --summary -M` for the affected documents | Historical taskbook/SOP provenance sequence and 100% W04 workflow archive rename confirmed; no reconciliation rule or current-source alias found. |
+| `python -m unittest discover -s tests -p "test_modeling_protocol.py"` | 7 tests run, 1 failure: `test_source_revisions_match_local_files` fails on the W04 taskbook SHA mismatch. No model or data analysis was run. |
 
 ## Handoff
 
@@ -98,12 +152,14 @@ W07A provenance failures above; the overall P4 gate remains **FAIL / HOLD**.
   candidate-hash recomputation; W04/W07/W07A/W08 binding comparison; G2 base
   ancestry check; immutable-artifact Git diff check; formal-output metadata
   scan.
-- Result: **P4 FAIL / HOLD** due to the W04 taskbook SHA mismatch and W07A
-  workflow provenance SHA mismatch. Frozen technical values and artifact
-  hashes otherwise remain consistent.
-- Remaining risk: the two documentation provenance bindings must be resolved
-  by protocol owner review before any P5 implementation or later gate; no
-  automatic repair was attempted.
+- Result: **P4 FAIL / HOLD**. The W04 taskbook SHA mismatch and W07A workflow
+  provenance SHA mismatch remain unresolved after exact-byte, normalized-text,
+  historical-object, archive-path, and existing-rule review. Frozen technical
+  values and artifact hashes otherwise remain consistent.
+- Remaining blocker: protocol owner review must record the minimum authoritative
+  source-version/reconciliation decision described above before any P5
+  implementation or later gate; no automatic repair was attempted.
 - `B_data_read`: `false`.
 - Patient-level artifact status: none created by this audit; only the
   non-patient-level audit report was written.
+- `P5 authorization`: `no`.
