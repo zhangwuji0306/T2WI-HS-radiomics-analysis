@@ -1,6 +1,8 @@
 import copy
+import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,7 +18,9 @@ if SCRIPT_ROOT not in sys.path:
 from provenance_reconciliation import (  # noqa: E402
     ProvenanceReconciliationError,
     _normalize_lf_bytes,
+    _validate_revision_content,
     _validate_successor_content,
+    validate_execution_status,
     validate_manifest,
 )
 
@@ -120,7 +124,7 @@ class ProvenanceReconciliationTests(unittest.TestCase):
 
         self._validate_modified_manifest(modify_successor)
 
-    def test_current_successor_revision_and_hashes_are_registered(self):
+    def test_previous_successor_revision_is_preserved_and_current_revision_is_registered(self):
         successor = self.manifest["approved_successors"]["pre_w08_sop"]
         self.assertEqual(successor["git_commit"],
                          "54e1b2ad75949bcdc06ee9dffd8138ea63654c69")
@@ -130,6 +134,134 @@ class ProvenanceReconciliationTests(unittest.TestCase):
                          "b1d40dd24f586ba52c5832d1dc53761d5239699d25a76856b7abeac636f47c03")
         self.assertEqual(successor["git_snapshot_sha256"],
                          "85d03d86d3551ef8505234f3172482bc337b6c650c129724ae55adc31b6e6fc9")
+        history = self.manifest["successor_revision_history"]["pre_w08_sop"]
+        self.assertEqual(history[0]["status"], "historical")
+        self.assertEqual(history[0]["git_blob"], successor["git_blob"])
+        current = history[1]
+        self.assertEqual(current["status"], "current")
+        self.assertEqual(current["content_introducing_commit"],
+                         "c35385265d08f77aa8d7bc5b2903c4bc0236e917")
+        self.assertEqual(current["git_blob"],
+                         "26bd8bff6cfd9a0bdc057099009cedb581d6f41d")
+        self.assertNotEqual(current["content_introducing_commit"],
+                            current["reviewed_repository_head"])
+
+    def test_execution_status_is_the_failed_w08_hold_state(self):
+        status = validate_execution_status(root=ROOT)
+        self.assertEqual(status["execution"]["stage"], "W08")
+        self.assertEqual(status["execution"]["gate"], "HOLD")
+        self.assertTrue(status["execution"]["formal_w08_started"])
+        self.assertEqual(status["last_attempt"]["status"], "failed")
+        self.assertIn("minimum ROI", status["last_attempt"]["failure_reason_summary"])
+        self.assertEqual(status["b_access"], {
+            "B_data_read": False,
+            "B_reader_invoked": False,
+            "B_source_opened": False,
+            "B_statistics_generated": False,
+        })
+        self.assertFalse(status["model_freeze_lock"]["present"])
+        self.assertFalse(status["outputs"]["final_outputs_generated"])
+
+    def test_content_introducing_commit_is_distinct_from_later_review_head(self):
+        revision = self.manifest["successor_revision_history"]["pre_w08_sop"][1]
+        later_head = subprocess.check_output(
+            ["git", "-C", ROOT, "rev-parse", "HEAD"]).decode("ascii").strip()
+        self.assertNotEqual(revision["content_introducing_commit"], later_head)
+        self.assertNotEqual(revision["reviewed_repository_head"],
+                            revision["content_introducing_commit"])
+        validate_manifest(root=ROOT, manifest_path=MANIFEST_PATH)
+
+    def test_current_successor_path_commit_blob_and_raw_sha_mismatch_fail_closed(self):
+        fields = ("path", "content_introducing_commit", "git_blob", "raw_sha256")
+        mutations = {
+            "path": "prognosis_analysis/W07A_pre_W08_protocol_amendment.md",
+            "content_introducing_commit": "54e1b2ad75949bcdc06ee9dffd8138ea63654c69",
+            "git_blob": "0" * 40,
+            "raw_sha256": "0" * 64,
+        }
+        for field in fields:
+            def mutate(manifest, field=field):
+                manifest["successor_revision_history"]["pre_w08_sop"][1][field] = mutations[field]
+            self._validate_modified_manifest(mutate)
+
+    def test_current_successor_lf_crlf_compatibility_is_strict(self):
+        revision = self.manifest["successor_revision_history"]["pre_w08_sop"][1]
+        import provenance_reconciliation as reconciliation
+
+        committed = reconciliation._git_blob_bytes(
+            ROOT, revision["content_introducing_commit"], revision["path"])
+        variants = (
+            committed,
+            committed.replace(b"\n", b"\r\n"),
+            committed.replace(b"\n", b"\r\n", 1),
+        )
+        for current in variants:
+            errors = []
+            _validate_revision_content(current, committed, revision,
+                                       "test", errors)
+            self.assertEqual(errors, [])
+
+    def test_current_successor_one_character_whitespace_title_and_paragraph_changes_fail(self):
+        revision = self.manifest["successor_revision_history"]["pre_w08_sop"][1]
+        import provenance_reconciliation as reconciliation
+
+        committed = reconciliation._git_blob_bytes(
+            ROOT, revision["content_introducing_commit"], revision["path"])
+        mutations = (
+            committed[:100] + b"x" + committed[100:],
+            committed[:-1],
+            committed.replace(b" ", b"\t", 1),
+            committed.replace("工作流定位".encode("utf-8"),
+                               "工作流标题".encode("utf-8"), 1),
+            committed.replace("实际阶段状态".encode("utf-8"),
+                               "实际阶段结果".encode("utf-8"), 1),
+        )
+        for mutated in mutations:
+            errors = []
+            _validate_revision_content(mutated, committed, revision,
+                                       "test", errors)
+            self.assertTrue(errors)
+
+    def test_forged_current_revision_fields_fail_closed(self):
+        for field, value in (("lf_normalized_sha256", "0" * 64),
+                             ("revision_id", "forged"),
+                             ("version", "forged"),
+                             ("role", "forged")):
+            def mutate(manifest, field=field, value=value):
+                manifest["successor_revision_history"]["pre_w08_sop"][1][field] = value
+            self._validate_modified_manifest(mutate)
+
+    def test_historical_successor_revision_modification_fails_closed(self):
+        def modify_historical_revision(manifest):
+            manifest["successor_revision_history"]["pre_w08_sop"][0][
+                "lf_normalized_sha256"] = "0" * 64
+
+        self._validate_modified_manifest(modify_historical_revision)
+
+    def test_w07a_historical_exception_rewrite_fails_closed(self):
+        def rewrite_exception(manifest):
+            manifest["reconciliations"]["w07a_workflow"][
+                "historical_exact_recovery"]["status"] = "recoverable"
+
+        self._validate_modified_manifest(rewrite_exception)
+
+    def test_mutable_execution_status_change_does_not_change_sop_content_hash(self):
+        sop_path = os.path.join(ROOT, self.manifest["successor_revision_history"][
+            "pre_w08_sop"][1]["path"])
+        with open(sop_path, "rb") as handle:
+            before = hashlib.sha256(handle.read()).hexdigest()
+        with open(os.path.join(ROOT, "prognosis_analysis", "execution_status.json"),
+                  encoding="utf-8") as handle:
+            status = json.load(handle)
+        status["recorded_on"] = "2026-09-07"
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "execution_status.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(status, handle, ensure_ascii=False, indent=2)
+            validate_execution_status(root=ROOT, status_path=path)
+        with open(sop_path, "rb") as handle:
+            after = hashlib.sha256(handle.read()).hexdigest()
+        self.assertEqual(before, after)
 
     def test_lf_and_crlf_variants_are_accepted_only_after_exact_normalization(self):
         successor = self.manifest["approved_successors"]["pre_w08_sop"]

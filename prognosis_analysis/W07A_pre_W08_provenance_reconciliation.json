@@ -1,7 +1,7 @@
 {
   "schema": {
     "id": "W07A_pre_W08_provenance_reconciliation",
-    "version": "1.0",
+    "version": "1.1",
     "status": "approved_reconciliation",
     "hash_algorithm": "SHA-256",
     "scope": "non_patient_level_document_provenance_only"
@@ -55,6 +55,41 @@
       "approved_successor": true,
       "role": "current authoritative operational SOP for post-freeze remediation and later gated stages"
     }
+  },
+  "successor_revision_history": {
+    "pre_w08_sop": [
+      {
+        "successor_id": "pre_w08_sop",
+        "revision_id": "pre_w08_sop@p4",
+        "path": "T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md",
+        "version": "current_authoritative_pre_w08_operational_sop",
+        "content_introducing_commit": "54e1b2ad75949bcdc06ee9dffd8138ea63654c69",
+        "git_blob": "4f769bf481166eeced760e4946a9c4e4db6ccda4",
+        "raw_sha256": "b1d40dd24f586ba52c5832d1dc53761d5239699d25a76856b7abeac636f47c03",
+        "lf_normalized_sha256": "85d03d86d3551ef8505234f3172482bc337b6c650c129724ae55adc31b6e6fc9",
+        "reviewed_repository_head": "54e1b2ad75949bcdc06ee9dffd8138ea63654c69",
+        "approved_successor": true,
+        "status": "historical",
+        "role": "current authoritative operational SOP for post-freeze remediation and later gated stages"
+      },
+      {
+        "successor_id": "pre_w08_sop",
+        "revision_id": "pre_w08_sop@r1_normative_status_separation",
+        "path": "T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md",
+        "version": "current_authoritative_pre_w08_normative_sop",
+        "content_introducing_commit": "c35385265d08f77aa8d7bc5b2903c4bc0236e917",
+        "git_blob": "26bd8bff6cfd9a0bdc057099009cedb581d6f41d",
+        "raw_sha256": "08b5d92519b3ee79a8519386585336a980788bc6345d7729115f8693bef807e3",
+        "lf_normalized_sha256": "9f12476e66f987de187d7af51acc803d147f71da8b20cec4eb9dee756e963cda",
+        "reviewed_repository_head": "496e7800268df489f01dd71d71ff9f1e5b13e5c2",
+        "approved_successor": true,
+        "status": "current",
+        "role": "current authoritative immutable normative Pre-W08 SOP; mutable execution state is maintained in PROJECT_STATUS.md and prognosis_analysis/execution_status.json"
+      }
+    ]
+  },
+  "current_successor_revisions": {
+    "pre_w08_sop": "pre_w08_sop@r1_normative_status_separation"
   },
   "reconciliations": {
     "w04_taskbook": {

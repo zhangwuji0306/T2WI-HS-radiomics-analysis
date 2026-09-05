@@ -25,8 +25,9 @@ DEFAULT_MANIFEST = os.path.join(
     PROGNOSIS_ROOT, "W07A_pre_W08_provenance_reconciliation.json")
 
 MANIFEST_SCHEMA_ID = "W07A_pre_W08_provenance_reconciliation"
-MANIFEST_SCHEMA_VERSION = "1.0"
+MANIFEST_SCHEMA_VERSION = "1.1"
 APPROVED_SOURCE_COMMIT = "b35605c931b7a00bd1ef503120a5a26057be9a8e"
+EXECUTION_STATUS_PATH = "prognosis_analysis/execution_status.json"
 
 W04_MODELING_PROTOCOL_PATH = "prognosis_analysis/modeling_protocol.json"
 W04_MODELING_PROTOCOL_SHA256 = (
@@ -105,6 +106,43 @@ APPROVED_SUCCESSORS = {
             "current authoritative operational SOP for post-freeze remediation "
             "and later gated stages"),
     },
+}
+
+HISTORICAL_PRE_W08_REVISION = {
+    "successor_id": "pre_w08_sop",
+    "revision_id": "pre_w08_sop@p4",
+    "path": W07A_WORKFLOW_PATH,
+    "version": "current_authoritative_pre_w08_operational_sop",
+    "content_introducing_commit": "54e1b2ad75949bcdc06ee9dffd8138ea63654c69",
+    "git_blob": "4f769bf481166eeced760e4946a9c4e4db6ccda4",
+    "raw_sha256": (
+        "b1d40dd24f586ba52c5832d1dc53761d5239699d25a76856b7abeac636f47c03"),
+    "lf_normalized_sha256": (
+        "85d03d86d3551ef8505234f3172482bc337b6c650c129724ae55adc31b6e6fc9"),
+    "approved_successor": True,
+    "status": "historical",
+    "role": (
+        "current authoritative operational SOP for post-freeze remediation "
+        "and later gated stages"),
+}
+
+CURRENT_PRE_W08_REVISION = {
+    "successor_id": "pre_w08_sop",
+    "revision_id": "pre_w08_sop@r1_normative_status_separation",
+    "path": W07A_WORKFLOW_PATH,
+    "version": "current_authoritative_pre_w08_normative_sop",
+    "content_introducing_commit": "c35385265d08f77aa8d7bc5b2903c4bc0236e917",
+    "git_blob": "26bd8bff6cfd9a0bdc057099009cedb581d6f41d",
+    "raw_sha256": (
+        "08b5d92519b3ee79a8519386585336a980788bc6345d7729115f8693bef807e3"),
+    "lf_normalized_sha256": (
+        "9f12476e66f987de187d7af51acc803d147f71da8b20cec4eb9dee756e963cda"),
+    "approved_successor": True,
+    "status": "current",
+    "role": (
+        "current authoritative immutable normative Pre-W08 SOP; mutable "
+        "execution state is maintained in PROJECT_STATUS.md and "
+        "prognosis_analysis/execution_status.json"),
 }
 
 APPROVED_RECONCILIATION_RELATIONSHIPS = {
@@ -351,6 +389,93 @@ def _validate_successor_content(current_bytes, committed_bytes, successor,
         errors.append("%s line-ending validation failed: %s" % (label, exc))
 
 
+def _validate_revision_content(current_bytes, committed_bytes, revision,
+                              label, errors):
+    """Validate a current revision with strict LF/CRLF-only compatibility."""
+    try:
+        current_normalized = _normalize_lf_bytes(
+            current_bytes, label + " current file")
+        committed_normalized = _normalize_lf_bytes(
+            committed_bytes, label + " Git snapshot")
+    except ValueError as exc:
+        errors.append("%s line-ending validation failed: %s" % (label, exc))
+        return
+    if committed_normalized != committed_bytes:
+        errors.append("%s Git snapshot must be LF-only" % label)
+    expected_lf_sha = _sha256_bytes(committed_normalized)
+    if revision.get("lf_normalized_sha256") != expected_lf_sha:
+        errors.append("%s LF-normalized SHA-256 mismatch" % label)
+    if current_normalized != committed_normalized:
+        errors.append(
+            "%s current file differs from the content-introducing snapshot "
+            "outside CRLF/LF line endings" % label)
+    # The registered raw SHA is checked against the immutable revision record
+    # before this helper runs.  A checkout may use LF, CRLF, or a mixed EOL
+    # representation; normalized equality is the only compatibility allowed.
+
+
+def _validate_revision_record(root, revision, label, expected, errors):
+    expected_keys = (
+        "successor_id", "revision_id", "path", "version",
+        "content_introducing_commit",
+        "git_blob", "raw_sha256", "lf_normalized_sha256",
+        "reviewed_repository_head", "approved_successor", "status", "role")
+    if not _exact_keys(revision, expected_keys, label, errors):
+        return
+    for field, value in expected.items():
+        if value is not None and revision.get(field) != value:
+            errors.append("%s.%s differs from the registered revision" %
+                          (label, field))
+    if revision.get("approved_successor") is not True:
+        errors.append("%s must declare approved_successor=true" % label)
+    if revision.get("status") not in ("historical", "current"):
+        errors.append("%s status is not registered" % label)
+    _expect_sha(revision.get("raw_sha256"), label + ".raw_sha256", errors)
+    _expect_sha(revision.get("lf_normalized_sha256"),
+                label + ".lf_normalized_sha256", errors)
+    _expect_commit(revision.get("content_introducing_commit"),
+                   label + ".content_introducing_commit", errors)
+    _expect_commit(revision.get("git_blob"), label + ".git_blob", errors)
+    _expect_commit(revision.get("reviewed_repository_head"),
+                   label + ".reviewed_repository_head", errors)
+    path = _repo_path(root, revision.get("path"), label + ".path", errors)
+    content_commit = revision.get("content_introducing_commit")
+    review_head = revision.get("reviewed_repository_head")
+    if (path is None or not os.path.isfile(path) or
+            not _is_git_object_id(content_commit) or
+            not _is_git_object_id(review_head) or
+            not _is_git_object_id(revision.get("git_blob"))):
+        return
+    try:
+        if not _git_commit_exists(root, content_commit):
+            errors.append("%s content-introducing Git commit does not resolve" % label)
+            return
+        if not _git_commit_exists(root, review_head):
+            errors.append("%s reviewed repository head does not resolve" % label)
+        try:
+            _run_git(root, ["merge-base", "--is-ancestor",
+                            content_commit, review_head])
+        except RuntimeError as exc:
+            errors.append("%s content-introducing commit is not before the reviewed repository head: %s" %
+                          (label, exc))
+        actual_blob = _git_blob_id(root, content_commit, revision["path"])
+        if actual_blob != revision.get("git_blob"):
+            errors.append("%s content-introducing Git blob mismatch" % label)
+        if _git_object_type(root, actual_blob) != "blob":
+            errors.append("%s content-introducing Git object is not a blob" % label)
+        committed_bytes = _git_blob_bytes(root, content_commit, revision["path"])
+        if revision.get("status") == "current":
+            with open(path, "rb") as handle:
+                current_bytes = handle.read()
+            _validate_revision_content(current_bytes, committed_bytes,
+                                       revision, label, errors)
+        else:
+            if _sha256_bytes(committed_bytes) != revision.get("lf_normalized_sha256"):
+                errors.append("%s historical LF-normalized SHA-256 mismatch" % label)
+    except (OSError, RuntimeError) as exc:
+        errors.append("%s revision Git verification failed: %s" % (label, exc))
+
+
 def _validate_successor(root, successor_id, successor, errors):
     expected_keys = ("path", "version", "git_commit", "sha256",
                      "git_snapshot_sha256", "approved_successor", "role")
@@ -396,8 +521,13 @@ def _validate_successor(root, successor_id, successor, errors):
             committed_bytes = _git_blob_bytes(root, commit, successor["path"])
             _expect_sha(successor.get("git_snapshot_sha256"),
                         label + ".git_snapshot_sha256", errors)
-            _validate_successor_content(current_bytes, committed_bytes,
-                                         successor, label, errors)
+            if successor_id == "pre_w08_sop":
+                if _sha256_bytes(committed_bytes) != successor.get(
+                        "git_snapshot_sha256"):
+                    errors.append("%s historical Git snapshot SHA-256 mismatch" % label)
+            else:
+                _validate_successor_content(current_bytes, committed_bytes,
+                                             successor, label, errors)
     except (OSError, RuntimeError) as exc:
         errors.append("%s current/Git verification failed: %s" % (label, exc))
 
@@ -587,9 +717,143 @@ def _validate_w07a_workflow(item, successors, errors):
         errors.append("%s requires the approved Pre-W08 SOP successor" % label)
 
 
+def _validate_successor_history(manifest, root, errors):
+    history = manifest.get("successor_revision_history")
+    pointer = manifest.get("current_successor_revisions")
+    if not _exact_keys(history, ("pre_w08_sop",),
+                       "manifest.successor_revision_history", errors):
+        return
+    if not _exact_keys(pointer, ("pre_w08_sop",),
+                       "manifest.current_successor_revisions", errors):
+        return
+    revisions = history.get("pre_w08_sop")
+    if not isinstance(revisions, list) or len(revisions) != 2:
+        errors.append("manifest.successor_revision_history.pre_w08_sop must preserve exactly two registered revisions")
+        return
+    historical_expected = dict(HISTORICAL_PRE_W08_REVISION)
+    historical_expected["reviewed_repository_head"] = (
+        "54e1b2ad75949bcdc06ee9dffd8138ea63654c69")
+    current_expected = dict(CURRENT_PRE_W08_REVISION)
+    current_expected["reviewed_repository_head"] = None
+    _validate_revision_record(
+        root, revisions[0],
+        "manifest.successor_revision_history.pre_w08_sop[0]",
+        historical_expected, errors)
+    _validate_revision_record(
+        root, revisions[1],
+        "manifest.successor_revision_history.pre_w08_sop[1]",
+        current_expected, errors)
+    if pointer.get("pre_w08_sop") != CURRENT_PRE_W08_REVISION["revision_id"]:
+        errors.append("manifest.current_successor_revisions.pre_w08_sop does not point to the current revision")
+    if revisions[0].get("status") != "historical":
+        errors.append("the prior Pre-W08 successor revision must remain historical")
+    if revisions[1].get("status") != "current":
+        errors.append("the current Pre-W08 successor revision must remain current")
+
+
+def validate_execution_status(root=None, status_path=None):
+    """Validate the schema-safe mutable aggregate execution state."""
+    root = os.path.abspath(root or PROJECT_ROOT)
+    status_path = os.path.abspath(status_path or os.path.join(
+        root, *EXECUTION_STATUS_PATH.split("/")))
+    errors = []
+    if not os.path.isfile(status_path):
+        raise ProvenanceReconciliationError(
+            "execution status is absent: %s" % status_path)
+    try:
+        with open(status_path, "r", encoding="utf-8") as handle:
+            status = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise ProvenanceReconciliationError(
+            "execution status cannot be read: %s" % exc)
+    top_keys = ("schema", "recorded_on", "execution", "last_attempt",
+                "b_access", "model_freeze_lock", "outputs", "repository")
+    if not _exact_keys(status, top_keys, "execution_status", errors):
+        raise ProvenanceReconciliationError("\n".join(errors))
+    schema = status.get("schema")
+    if _exact_keys(schema, ("id", "version", "status_kind"),
+                   "execution_status.schema", errors):
+        if schema.get("id") != "prognosis_execution_status":
+            errors.append("execution_status.schema.id is not registered")
+        if schema.get("version") != "1.0":
+            errors.append("execution_status.schema.version is not registered")
+        if schema.get("status_kind") != "mutable_aggregate_execution_state":
+            errors.append("execution_status.schema.status_kind is not registered")
+    _expect_string(status.get("recorded_on"),
+                   "execution_status.recorded_on", errors)
+    execution = status.get("execution")
+    if _exact_keys(execution, ("stage", "gate", "formal_w08_started",
+                               "last_attempt_status"),
+                   "execution_status.execution", errors):
+        _expect_string(execution.get("stage"),
+                       "execution_status.execution.stage", errors)
+        _expect_string(execution.get("gate"),
+                       "execution_status.execution.gate", errors)
+        if not _is_bool(execution.get("formal_w08_started")):
+            errors.append("execution_status.execution.formal_w08_started must be boolean")
+        _expect_string(execution.get("last_attempt_status"),
+                       "execution_status.execution.last_attempt_status", errors)
+    attempt = status.get("last_attempt")
+    if _exact_keys(attempt, ("attempt_id", "status", "failure_stage",
+                             "failure_reason_summary", "code_commit_at_attempt"),
+                   "execution_status.last_attempt", errors):
+        for field in ("attempt_id", "status", "failure_stage",
+                      "failure_reason_summary"):
+            _expect_string(attempt.get(field),
+                           "execution_status.last_attempt.%s" % field, errors)
+        _expect_commit(attempt.get("code_commit_at_attempt"),
+                       "execution_status.last_attempt.code_commit_at_attempt",
+                       errors)
+    b_access = status.get("b_access")
+    b_keys = ("B_data_read", "B_reader_invoked", "B_source_opened",
+              "B_statistics_generated")
+    if _exact_keys(b_access, b_keys, "execution_status.b_access", errors):
+        for key in b_keys:
+            if not _is_bool(b_access.get(key)):
+                errors.append("execution_status.b_access.%s must be boolean" % key)
+    lock = status.get("model_freeze_lock")
+    if _exact_keys(lock, ("present", "status"),
+                   "execution_status.model_freeze_lock", errors):
+        if not _is_bool(lock.get("present")):
+            errors.append("execution_status.model_freeze_lock.present must be boolean")
+        _expect_string(lock.get("status"),
+                       "execution_status.model_freeze_lock.status", errors)
+    outputs = status.get("outputs")
+    if _exact_keys(outputs, ("final_outputs_generated",),
+                   "execution_status.outputs", errors):
+        if not _is_bool(outputs.get("final_outputs_generated")):
+            errors.append("execution_status.outputs.final_outputs_generated must be boolean")
+    repository = status.get("repository")
+    repository_keys = ("baseline_head", "last_known_repository_head",
+                       "status_recorded_at_head")
+    if _exact_keys(repository, repository_keys,
+                   "execution_status.repository", errors):
+        for key in repository_keys:
+            _expect_commit(repository.get(key),
+                           "execution_status.repository.%s" % key, errors)
+            if _is_git_object_id(repository.get(key)):
+                try:
+                    if not _git_commit_exists(root, repository.get(key)):
+                        errors.append("execution_status.repository.%s does not resolve" % key)
+                except (OSError, RuntimeError) as exc:
+                    errors.append("execution_status.repository.%s verification failed: %s" %
+                                  (key, exc))
+    if _is_git_object_id(attempt.get("code_commit_at_attempt")
+                         if isinstance(attempt, dict) else None):
+        try:
+            if not _git_commit_exists(root, attempt["code_commit_at_attempt"]):
+                errors.append("execution_status.last_attempt.code_commit_at_attempt does not resolve")
+        except (OSError, RuntimeError) as exc:
+            errors.append("execution status code commit verification failed: %s" % exc)
+    if errors:
+        raise ProvenanceReconciliationError("\n".join(errors))
+    return status
+
+
 def _validate_manifest_header(manifest, errors):
     top_keys = ("schema", "verification", "protocol_owner_approval",
-                "global_invariants", "approved_successors", "reconciliations")
+                "global_invariants", "approved_successors", "reconciliations",
+                "successor_revision_history", "current_successor_revisions")
     if not _exact_keys(manifest, top_keys, "manifest", errors):
         return
     schema = manifest.get("schema")
@@ -834,6 +1098,11 @@ def validate_manifest(root=None, manifest_path=None):
     root = os.path.abspath(root or PROJECT_ROOT)
     manifest_path = os.path.abspath(manifest_path or DEFAULT_MANIFEST)
     errors = []
+    try:
+        execution_status = validate_execution_status(root=root)
+    except ProvenanceReconciliationError as exc:
+        errors.append(str(exc))
+        execution_status = None
     if not os.path.isfile(manifest_path):
         raise ProvenanceReconciliationError(
             "manifest is absent: %s" % manifest_path)
@@ -864,6 +1133,7 @@ def validate_manifest(root=None, manifest_path=None):
                                 successors, errors)
         _validate_w07a_workflow(reconciliations.get("w07a_workflow"),
                                 successors, errors)
+    _validate_successor_history(manifest, root, errors)
     _validate_w04_protocol_sources(root, manifest, errors)
     _validate_w07a_sources(root, manifest, errors)
 
@@ -899,6 +1169,10 @@ def validate_manifest(root=None, manifest_path=None):
             "scientific_parameters_changed": False,
             "B_data_read": False,
             "formal_W08_started": False,
+        },
+        "execution_status": {
+            "path": os.path.join(root, *EXECUTION_STATUS_PATH.split("/")),
+            "validated": execution_status is not None,
         },
     }
 
