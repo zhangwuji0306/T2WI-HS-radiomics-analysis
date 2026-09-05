@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import sys
+import subprocess
 from collections import OrderedDict
 
 import numpy as np
@@ -163,6 +164,21 @@ def _sha256_file(path):
 
 def _sha256_text(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _git_head(project_root):
+    """Return the exact code revision under which P5 was released."""
+    try:
+        value = subprocess.check_output(
+            ["git", "-C", project_root, "rev-parse", "HEAD"],
+            stderr=subprocess.STDOUT)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise P5ValidationError(
+            "P5 cannot bind its release certificate to Git HEAD: %s" % exc)
+    commit = value.decode("ascii", "strict").strip()
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        raise P5ValidationError("P5 Git HEAD is not a lowercase full commit")
+    return commit
 
 
 def canonical_id_hash(ids):
@@ -776,7 +792,8 @@ def _run_preflight_core(population, split_frame, supervoxels,
     return result
 
 
-def _assemble_preflight_result(fold_frame, binding_hashes, production_verified):
+def _assemble_preflight_result(fold_frame, binding_hashes, production_verified,
+                               code_commit=None):
     """Build the unchanged aggregate schema with an explicit execution boundary."""
     binding_hashes = _validate_binding_manifest(binding_hashes)
     status = "technical_only_complete" if production_verified else "test_only"
@@ -809,6 +826,7 @@ def _assemble_preflight_result(fold_frame, binding_hashes, production_verified):
             "stage": "G3",
             "status": gate_status,
             "P5_technical_preflight": gate_status,
+            "code_commit": code_commit,
             "frozen_fold_units": 50,
             "completed_fold_units": 50,
             "all_required_runs_estimable": True,
@@ -1038,6 +1056,7 @@ def write_outputs(result, output_root):
 def run_production(output_root=DEFAULT_OUTPUT, project_root=PROJECT_ROOT):
     """Run the local protected A-only P5 entry point after all binding gates."""
     binding_hashes = _validate_binding_manifest(verify_frozen_bindings(project_root))
+    code_commit = _git_head(_normalise_root(project_root))
     if binding_hashes["W07_outer_split_artifact"] != W07_OUTER_SPLIT_SHA256:
         raise P5ValidationError("W07 split binding value is not the frozen hash")
     population, split_frame, supervoxels, availability = load_authorized_a_inputs(project_root)
@@ -1046,7 +1065,8 @@ def run_production(output_root=DEFAULT_OUTPUT, project_root=PROJECT_ROOT):
         binding_hashes=binding_hashes,
         expected_split_hash=binding_hashes["W07_outer_split_artifact"])
     result = _assemble_preflight_result(
-        fold_frame, binding_hashes, production_verified=True)
+        fold_frame, binding_hashes, production_verified=True,
+        code_commit=code_commit)
     write_outputs(result, output_root)
     return result
 

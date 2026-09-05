@@ -17,6 +17,8 @@ import hashlib
 import json
 import operator
 import os
+import platform
+import subprocess
 import sys
 import time
 
@@ -39,6 +41,8 @@ for _script_root in (FEATURE_SCRIPT_ROOT, HABITAT_SCRIPT_ROOT):
 import w02_habitat_radiomics as w02  # noqa: E402
 import w07_outer_splits as w07  # noqa: E402
 import w08_nested_cv as w08  # noqa: E402
+import provenance_reconciliation as provenance  # noqa: E402
+import w08_technical_preflight_a as preflight  # noqa: E402
 from data_split_guard import read_technical_A  # noqa: E402
 import technical_dry_run_A as technical  # noqa: E402
 
@@ -90,6 +94,30 @@ W_BATCHES = (
      ("影像号", "读者", "split", "normalization", "f")),
 )
 
+P5_RELEASE_GATE_RELATIVE = (
+    "prognosis_analysis/output/p5_technical_preflight_A/P5_release_gate.json")
+TECHNICAL_FREEZE_RELATIVE = "habitat_analysis/freeze_lock.json"
+FINAL_OUTPUT_NAMES = (
+    "predictions.csv", "fold_results.csv", "selection_results.csv",
+    "audit.json", "run_metadata.json")
+B_ACCESS_FLAGS = (
+    "B_data_read", "B_reader_invoked", "B_source_opened",
+    "B_statistics_generated")
+
+
+class W08ReleaseGateError(w08.W08ValidationError):
+    """Raised when formal W08 is not authorized by the release gate."""
+
+    def __init__(self, message, result=None):
+        self.result = result or {
+            "stage": "W08",
+            "gate": "FORMAL_W08_RELEASE",
+            "status": "FAIL",
+            "failure_reasons": [str(message)],
+        }
+        self.failure_reasons = list(self.result.get("failure_reasons", []))
+        super(W08ReleaseGateError, self).__init__(message)
+
 
 def _sha256(path):
     digest = hashlib.sha256()
@@ -97,6 +125,305 @@ def _sha256(path):
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _git_head(project_root):
+    """Return the exact repository HEAD used to authorize formal W08."""
+    try:
+        value = subprocess.check_output(
+            ["git", "-C", project_root, "rev-parse", "HEAD"],
+            stderr=subprocess.STDOUT)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise W08ReleaseGateError(
+            "cannot resolve the repository HEAD for the W08 release gate: %s" %
+            exc)
+    commit = value.decode("ascii", "strict").strip()
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        raise W08ReleaseGateError(
+            "repository HEAD is not a lowercase full Git commit")
+    return commit
+
+
+def _environment_fingerprint():
+    """Return non-sensitive interpreter/dependency identity for failure state."""
+    return {
+        "python_version": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "executable_name": os.path.basename(sys.executable),
+        "platform": platform.platform(),
+        "numpy": getattr(np, "__version__", "unknown"),
+        "pandas": getattr(pd, "__version__", "unknown"),
+    }
+
+
+def _display_path(path, project_root):
+    """Keep machine-readable state free of local absolute paths."""
+    try:
+        relative = os.path.relpath(os.path.abspath(path),
+                                   os.path.abspath(project_root))
+        if relative != os.pardir and not relative.startswith(os.pardir + os.sep):
+            return relative.replace(os.sep, "/")
+    except (OSError, ValueError):
+        pass
+    return os.path.basename(os.path.abspath(path))
+
+
+def _gate_check(checks, failures, name, passed, detail):
+    status = "PASS" if passed else "FAIL"
+    checks[name] = {"status": status, "detail": detail}
+    if not passed:
+        failures.append("%s: %s" % (name, detail))
+
+
+def _validate_w05_access_boundary(project_root):
+    """Check the project-native W05 reader boundary without opening data."""
+    path = os.path.join(project_root, "feature_extract", "scripts",
+                        "data_split_guard.py")
+    with open(path, "r", encoding="utf-8") as handle:
+        source = handle.read()
+    required = (
+        "def read_technical_A(",
+        "def read_A_outcomes(",
+        "def read_B_validation(",
+        "def resolve_cohort_membership(",
+        "def require_b_unlock(",
+    )
+    missing = [snippet for snippet in required if snippet not in source]
+    if missing:
+        raise RuntimeError("W05 authorized reader boundary is incomplete")
+    start = source.find("def read_B_validation(")
+    next_definition = source.find("\ndef ", start + 1)
+    if next_definition < 0:
+        next_definition = len(source)
+    if "require_b_unlock()" not in source[start:next_definition]:
+        raise RuntimeError("W05 B reader does not fail closed before source access")
+    outcome_start = source.find("def read_A_outcomes(")
+    next_outcome_definition = source.find("\ndef ", outcome_start + 1)
+    if next_outcome_definition < 0:
+        next_outcome_definition = len(source)
+    if "require_a_outcome_unlock()" not in source[
+            outcome_start:next_outcome_definition]:
+        raise RuntimeError("W05 A outcome reader lacks its first-stage lock")
+    return True
+
+
+def _validate_prior_attempt_reconciled(status):
+    """Require the archived W08 failure state before permitting a new run."""
+    execution = status.get("execution", {})
+    attempt = status.get("last_attempt", {})
+    if execution.get("stage") != "W08" or execution.get("gate") != "HOLD":
+        raise RuntimeError("execution status is not the reconciled W08 HOLD state")
+    if execution.get("last_attempt_status") != "failed":
+        raise RuntimeError("the prior W08 attempt is not marked failed")
+    if attempt.get("status") != "failed":
+        raise RuntimeError("the prior W08 attempt is not archived as failed")
+    attempt_id = attempt.get("attempt_id")
+    if not isinstance(attempt_id, str) or not attempt_id.endswith("_failed"):
+        raise RuntimeError("the prior W08 attempt lacks an explicit failed archive ID")
+    for field in ("failure_stage", "failure_reason_summary",
+                  "code_commit_at_attempt"):
+        value = attempt.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError("the prior W08 attempt lacks %s" % field)
+    return True
+
+
+def _validate_release_certificate(path, current_commit):
+    """Validate the existing P5/G3 release artifact, including exact code bind."""
+    with open(path, "r", encoding="utf-8") as handle:
+        certificate = json.load(handle)
+    if not isinstance(certificate, dict):
+        raise RuntimeError("G3 release certificate must be a JSON object")
+    expected = {
+        "stage": "G3",
+        "status": "PASS",
+        "P5_technical_preflight": "PASS",
+        "frozen_fold_units": 50,
+        "completed_fold_units": 50,
+        "all_required_runs_estimable": True,
+        "all_paired_populations_equal": True,
+        "bindings_verified": True,
+        "performance_generated": False,
+        "patient_level_outputs_written": False,
+    }
+    for field, expected_value in expected.items():
+        if field not in certificate or certificate[field] != expected_value:
+            raise RuntimeError(
+                "G3 release certificate field %s is not %r" %
+                (field, expected_value))
+    if type(certificate.get("code_commit")) is not str or \
+            certificate.get("code_commit") != current_commit:
+        raise RuntimeError(
+            "G3/G3R release certificate code_commit is not the current HEAD")
+    for field in B_ACCESS_FLAGS:
+        if certificate.get(field) is not False:
+            raise RuntimeError(
+                "G3 release certificate %s must be false" % field)
+    return certificate
+
+
+def _validate_prior_output_inventory(output_root):
+    """Reject formal artifacts or stale state while allowing old SLIC caches."""
+    if not os.path.exists(output_root):
+        return
+    if not os.path.isdir(output_root):
+        raise RuntimeError("W08 output root is not a directory")
+    with os.scandir(output_root) as entries:
+        for entry in entries:
+            name = entry.name
+            if name in FINAL_OUTPUT_NAMES or name == "run_state.json":
+                raise RuntimeError("W08 output contains prior formal state: %s" % name)
+            if name != "work" or not entry.is_dir():
+                raise RuntimeError("W08 output contains an unrecognized prior artifact")
+            for current_root, directories, filenames in os.walk(entry.path):
+                if any(filename == "run_state.json" or
+                       filename in FINAL_OUTPUT_NAMES for filename in filenames):
+                    raise RuntimeError("W08 work directory contains prior formal output")
+                if any(not filename.endswith(".npz") for filename in filenames):
+                    raise RuntimeError("W08 work directory contains incomplete output")
+                del current_root, directories
+
+
+def validate_formal_release_gate(
+        output_root=OUTPUT_ROOT, project_root=PROJECT_ROOT,
+        release_certificate_path=None):
+    """Validate every non-patient prerequisite before formal W08 can start.
+
+    The function performs only metadata, source-code, Git, and output-state
+    checks.  It never loads a population, outcome table, feature table, image,
+    mask, provider, model, prediction, or performance metric.
+    """
+    output_root = os.path.abspath(os.fspath(output_root))
+    project_root = os.path.abspath(os.fspath(project_root))
+    certificate_path = os.path.abspath(os.fspath(
+        release_certificate_path or os.path.join(
+            project_root, *P5_RELEASE_GATE_RELATIVE.split("/"))))
+    checks = {}
+    failures = []
+    current_commit = None
+    try:
+        current_commit = _git_head(project_root)
+        _gate_check(checks, failures, "repository_head", True, current_commit)
+    except W08ReleaseGateError as exc:
+        _gate_check(checks, failures, "repository_head", False, str(exc))
+
+    try:
+        result = provenance.validate_manifest(root=project_root)
+        passed = isinstance(result, dict) and result.get("status") == "PASS"
+        _gate_check(checks, failures, "P4R_provenance_reconciliation", passed,
+                    "PASS" if passed else "validator did not return PASS")
+    except Exception as exc:
+        _gate_check(checks, failures, "P4R_provenance_reconciliation", False,
+                    "validator failed: %s" % exc)
+
+    try:
+        binding_hashes = preflight.verify_frozen_bindings(project_root)
+        binding_hashes = preflight._validate_binding_manifest(binding_hashes)
+        _gate_check(checks, failures, "frozen_bindings", True,
+                    "W04/W03/W07/W07A/P4R bindings match frozen values")
+    except Exception as exc:
+        binding_hashes = None
+        _gate_check(checks, failures, "frozen_bindings", False,
+                    "frozen binding validation failed: %s" % exc)
+
+    try:
+        freeze_path = os.path.join(
+            project_root, *TECHNICAL_FREEZE_RELATIVE.split("/"))
+        freeze_ok = os.path.isfile(freeze_path) and \
+            _sha256(freeze_path).lower() == \
+            provenance.TECHNICAL_FREEZE_SHA256.lower()
+        _gate_check(checks, failures, "technical_freeze", freeze_ok,
+                    "technical freeze hash matches the P4R binding"
+                    if freeze_ok else "technical freeze is absent or tampered")
+    except Exception as exc:
+        _gate_check(checks, failures, "technical_freeze", False,
+                    "technical freeze validation failed: %s" % exc)
+
+    try:
+        if current_commit is None:
+            raise RuntimeError("current repository HEAD is unavailable")
+        if not os.path.isfile(certificate_path):
+            raise RuntimeError("G3 release certificate is absent")
+        certificate = _validate_release_certificate(certificate_path,
+                                                    current_commit)
+        _gate_check(checks, failures, "G3_release_certificate", True,
+                    "existing P5_release_gate.json is PASS and code-bound")
+    except Exception as exc:
+        certificate = None
+        _gate_check(checks, failures, "G3_release_certificate", False,
+                    "certificate validation failed: %s" % exc)
+
+    try:
+        _validate_w05_access_boundary(project_root)
+        _gate_check(checks, failures, "W05_access_boundary", True,
+                    "authorized A readers and fail-closed B reader are present")
+    except Exception as exc:
+        _gate_check(checks, failures, "W05_access_boundary", False,
+                    "W05 access boundary validation failed: %s" % exc)
+
+    model_lock = os.path.join(project_root, "prognosis_analysis",
+                              "model_freeze_lock.json")
+    model_lock_absent = not os.path.exists(model_lock)
+    _gate_check(checks, failures, "model_freeze_absent", model_lock_absent,
+                "model_freeze_lock.json absent"
+                if model_lock_absent else "model_freeze_lock.json exists")
+
+    status = None
+    try:
+        status = provenance.validate_execution_status(root=project_root)
+        b_closed = all(status["b_access"][field] is False
+                       for field in B_ACCESS_FLAGS)
+        _gate_check(checks, failures, "B_access_closed", b_closed,
+                    "all B access flags are false"
+                    if b_closed else "execution status contains a non-false B flag")
+        _gate_check(checks, failures, "prior_attempt_reconciled",
+                    _validate_prior_attempt_reconciled(status),
+                    "attempt_001_failed is explicitly reconciled under W08 HOLD")
+        outputs_absent = status["outputs"]["final_outputs_generated"] is False
+        _gate_check(checks, failures, "status_final_outputs_absent", outputs_absent,
+                    "execution status says final outputs are absent"
+                    if outputs_absent else "execution status says final outputs exist")
+    except Exception as exc:
+        if "B_access_closed" not in checks:
+            _gate_check(checks, failures, "B_access_closed", False,
+                        "execution status validation failed: %s" % exc)
+        if "prior_attempt_reconciled" not in checks:
+            _gate_check(checks, failures, "prior_attempt_reconciled", False,
+                        "execution status validation failed: %s" % exc)
+        if "status_final_outputs_absent" not in checks:
+            _gate_check(checks, failures, "status_final_outputs_absent", False,
+                        "execution status validation failed: %s" % exc)
+
+    try:
+        _validate_prior_output_inventory(output_root)
+        _gate_check(checks, failures, "prior_final_outputs_absent", True,
+                    "no prior formal output or resumable state is present")
+    except Exception as exc:
+        _gate_check(checks, failures, "prior_final_outputs_absent", False,
+                    "output inventory validation failed: %s" % exc)
+
+    b_flags = {field: False for field in B_ACCESS_FLAGS}
+    result = {
+        "stage": "W08",
+        "gate": "FORMAL_W08_RELEASE",
+        "status": "PASS" if not failures else "FAIL",
+        "formal_run_authorized": not bool(failures),
+        "code_commit": current_commit,
+        "certificate_path": _display_path(certificate_path, project_root),
+        "checks": checks,
+        "failure_reasons": list(failures),
+        "bindings": dict(binding_hashes or {}),
+        "environment_fingerprint": _environment_fingerprint(),
+        "B_data_read": b_flags["B_data_read"],
+        "B_reader_invoked": b_flags["B_reader_invoked"],
+        "B_source_opened": b_flags["B_source_opened"],
+        "B_statistics_generated": b_flags["B_statistics_generated"],
+        "final_outputs_generated": False,
+    }
+    if failures:
+        raise W08ReleaseGateError(
+            "W08 formal release gate failed: " + "; ".join(failures), result)
+    return result
 
 
 def _atomic_json(path, payload):
@@ -668,6 +995,66 @@ def write_results(result, config, population, started_epoch, output_root):
     _atomic_json(os.path.join(output_root, "run_metadata.json"), metadata)
 
 
+def _remove_formal_outputs(output_root):
+    """Remove only final files created by this failed formal attempt."""
+    for name in FINAL_OUTPUT_NAMES:
+        path = os.path.join(output_root, name)
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            # The failure state remains authoritative if a generated artifact
+            # cannot be removed; callers must not treat the run as complete.
+            pass
+
+
+def _write_failure_state(output_root, stage, exc, formal_run_started,
+                         project_root=PROJECT_ROOT, release_gate=None):
+    """Persist a non-success terminal state when it is safe to do so."""
+    output_root = os.path.abspath(os.fspath(output_root))
+    state_path = os.path.join(output_root, "run_state.json")
+    if os.path.exists(state_path) and not formal_run_started:
+        return False
+    if not formal_run_started:
+        try:
+            _validate_prior_output_inventory(output_root)
+        except Exception:
+            # Never overwrite or reinterpret an existing incomplete attempt.
+            return False
+    code_commit = (release_gate.get("code_commit")
+                   if isinstance(release_gate, dict) else None)
+    if not isinstance(code_commit, str) or len(code_commit) != 40:
+        try:
+            code_commit = _git_head(os.path.abspath(os.fspath(project_root)))
+        except Exception:
+            code_commit = None
+    reasons = list(getattr(exc, "failure_reasons", []))
+    if not reasons:
+        reasons = [str(exc)]
+    payload = {
+        "stage": "W08",
+        "status": "failed",
+        "formal_run": bool(formal_run_started),
+        "failure_stage": stage,
+        "exception_class": exc.__class__.__name__,
+        "failure_reasons": reasons,
+        "code_commit": code_commit,
+        "environment_fingerprint": _environment_fingerprint(),
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+        "release_gate": release_gate,
+        "created_at_epoch": time.time(),
+    }
+    try:
+        _atomic_json(state_path, payload)
+    except OSError:
+        return False
+    return True
+
+
 def _load_population_and_provider(output_root=OUTPUT_ROOT):
     population = w08.load_frozen_a_population()
     frame = load_a_feature_frame(population)
@@ -739,38 +1126,75 @@ def preflight_fold(output_root=OUTPUT_ROOT):
     }, ensure_ascii=False, sort_keys=True))
 
 
-def formal(output_root=OUTPUT_ROOT):
-    if os.path.exists(os.path.join(ROOT, "model_freeze_lock.json")):
-        raise RuntimeError("W08 must not create or consume model_freeze_lock.json")
-    final_names = ("predictions.csv", "fold_results.csv", "selection_results.csv",
-                   "audit.json", "run_metadata.json")
-    existing = [name for name in final_names
-                if os.path.exists(os.path.join(output_root, name))]
-    if existing:
-        raise RuntimeError("formal W08 output already exists; inspect before rerun: %s" %
-                           ",".join(existing))
+def formal(output_root=OUTPUT_ROOT, project_root=PROJECT_ROOT,
+           release_certificate_path=None):
+    """Run formal W08 only after the machine-enforced release gate passes."""
+    output_root = os.path.abspath(os.fspath(output_root))
+    project_root = os.path.abspath(os.fspath(project_root))
     started = time.time()
-    os.makedirs(output_root, exist_ok=True)
-    _atomic_json(os.path.join(output_root, "run_state.json"), {
-        "stage": "W08", "status": "running", "formal_run": True,
-        "B_data_read": False, "started_at_epoch": started,
-    })
-    population, frame, provider = _load_population_and_provider(output_root)
-    _atomic_json(os.path.join(output_root, "run_state.json"), {
-        "stage": "W08", "status": "modeling", "formal_run": True,
-        "B_data_read": False, "started_at_epoch": started,
-        "A_population": int(len(population)), "W_columns": 1130,
-        "slic_cache_cases": int(len(provider._case_cache)),
-    })
-    result = w08.run_w08(frame, provider)
-    write_results(result, w08.load_config(), population, started, output_root)
-    _atomic_json(os.path.join(output_root, "run_state.json"), {
-        "stage": "W08", "status": "complete", "formal_run": True,
-        "B_data_read": False, "started_at_epoch": started,
-        "completed_at_epoch": time.time(),
-        "n_fold_results": int(len(result["fold_results"])),
-        "n_predictions": int(len(result["predictions"])),
-    })
+    gate_result = None
+    try:
+        # This call must remain before any population/outcome/feature/image
+        # read, provider construction or model operation.
+        gate_result = validate_formal_release_gate(
+            output_root=output_root, project_root=project_root,
+            release_certificate_path=release_certificate_path)
+    except Exception as exc:
+        _write_failure_state(output_root, "release_gate", exc, False,
+                             project_root=project_root,
+                             release_gate=getattr(exc, "result", None))
+        raise
+
+    stage = "running"
+    try:
+        os.makedirs(output_root, exist_ok=True)
+        _atomic_json(os.path.join(output_root, "run_state.json"), {
+            "stage": "W08", "status": "running", "formal_run": True,
+            "failure_stage": None,
+            "B_data_read": False, "B_reader_invoked": False,
+            "B_source_opened": False, "B_statistics_generated": False,
+            "final_outputs_generated": False,
+            "code_commit": gate_result["code_commit"],
+            "release_gate": gate_result,
+            "started_at_epoch": started,
+        })
+        stage = "a_input_loading"
+        population, frame, provider = _load_population_and_provider(output_root)
+        _atomic_json(os.path.join(output_root, "run_state.json"), {
+            "stage": "W08", "status": "modeling", "formal_run": True,
+            "failure_stage": None,
+            "B_data_read": False, "B_reader_invoked": False,
+            "B_source_opened": False, "B_statistics_generated": False,
+            "final_outputs_generated": False,
+            "code_commit": gate_result["code_commit"],
+            "release_gate": gate_result,
+            "started_at_epoch": started,
+            "A_population": int(len(population)), "W_columns": 1130,
+            "slic_cache_cases": int(len(provider._case_cache)),
+        })
+        stage = "nested_cv_modeling"
+        result = w08.run_w08(frame, provider)
+        stage = "final_output_writing"
+        write_results(result, w08.load_config(), population, started, output_root)
+        _atomic_json(os.path.join(output_root, "run_state.json"), {
+            "stage": "W08", "status": "complete", "formal_run": True,
+            "failure_stage": None,
+            "B_data_read": False, "B_reader_invoked": False,
+            "B_source_opened": False, "B_statistics_generated": False,
+            "final_outputs_generated": True,
+            "code_commit": gate_result["code_commit"],
+            "release_gate": gate_result,
+            "started_at_epoch": started,
+            "completed_at_epoch": time.time(),
+            "n_fold_results": int(len(result["fold_results"])),
+            "n_predictions": int(len(result["predictions"])),
+        })
+    except Exception as exc:
+        _remove_formal_outputs(output_root)
+        _write_failure_state(output_root, stage, exc, True,
+                             project_root=project_root,
+                             release_gate=gate_result)
+        raise
     print(json.dumps({
         "stage": "W08", "status": "formal_complete",
         "n_fold_results": int(len(result["fold_results"])),
