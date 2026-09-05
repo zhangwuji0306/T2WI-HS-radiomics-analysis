@@ -94,6 +94,38 @@ class TechnicalPreflightTests(unittest.TestCase):
             self.population, self.splits, self.supervoxels,
             self.availability, binding_hashes=synthetic_bindings())
 
+    def test_canonical_split_hash_is_lf_stable_and_pandas_compatible(self):
+        frame = pd.DataFrame([
+            ["S001", 1, 1, "train", 12345],
+            ["S002", 1, 1, "validation", 12345],
+        ], columns=p5.SPLIT_COLUMNS)
+        expected_payload = (
+            "patient_id,repeat,fold,role,seed\n"
+            "S001,1,1,train,12345\n"
+            "S002,1,1,validation,12345\n")
+        expected = hashlib.sha256(expected_payload.encode("utf-8")).hexdigest()
+        original = pd.DataFrame.to_csv
+
+        def locked_to_csv(frame, *args, **kwargs):
+            if "lineterminator" in kwargs or "line_terminator" in kwargs:
+                raise TypeError("unsupported line terminator keyword")
+            return original(frame, *args, **kwargs)
+
+        with patch.object(pd.DataFrame, "to_csv", autospec=True,
+                          side_effect=locked_to_csv) as writer:
+            observed = p5._canonical_split_hash(frame)
+        self.assertEqual(observed, expected)
+        self.assertNotIn("lineterminator", writer.call_args.kwargs)
+        self.assertNotIn("line_terminator", writer.call_args.kwargs)
+
+    def test_canonical_split_hash_rejects_one_character_body_change(self):
+        expected = p5._canonical_split_hash(self.splits)
+        altered = self.splits.copy()
+        altered.loc[0, "role"] = "validation"
+        self.assertNotEqual(p5._canonical_split_hash(altered), expected)
+        with self.assertRaisesRegex(p5.P5ValidationError, "canonical split hash"):
+            p5.verify_split_frame(altered, self.population, expected_hash=expected)
+
     def test_frozen_plan_enumerates_all_50_units(self):
         fold_units = p5.verify_split_frame(self.splits, self.population)
         self.assertEqual(len(fold_units), 50)
@@ -225,14 +257,13 @@ class TechnicalPreflightTests(unittest.TestCase):
         })
         technical_calls = []
         outcome_calls = []
+        frozen_split_calls = []
         events = []
 
         def fake_technical(path, **kwargs):
             technical_calls.append((path, kwargs))
             events.append("technical")
             usecols = set(kwargs.get("usecols", []))
-            if kwargs.get("id_column") == "patient_id":
-                return self.splits.copy()
             if {"technical_cohort", "modeling_eligible"}.issubset(usecols):
                 return technical_population.copy()
             if "sv_label" in usecols:
@@ -243,6 +274,10 @@ class TechnicalPreflightTests(unittest.TestCase):
                 return whole_tumour_frame.copy()
             raise AssertionError("unexpected technical reader call: %s" % kwargs)
 
+        def fake_frozen_split(path, project_root, allowed_ids):
+            frozen_split_calls.append((path, project_root, set(allowed_ids)))
+            return self.splits.copy()
+
         def fake_outcomes(path, **kwargs):
             outcome_calls.append((path, kwargs))
             events.append("outcome")
@@ -252,21 +287,18 @@ class TechnicalPreflightTests(unittest.TestCase):
         split_path = os.path.join(
             root, "prognosis_analysis", "output", "outer_splits_A.csv")
         os.makedirs(os.path.dirname(split_path), exist_ok=True)
-        with open(split_path, "w", encoding="utf-8") as handle:
-            handle.write("placeholder\n")
-
         def fake_verify(project_root):
             events.append("bindings")
             return synthetic_bindings()
 
         try:
             with patch.object(p5, "verify_frozen_bindings", side_effect=fake_verify), \
-                    patch.object(p5, "_sha256_file",
-                                 return_value=p5.W07_OUTER_SPLIT_SHA256), \
                     patch.object(p5, "_canonical_split_hash",
                                  return_value=p5.W07_OUTER_SPLIT_SHA256), \
                     patch.object(data_split_guard, "read_technical_A",
                                  side_effect=fake_technical), \
+                    patch.object(data_split_guard, "read_frozen_A_split",
+                                 side_effect=fake_frozen_split), \
                     patch.object(data_split_guard, "read_A_outcomes",
                                  side_effect=fake_outcomes):
                 loaded = p5.load_authorized_a_inputs(root)
@@ -282,12 +314,10 @@ class TechnicalPreflightTests(unittest.TestCase):
         self.assertEqual(events[0], "bindings")
         self.assertLess(events.index("technical"), events.index("outcome"))
         self.assertTrue(outcome_calls)
+        self.assertEqual(len(frozen_split_calls), 1)
+        self.assertEqual(frozen_split_calls[0][2], set(ids))
         self.assertEqual(outcome_calls[0][1]["usecols"],
                          ["影像号", "DFS_time", "DFS_event"])
-        self.assertTrue(any(
-            call[1].get("id_column") == "patient_id" and
-            call[1].get("usecols") == p5.SPLIT_COLUMNS
-            for call in technical_calls))
         for _, kwargs in technical_calls:
             self.assertFalse(set(kwargs.get("usecols", [])) &
                              {"DFS_time", "DFS_event"})

@@ -242,9 +242,13 @@ def _normalise_split(split_frame):
 
 
 def _canonical_split_hash(split_frame):
-    return hashlib.sha256(
-        split_frame[SPLIT_COLUMNS].to_csv(
-            index=False, lineterminator="\n").encode("utf-8")).hexdigest()
+    # ``lineterminator`` is not accepted by the locked pandas 1.3.5 runtime
+    # (the older spelling is ``line_terminator``).  Avoid both version-
+    # specific keywords and normalize the returned text so the contract is
+    # always the exact LF-delimited W07 CSV payload.
+    payload = split_frame[SPLIT_COLUMNS].to_csv(index=False)
+    payload = payload.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def verify_split_frame(split_frame, population, expected_hash=None):
@@ -909,21 +913,24 @@ def _normalise_a_population_metadata(frame):
     return data.reset_index(drop=True)
 
 
-def _load_frozen_split_authorized(split_path, population, expected_hash):
-    """Load the fixed W07 split through the authorized reader, never pandas directly."""
-    if not os.path.isfile(split_path):
-        raise P5ValidationError("frozen W07 outer split artifact is missing")
-    if _sha256_file(split_path).lower() != W07_OUTER_SPLIT_SHA256:
-        raise P5ValidationError("W07 outer split artifact hash mismatch")
+def _load_frozen_split_authorized(split_path, population, expected_hash,
+                                  project_root=PROJECT_ROOT):
+    """Load the fixed W07 split through its dedicated authorized reader."""
+    if expected_hash != W07_OUTER_SPLIT_SHA256:
+        raise P5ValidationError("W07 split binding value is not the frozen hash")
     ids = set(population["patient_id"])
-    split_frame = _read_authorized_a(
-        split_path, allowed_ids=ids, usecols=SPLIT_COLUMNS,
-        dtype={"patient_id": str}, id_column="patient_id")
+    feature_scripts = os.path.join(PROJECT_ROOT, "feature_extract", "scripts")
+    if feature_scripts not in sys.path:
+        sys.path.insert(0, feature_scripts)
+    from data_split_guard import read_frozen_A_split
+    try:
+        split_frame = read_frozen_A_split(
+            split_path, project_root=project_root, allowed_ids=ids)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise P5ValidationError(str(exc)) from exc
     split_frame = _normalise_split(split_frame)
     if _canonical_split_hash(split_frame).lower() != W07_OUTER_SPLIT_SHA256:
         raise P5ValidationError("W07 canonical split hash mismatch")
-    if expected_hash != W07_OUTER_SPLIT_SHA256:
-        raise P5ValidationError("W07 split binding value is not the frozen hash")
     verify_split_frame(split_frame, population, expected_hash)
     return split_frame
 
@@ -970,7 +977,8 @@ def load_authorized_a_inputs(project_root=PROJECT_ROOT):
     if set(ids) != technical_ids:
         raise P5ValidationError("A population normalization changed authorized IDs")
     split_frame = _load_frozen_split_authorized(
-        split_path, population, bindings["W07_outer_split_artifact"])
+        split_path, population, bindings["W07_outer_split_artifact"],
+        project_root=root)
     supervoxels = _read_authorized_a(
         supervoxel_path, allowed_ids=ids,
         usecols=["影像号", "reader", "sv_label", "n_tumor_voxels", "Mean"],

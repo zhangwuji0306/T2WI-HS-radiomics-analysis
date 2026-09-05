@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import sys
@@ -20,6 +21,31 @@ for path in (FEATURE_SCRIPTS, PROGNOSIS_SCRIPTS):
 import build_model_dataset_a as builder  # noqa: E402
 import data_split_guard  # noqa: E402
 import stage6_qc  # noqa: E402
+
+
+def _synthetic_frozen_split(ids=("A1", "A2", "A3", "A4", "A5")):
+    rows = []
+    for repeat in range(1, 11):
+        seed = 12345 + repeat - 1
+        for fold in range(1, 6):
+            validation_id = ids[fold - 1]
+            for patient_id in ids:
+                rows.append({
+                    "patient_id": patient_id,
+                    "repeat": repeat,
+                    "fold": fold,
+                    "role": ("validation" if patient_id == validation_id
+                             else "train"),
+                    "seed": seed,
+                })
+    return pd.DataFrame(rows, columns=data_split_guard.FROZEN_A_SPLIT_COLUMNS)
+
+
+def _write_split(path, frame):
+    frame.to_csv(path, index=False, encoding="utf-8-sig")
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _model_lock():
@@ -54,6 +80,95 @@ def _model_lock():
 
 
 class W05ReaderTests(unittest.TestCase):
+    def test_frozen_split_reader_allows_required_repeated_ids(self):
+        frame = _synthetic_frozen_split()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "prognosis_analysis", "output",
+                                "outer_splits_A.csv")
+            os.makedirs(os.path.dirname(path))
+            digest = _write_split(path, frame)
+            canonical_digest = data_split_guard._canonical_csv_sha256(
+                frame, data_split_guard.FROZEN_A_SPLIT_COLUMNS)
+            with mock.patch.object(data_split_guard, "FROZEN_A_SPLIT_SHA256",
+                                   digest), \
+                    mock.patch.object(data_split_guard,
+                                      "FROZEN_A_SPLIT_CANONICAL_SHA256",
+                                      canonical_digest):
+                result = data_split_guard.read_frozen_A_split(
+                    path, project_root=tmp,
+                    allowed_ids=["A1", "A2", "A3", "A4", "A5"])
+        self.assertEqual(len(result), 250)
+        self.assertEqual(result["patient_id"].value_counts().to_dict(),
+                         {"A1": 50, "A2": 50, "A3": 50, "A4": 50,
+                          "A5": 50})
+
+    def test_frozen_split_reader_fails_closed_for_path_hash_schema_and_values(self):
+        frame = _synthetic_frozen_split()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "prognosis_analysis", "output",
+                                "outer_splits_A.csv")
+            os.makedirs(os.path.dirname(path))
+            digest = _write_split(path, frame)
+            with self.assertRaisesRegex(RuntimeError, "project-locked"):
+                data_split_guard.read_frozen_A_split(
+                    os.path.join(tmp, "wrong.csv"), project_root=tmp,
+                    allowed_ids=["A1", "A2", "A3", "A4", "A5"])
+            with mock.patch.object(data_split_guard, "FROZEN_A_SPLIT_SHA256",
+                                   "0" * 64), \
+                    mock.patch.object(data_split_guard,
+                                      "FROZEN_A_SPLIT_CANONICAL_SHA256",
+                                      digest):
+                with self.assertRaisesRegex(RuntimeError, "raw hash"):
+                    data_split_guard.read_frozen_A_split(
+                        path, project_root=tmp,
+                        allowed_ids=["A1", "A2", "A3", "A4", "A5"])
+            with mock.patch.object(data_split_guard, "FROZEN_A_SPLIT_SHA256",
+                                   digest), \
+                    mock.patch.object(data_split_guard,
+                                      "FROZEN_A_SPLIT_CANONICAL_SHA256",
+                                      "0" * 64):
+                with self.assertRaisesRegex(RuntimeError, "canonical hash"):
+                    data_split_guard.read_frozen_A_split(
+                        path, project_root=tmp,
+                        allowed_ids=["A1", "A2", "A3", "A4", "A5"])
+
+            bad_schema = frame.copy()
+            bad_schema.columns = ["patient_id", "repeat", "fold", "role",
+                                  "unexpected"]
+            schema_path = os.path.join(tmp, "prognosis_analysis", "output",
+                                       "schema.csv")
+            schema_digest = _write_split(schema_path, bad_schema)
+            schema_target = os.path.join(tmp, "prognosis_analysis", "output",
+                                         "outer_splits_A.csv")
+            os.replace(schema_path, schema_target)
+            with mock.patch.object(data_split_guard, "FROZEN_A_SPLIT_SHA256",
+                                   schema_digest):
+                with self.assertRaisesRegex(RuntimeError, "columns"):
+                    data_split_guard.read_frozen_A_split(
+                        schema_target, project_root=tmp,
+                        allowed_ids=["A1", "A2", "A3", "A4", "A5"])
+
+    def test_frozen_split_reader_rejects_role_or_seed_alteration(self):
+        for column, value, message in (
+                ("role", "invalid", "invalid role"),
+                ("seed", 99999, "seed derivation")):
+            with self.subTest(column=column), tempfile.TemporaryDirectory() as tmp:
+                frame = _synthetic_frozen_split()
+                frame.loc[0, column] = value
+                path = os.path.join(tmp, "prognosis_analysis", "output",
+                                    "outer_splits_A.csv")
+                os.makedirs(os.path.dirname(path))
+                digest = _write_split(path, frame)
+                with mock.patch.object(data_split_guard,
+                                       "FROZEN_A_SPLIT_SHA256", digest), \
+                        mock.patch.object(data_split_guard,
+                                          "FROZEN_A_SPLIT_CANONICAL_SHA256",
+                                          digest):
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        data_split_guard.read_frozen_A_split(
+                            path, project_root=tmp,
+                            allowed_ids=["A1", "A2", "A3", "A4", "A5"])
+
     def test_a_outcome_missing_first_lock_fails_before_reader(self):
         reader = mock.Mock(side_effect=AssertionError("A outcome source opened"))
         with tempfile.TemporaryDirectory() as tmp, \

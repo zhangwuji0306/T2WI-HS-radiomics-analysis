@@ -9,7 +9,9 @@ frame cannot prove that disallowed rows were not materialized first.
 from __future__ import annotations
 
 import csv
+import hashlib
 import os
+import re
 import sys
 from typing import Iterable, Optional, Set
 
@@ -42,6 +44,20 @@ FREEZE_LOCK = os.path.join(HABITAT_ROOT, "freeze_lock.json")
 # deliberately not consulted for authorization.
 B_UNLOCK_LOCK = os.path.join(HABITAT_ROOT, "b_validation_unlock.json")
 MODEL_FREEZE_LOCK = os.path.join(PROGNOSIS_ROOT, "model_freeze_lock.json")
+
+# The W07 split is a frozen A-only artifact with one row per patient per
+# repeat/fold/role.  It cannot use the ordinary unique-ID reader because a
+# patient_id intentionally occurs in five rows per repeat.
+FROZEN_A_SPLIT_RELATIVE_PATH = os.path.join(
+    "prognosis_analysis", "output", "outer_splits_A.csv")
+FROZEN_A_SPLIT_SHA256 = (
+    "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502")
+FROZEN_A_SPLIT_CANONICAL_SHA256 = FROZEN_A_SPLIT_SHA256
+FROZEN_A_SPLIT_COLUMNS = ["patient_id", "repeat", "fold", "role", "seed"]
+FROZEN_A_SPLIT_ROLES = ("train", "validation")
+FROZEN_A_SPLIT_REPEATS = 10
+FROZEN_A_SPLIT_FOLDS = 5
+FROZEN_A_SPLIT_SEED_ROOT = 12345
 
 
 def resolve_cohort_membership(manifest, scanner):
@@ -138,6 +154,115 @@ def _validate_authorized_frame(frame: pd.DataFrame, allowed_ids,
     validated = frame.copy()
     validated[id_column] = identifiers
     return validated
+
+
+def _absolute_path(path):
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _canonical_csv_sha256(frame, columns):
+    payload = frame[columns].to_csv(index=False)
+    payload = payload.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _parse_frozen_split_int(raw, column):
+    value = "" if raw is None else str(raw)
+    if not re.match(r"^(0|[1-9][0-9]*)$", value):
+        raise RuntimeError("frozen W07 split has invalid %s" % column)
+    return int(value)
+
+
+def _validate_frozen_split_contract(frame, allowed_ids):
+    if list(frame.columns) != FROZEN_A_SPLIT_COLUMNS:
+        raise RuntimeError("frozen W07 split columns do not match the contract")
+    allowed = _normalize_allowlist(allowed_ids)
+    if not allowed:
+        raise RuntimeError("frozen W07 split requires a non-empty A allow-list")
+    if len(frame) != len(allowed) * FROZEN_A_SPLIT_REPEATS * FROZEN_A_SPLIT_FOLDS:
+        raise RuntimeError("frozen W07 split row count does not match the A contract")
+    if set(frame["patient_id"]) != allowed:
+        raise RuntimeError("frozen W07 split IDs do not match the authorized A IDs")
+    if frame.duplicated(subset=["repeat", "fold", "patient_id"]).any():
+        raise RuntimeError("frozen W07 split contains duplicate patient/fold rows")
+
+    for repeat in range(1, FROZEN_A_SPLIT_REPEATS + 1):
+        repeated = frame[frame["repeat"] == repeat]
+        if len(repeated) != len(allowed) * FROZEN_A_SPLIT_FOLDS:
+            raise RuntimeError("frozen W07 split repeat coverage mismatch")
+        if set(repeated["seed"]) != {
+                FROZEN_A_SPLIT_SEED_ROOT + repeat - 1}:
+            raise RuntimeError("frozen W07 split seed derivation mismatch")
+        validation_counts = repeated[repeated["role"] == "validation"] \
+            .groupby("patient_id").size()
+        training_counts = repeated[repeated["role"] == "train"] \
+            .groupby("patient_id").size()
+        if not validation_counts.eq(1).all() or not training_counts.eq(
+                FROZEN_A_SPLIT_FOLDS - 1).all():
+            raise RuntimeError("frozen W07 split role coverage mismatch")
+        for fold in range(1, FROZEN_A_SPLIT_FOLDS + 1):
+            group = repeated[repeated["fold"] == fold]
+            if len(group) != len(allowed) or set(group["patient_id"]) != allowed:
+                raise RuntimeError("frozen W07 split fold coverage mismatch")
+            if set(group["role"]) != set(FROZEN_A_SPLIT_ROLES):
+                raise RuntimeError("frozen W07 split roles do not match the A contract")
+
+
+def read_frozen_A_split(path, project_root, allowed_ids=None):
+    """Read the immutable A-only W07 split with its repeated-row contract."""
+    expected_path = os.path.join(project_root, FROZEN_A_SPLIT_RELATIVE_PATH)
+    supplied_path = _absolute_path(path)
+    if supplied_path != _absolute_path(expected_path) or \
+            _absolute_path(os.path.realpath(path)) != \
+            _absolute_path(os.path.realpath(expected_path)):
+        raise RuntimeError("frozen W07 split path is not the project-locked A artifact")
+    if not os.path.isfile(path):
+        raise RuntimeError("frozen W07 split artifact is missing")
+    if _sha256_file(path).lower() != FROZEN_A_SPLIT_SHA256:
+        raise RuntimeError("frozen W07 split raw hash mismatch")
+    allowlist = _normalize_allowlist(allowed_ids)
+    if allowlist is None:
+        raise RuntimeError("frozen W07 split requires an A allow-list")
+
+    rows = []
+    with open(path, "r", newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames != FROZEN_A_SPLIT_COLUMNS:
+            raise RuntimeError("frozen W07 split columns do not match the contract")
+        for row in reader:
+            if None in row or any(row.get(column) is None
+                                  for column in FROZEN_A_SPLIT_COLUMNS):
+                raise RuntimeError("frozen W07 split contains malformed rows")
+            patient_id = row["patient_id"]
+            if patient_id == "" or patient_id != patient_id.strip():
+                raise RuntimeError("frozen W07 split contains invalid patient_id")
+            if patient_id not in allowlist:
+                raise RuntimeError("frozen W07 split contains an unauthorized patient_id")
+            role = row["role"]
+            if role not in FROZEN_A_SPLIT_ROLES:
+                raise RuntimeError("frozen W07 split contains an invalid role")
+            rows.append({
+                "patient_id": patient_id,
+                "repeat": _parse_frozen_split_int(row["repeat"], "repeat"),
+                "fold": _parse_frozen_split_int(row["fold"], "fold"),
+                "role": role,
+                "seed": _parse_frozen_split_int(row["seed"], "seed"),
+            })
+
+    frame = pd.DataFrame(rows, columns=FROZEN_A_SPLIT_COLUMNS)
+    _validate_frozen_split_contract(frame, allowlist)
+    if _canonical_csv_sha256(frame, FROZEN_A_SPLIT_COLUMNS).lower() != \
+            FROZEN_A_SPLIT_CANONICAL_SHA256:
+        raise RuntimeError("frozen W07 split canonical hash mismatch")
+    return frame
 
 
 def _stream_csv(path, allowed_ids: Set[str], id_column: str, *args, **kwargs):
