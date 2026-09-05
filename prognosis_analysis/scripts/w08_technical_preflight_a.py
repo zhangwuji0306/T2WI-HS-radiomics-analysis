@@ -318,7 +318,13 @@ def verify_frozen_bindings(project_root=PROJECT_ROOT):
     hashes = OrderedDict()
     for label, (relative, expected) in _BINDING_FILES.items():
         path = os.path.join(root, *relative.split("/"))
-        if _sha256_file(path).lower() != expected.lower():
+        if not os.path.isfile(path):
+            raise P5ValidationError("frozen binding is missing: %s" % label)
+        try:
+            observed = _sha256_file(path)
+        except OSError as exc:
+            raise P5ValidationError("frozen binding cannot be read: %s" % label) from exc
+        if observed.lower() != expected.lower():
             raise P5ValidationError("frozen binding hash mismatch: %s" % label)
         hashes[label] = expected.lower()
 
