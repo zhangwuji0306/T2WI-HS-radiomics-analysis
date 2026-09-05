@@ -20,6 +20,7 @@
 - W04 建模协议已在首次读取 DFS 前冻结：固定 M0–M5 及比较层级、DFS 3年/5年主时间点、A-only 人群资格、结构性缺失与可用性规则、5折×10重复嵌套交叉验证、事件分层、training-only 预处理、Elastic-Net Cox alpha 网格与内层 CV lambda 规则；`prognosis_analysis/modeling_protocol.json` 的 SHA-256 为`888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe`。冻结时未读取 DFS/OS/CSS 或任何 B 数据，`B_unlock=false`，`model_freeze_lock.json` 尚未生成。
 - W05 A-only 数据访问边界已完成：正式入口为 `prognosis_analysis/scripts/build_model_dataset_a.py --split A`；technical A、A clinical/outcomes、B validation 分别使用显式 reader，A outcome 受第一把锁保护，B 仅接受 `model_freeze_lock.json` 授权。A 模式先读取 A393/A137 technical IDs，再按 ID 白名单读取临床/结局和原始 feature，并只生成 A 产物；legacy builder 已 fail closed。W05 合成数据与回归门禁通过，尚未生成 `model_freeze_lock.json`，未读取真实 DFS 或 B 数据。
 - W06 已完成首次 A-only DFS 读取与 endpoint QC：A393 共393例，DFS事件89例、删失304例；随访中位数73.495个月（IQR 48.723–96.296），反向KM中位随访84.402个月，3年/5年可评估分别为312/270例。DFS缺失、非正时间、重复ID及event/time冲突均为0，A modeling population为393例。W06使用`read_A_outcomes`仅请求DFS三列，`model_freeze_lock.json`不存在，B未读取。
+- W07A 与 P3C/P3D/P3E 已完成并通过独立复核；G2R 已在锁定 `t2_radiomics` 环境中完成，完整测试发现集为132/132，通过0失败、0错误、0跳过，W00B/W05/W08 针对性测试分别为9/9、15/15、16/16。`G2_environment_fingerprint.json`记录了环境、依赖及哈希证据；`B_data_read=false`，尚未启动正式 W08。流程文字中的107项与当前基线实际132项测试的计数差异已保留为非阻塞口径事项。
 - GitHub/Codex 仓库采用代码和文档边界；原始影像、临床数据、患者级结果和原始影像号均保留在本地。
 
 ## In progress
@@ -30,7 +31,7 @@
 
 ## Next task
 
-当前已完成 W06 A 集 endpoint QC 与 A modeling population 冻结。下一阶段执行 W07 CV split freeze 及后续 A-only nested validation；完成全 A 最终拟合并生成第二阶段 `model_freeze_lock.json` 后，才允许首次读取 B 集进行一次性外部验证。
+W07A、P3C/P3D/P3E 与 G2R 已完成。下一阶段待启动 P4/P5；正式 W08、全 A 最终拟合及第二阶段 `model_freeze_lock.json` 生成均尚未执行，生成第二阶段锁后才允许首次读取 B 集进行一次性外部验证。
 
 ## Important decisions
 
