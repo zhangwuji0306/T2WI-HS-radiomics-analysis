@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import sys
 import unittest
 
 
@@ -10,6 +11,11 @@ PROTOCOL_MD = os.path.join(ROOT, "prognosis_analysis", "modeling_protocol.md")
 W03_FREEZE = os.path.join(
     ROOT, "prognosis_analysis", "output", "w03_habitat_radiomics_A",
     "candidate_freeze.json")
+SCRIPT_ROOT = os.path.join(ROOT, "prognosis_analysis", "scripts")
+if SCRIPT_ROOT not in sys.path:
+    sys.path.insert(0, SCRIPT_ROOT)
+
+from provenance_reconciliation import validate_manifest  # noqa: E402
 
 
 def sha256(path):
@@ -89,10 +95,8 @@ class ModelingProtocolFreezeTests(unittest.TestCase):
         self.assertTrue(model_lock["must_not_be_created_by_W04"])
 
     def test_source_revisions_match_local_files(self):
-        for source in self.protocol["source_revisions"].values():
-            path = os.path.join(ROOT, source["path"].replace("/", os.sep))
-            self.assertTrue(os.path.isfile(path), source["path"])
-            self.assertEqual(sha256(path), source["sha256"], source["path"])
+        result = validate_manifest(root=ROOT)
+        self.assertEqual(result["status"], "PASS")
 
     def test_primary_endpoint_and_secondary_scope(self):
         endpoint = self.protocol["endpoint"]

@@ -1,0 +1,146 @@
+{
+  "schema": {
+    "id": "W07A_pre_W08_provenance_reconciliation",
+    "version": "1.0",
+    "status": "approved_reconciliation",
+    "hash_algorithm": "SHA-256",
+    "scope": "non_patient_level_document_provenance_only"
+  },
+  "verification": {
+    "source_commit": "b35605c931b7a00bd1ef503120a5a26057be9a8e",
+    "source_commit_role": "verification_base_and_approved_successor_snapshot",
+    "git_required": true
+  },
+  "protocol_owner_approval": {
+    "status": "approved",
+    "scope": "P4 document-provenance reconciliation only",
+    "permits": [
+      "preserve W04 historical source revision and verify its exact Git recovery",
+      "register W04 workflow archive path migration and current successor SOP",
+      "register W07A unrecoverable historical snapshot as an explicit exception",
+      "add this independent manifest and fail-closed validator",
+      "update the P4 integrity audit with the reconciliation evidence"
+    ],
+    "does_not_permit": [
+      "modify freeze_lock or any frozen scientific artifact",
+      "modify modeling_protocol, W03 candidate freeze, W07 split, or W07A amendment",
+      "change scientific or modeling parameters",
+      "read B data or start formal W08",
+      "start P5 implementation, G2R2, 50-fold P5, or G3"
+    ]
+  },
+  "global_invariants": {
+    "outcome_performance_informed": false,
+    "scientific_parameters_changed": false,
+    "B_data_read": false,
+    "formal_W08_started": false
+  },
+  "approved_successors": {
+    "scientific_master_protocol": {
+      "path": "T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md",
+      "version": "current_scientific_master_protocol_successor",
+      "git_commit": "b35605c931b7a00bd1ef503120a5a26057be9a8e",
+      "sha256": "cc881c008629a1acc0a2b4e6570b4ef277faa27ed5c9f12f908ee947b42381dd",
+      "git_snapshot_sha256": "cc881c008629a1acc0a2b4e6570b4ef277faa27ed5c9f12f908ee947b42381dd",
+      "approved_successor": true,
+      "role": "current Scientific Master Protocol; W04 scientific and modeling freeze remains authoritative in modeling_protocol.json"
+    },
+    "pre_w08_sop": {
+      "path": "T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md",
+      "version": "current_authoritative_pre_w08_operational_sop",
+      "git_commit": "21f2bf7f0bb3cbbad2f8e4d1a305f748d60f60d2",
+      "sha256": "0e9e48d8b02a101dad306cc76945249f051eb547f2319bd052fc75c3d49cd5ad",
+      "git_snapshot_sha256": "e5549211211fda3bfe1dfc8f6ba826b6be5f7e7943fb6d96ed4444899857603a",
+      "approved_successor": true,
+      "role": "current authoritative operational SOP for post-freeze remediation and later gated stages"
+    }
+  },
+  "reconciliations": {
+    "w04_taskbook": {
+      "source_binding": {
+        "owner": "prognosis_analysis/modeling_protocol.json:source_revisions.taskbook",
+        "path": "T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md",
+        "sha256": "0ba96334e37b5729356b947ffa41bd2d52649cc84f8d760ba4bbc51a129ffc3c"
+      },
+      "historical_exact_recovery": {
+        "status": "recoverable",
+        "git_commit": "78b0e8f48becd64413859027e8809e155ecded5e",
+        "git_path": "T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md",
+        "git_blob": "8a89c12b621b2560202902df3477aaa11acd0a5c",
+        "verification_sha256": "0ba96334e37b5729356b947ffa41bd2d52649cc84f8d760ba4bbc51a129ffc3c",
+        "exact_verification": true,
+        "verification_method": "read Git commit/path bytes and recompute SHA-256"
+      },
+      "current_successor_id": "scientific_master_protocol",
+      "relationship": "W04 preserves the historical taskbook revision; the current same-path Scientific Master Protocol is an approved maintenance successor, while W04 scientific and modeling freeze authority remains the recorded modeling_protocol.json revision.",
+      "semantic_review": {
+        "status": "approved",
+        "conclusion": "The current successor adds document-role, status, use, and current-SOP metadata without changing the frozen scientific question, model hierarchy, technical parameters, or A/B access boundary.",
+        "scientific_parameters_changed": false,
+        "outcome_performance_informed": false
+      }
+    },
+    "w04_workflow_path_migration": {
+      "source_binding": {
+        "owner": "prognosis_analysis/modeling_protocol.json:source_revisions.workflow",
+        "path": "三十二、具体执行工作流：从 formal PASS 至 A-only model freeze.md",
+        "sha256": "26be0bae34faf6dc0b22c7bb3f3e041988ed87cb85b5de1c72cfe8969bd1fd6d"
+      },
+      "archive_exact_recovery": {
+        "status": "recoverable",
+        "git_commit": "21f2bf7f0bb3cbbad2f8e4d1a305f748d60f60d2",
+        "git_path": "archive/protocol_history/三十二、具体执行工作流：从 formal PASS 至 A-only model freeze.md",
+        "git_blob": "ceb7146ec51e73da03bb1a8f04d6cac9026c66b4",
+        "verification_sha256": "26be0bae34faf6dc0b22c7bb3f3e041988ed87cb85b5de1c72cfe8969bd1fd6d",
+        "exact_verification": true,
+        "verification_method": "read the post-rename archive Git commit/path bytes and recompute SHA-256"
+      },
+      "migration": {
+        "from_path": "三十二、具体执行工作流：从 formal PASS 至 A-only model freeze.md",
+        "to_archive_path": "archive/protocol_history/三十二、具体执行工作流：从 formal PASS 至 A-only model freeze.md",
+        "rename_commit": "21f2bf7f0bb3cbbad2f8e4d1a305f748d60f60d2",
+        "rename_similarity": "100%",
+        "archive_role": "historical_only_not_current_execution_input"
+      },
+      "current_successor_id": "pre_w08_sop",
+      "relationship": "The W04 root workflow binding is closed by an exact archive path migration; the archive remains historical and the current Pre-W08 SOP is the approved operational successor.",
+      "semantic_review": {
+        "status": "approved",
+        "conclusion": "The archive preserves the W04 workflow bytes and historical role; the current successor SOP carries the later gated operational workflow without changing W04 frozen scientific or modeling parameters.",
+        "scientific_parameters_changed": false,
+        "outcome_performance_informed": false
+      }
+    },
+    "w07a_workflow": {
+      "source_binding": {
+        "owner": "prognosis_analysis/W07A_pre_W08_protocol_amendment.json:source_provenance.workflow",
+        "path": "T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md",
+        "sha256": "ef3db6abb0c51765d0d34f15ede9a19931f7301633fac2da01934e8017c21fd3"
+      },
+      "historical_exact_recovery": {
+        "status": "historical_source_snapshot_unrecoverable",
+        "git_commit": null,
+        "git_path": null,
+        "git_blob": null,
+        "verification_sha256": null,
+        "exact_verification": false,
+        "unrecoverable_reason": "The exact pre-amendment byte snapshot is not present as a recoverable Git object/path in the available repository history; no byte-exact reconstruction is claimed."
+      },
+      "current_successor_id": "pre_w08_sop",
+      "relationship": "The current authoritative Pre-W08 SOP is an approved successor to the recorded W07A workflow source; the historical source hash is retained and its unrecoverability is an explicit exception.",
+      "semantic_review": {
+        "status": "approved",
+        "conclusion": "The current successor's operational additions and restructuring do not alter the already-frozen W07A scientific decisions, technical parameters, or A/B access boundary; later P5 and governance text is not retroactively treated as W07A freeze content.",
+        "scientific_parameters_changed": false,
+        "outcome_performance_informed": false
+      },
+      "exception": {
+        "id": "historical_source_snapshot_unrecoverable",
+        "required": true,
+        "exact_verification": false,
+        "byte_exact_pass": false,
+        "acceptance": "reconciliation_pass_with_explicit_exception_only; never a byte-exact PASS"
+      }
+    }
+  }
+}
