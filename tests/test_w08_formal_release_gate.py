@@ -24,14 +24,15 @@ B_FLAGS = (
 )
 
 
-def _status(b_data_read=False, failed=False, commit=CURRENT_COMMIT):
+def _status(b_data_read=False, failed=False, commit=CURRENT_COMMIT,
+            attempt_id="attempt_001_failed"):
     if failed:
         execution = {
             "stage": "W08", "gate": "HOLD",
             "formal_w08_started": True, "last_attempt_status": "failed",
         }
         last_attempt = {
-            "attempt_id": "attempt_001_failed", "status": "failed",
+            "attempt_id": attempt_id, "status": "failed",
             "failure_stage": "nested_cv_modeling_radiomics_extraction",
             "failure_reason_summary": "synthetic failure",
             "code_commit_at_attempt": commit,
@@ -52,6 +53,81 @@ def _status(b_data_read=False, failed=False, commit=CURRENT_COMMIT):
         "b_access": dict((key, b_data_read if key == "B_data_read" else False)
                           for key in B_FLAGS),
     }
+
+
+def _write_archived_attempt(output_root, attempt_id="attempt_002_failed",
+                            run_status="failed", failure_status="failed",
+                            b_overrides=None, final_outputs=False):
+    attempt_root = os.path.join(output_root, "attempts", attempt_id)
+    os.makedirs(attempt_root)
+    failure = {
+        "attempt_id": attempt_id,
+        "stage": "W08",
+        "status": failure_status,
+        "failure_stage": "nested_cv_modeling_radiomics_extraction",
+        "exception_summary": "synthetic failure",
+        "code_commit_at_attempt": CURRENT_COMMIT,
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": final_outputs,
+    }
+    if b_overrides:
+        failure.update(b_overrides)
+    with open(os.path.join(attempt_root, "failure_audit.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(failure, handle)
+    run_state = {
+        "stage": "W08",
+        "status": run_status,
+        "formal_run": True,
+        "failure_stage": "nested_cv_modeling_radiomics_extraction",
+        "code_commit": CURRENT_COMMIT,
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": final_outputs,
+    }
+    with open(os.path.join(attempt_root, "run_state.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(run_state, handle)
+
+
+def _write_r0_compatible_attempt(output_root):
+    attempt_id = "attempt_001_failed"
+    attempt_root = os.path.join(output_root, "attempts", attempt_id)
+    os.makedirs(attempt_root)
+    failure = {
+        "attempt_id": attempt_id,
+        "stage": "W08",
+        "status": "failed",
+        "failure_stage": "nested_cv_modeling_radiomics_extraction",
+        "exception_summary": "synthetic failure",
+        "code_commit_at_attempt": CURRENT_COMMIT,
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+    }
+    with open(os.path.join(attempt_root, "failure_audit.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(failure, handle)
+    run_state = {
+        "A_population": 393,
+        "B_data_read": False,
+        "formal_run": True,
+        "slic_cache_cases": 0,
+        "stage": "W08",
+        "started_at_epoch": 1.0,
+        "status": "modeling",
+        "W_columns": 1130,
+    }
+    with open(os.path.join(attempt_root, "run_state.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(run_state, handle)
 
 
 class W08ReleaseGateTests(unittest.TestCase):
@@ -182,6 +258,97 @@ class W08ReleaseGateTests(unittest.TestCase):
                     output_root, status=_status(failed=True))
         self.assertTrue(any("reconciliation artifacts" in reason
                             for reason in raised.exception.result["failure_reasons"]))
+
+    def test_archived_failure_schema_accepts_explicit_failed_attempt(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            _write_archived_attempt(output_root)
+            result = self._run_with_base_gate(
+                output_root,
+                status=_status(failed=True, attempt_id="attempt_002_failed"))
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["checks"]["prior_attempts_reconciled"]["status"],
+                         "PASS")
+
+    def test_r0_archived_attempt_schema_remains_compatible(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            _write_r0_compatible_attempt(output_root)
+            result = self._run_with_base_gate(
+                output_root, status=_status(failed=True))
+        self.assertEqual(result["status"], "PASS")
+
+    def test_archived_attempt_inflight_statuses_fail_closed(self):
+        for run_status in ("running", "modeling", "incomplete", "unknown"):
+            with self.subTest(run_status=run_status):
+                with tempfile.TemporaryDirectory() as output_root:
+                    _write_archived_attempt(
+                        output_root, run_status=run_status)
+                    with self.assertRaises(formal.W08ReleaseGateError) as raised:
+                        self._run_with_base_gate(
+                            output_root,
+                            status=_status(
+                                failed=True, attempt_id="attempt_002_failed"))
+                self.assertTrue(any("explicitly failed" in reason
+                                    for reason in raised.exception.result[
+                                        "failure_reasons"]))
+
+    def test_archived_attempt_missing_or_unsafe_fields_fail_closed(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            _write_archived_attempt(
+                output_root, b_overrides={"B_source_opened": True})
+            with self.assertRaises(formal.W08ReleaseGateError):
+                self._run_with_base_gate(
+                    output_root,
+                    status=_status(failed=True, attempt_id="attempt_002_failed"))
+
+        with tempfile.TemporaryDirectory() as output_root:
+            _write_archived_attempt(output_root, final_outputs=True)
+            with self.assertRaises(formal.W08ReleaseGateError):
+                self._run_with_base_gate(
+                    output_root,
+                    status=_status(failed=True, attempt_id="attempt_002_failed"))
+
+        with tempfile.TemporaryDirectory() as output_root:
+            _write_archived_attempt(output_root)
+            failure_path = os.path.join(
+                output_root, "attempts", "attempt_002_failed",
+                "failure_audit.json")
+            with open(failure_path, "r", encoding="utf-8") as handle:
+                failure = json.load(handle)
+            del failure["failure_stage"]
+            with open(failure_path, "w", encoding="utf-8") as handle:
+                json.dump(failure, handle)
+            with self.assertRaises(formal.W08ReleaseGateError):
+                self._run_with_base_gate(
+                    output_root,
+                    status=_status(failed=True, attempt_id="attempt_002_failed"))
+
+    def test_formal_gate_returned_fail_never_calls_patient_loader_or_writes_running(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            gate_result = {
+                "stage": "W08_FORMAL_RELEASE", "status": "FAIL",
+                "formal_authorized": False, "code_commit": CURRENT_COMMIT,
+                "checks": {}, "failure_reasons": ["synthetic gate failure"],
+                "B_access": dict((key, False) for key in B_FLAGS),
+                "final_outputs_generated": False,
+            }
+            with mock.patch.object(formal, "validate_w08_release_gate",
+                                   return_value=gate_result), \
+                    mock.patch.object(formal, "_load_population_and_provider",
+                                      side_effect=AssertionError("patient loader called")) as loader:
+                with self.assertRaises(formal.W08ReleaseGateError):
+                    formal.formal(output_root)
+            loader.assert_not_called()
+            with open(os.path.join(output_root, "run_state.json"),
+                      encoding="utf-8") as handle:
+                state = json.load(handle)
+            with open(os.path.join(output_root, "release_gate.json"),
+                      encoding="utf-8") as handle:
+                persisted_gate = json.load(handle)
+        self.assertEqual(state["status"], "failed")
+        self.assertEqual(state["failure_stage"], "release_gate")
+        self.assertFalse(state["formal_run_started"])
+        self.assertEqual(persisted_gate["status"], "FAIL")
+        self.assertFalse(persisted_gate["formal_authorized"])
 
     def test_formal_gate_failure_never_calls_patient_loader_or_writes_running(self):
         with tempfile.TemporaryDirectory() as output_root:

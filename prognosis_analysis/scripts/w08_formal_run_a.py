@@ -381,6 +381,83 @@ def _validate_model_freeze_absent(project_root):
     return {"status": "absent"}
 
 
+def _nonempty_text(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_r0_archived_attempt_compat(attempt_id, failure, run_state):
+    """Recognise the one R0 archive whose run state was captured mid-modeling."""
+    required_run_state_keys = (
+        "A_population", "B_data_read", "formal_run", "slic_cache_cases",
+        "stage", "started_at_epoch", "status", "W_columns",
+    )
+    return (
+        attempt_id == "attempt_001_failed" and
+        failure.get("stage") == "W08" and
+        failure.get("status") == "failed" and
+        run_state.get("stage") == "W08" and
+        run_state.get("status") == "modeling" and
+        run_state.get("formal_run") is True and
+        all(key in run_state for key in required_run_state_keys) and
+        run_state.get("B_data_read") is False and
+        "final_outputs_generated" not in run_state and
+        all(run_state.get(key, False) is False for key in B_ACCESS_FLAGS
+            if key in run_state)
+    )
+
+
+def _validate_archived_failure_schema(attempt_id, failure, run_state):
+    required_failure_keys = (
+        "attempt_id", "stage", "status", "failure_stage",
+        "code_commit_at_attempt",
+    ) + B_ACCESS_FLAGS + ("final_outputs_generated",)
+    missing_failure = [key for key in required_failure_keys
+                       if key not in failure]
+    if missing_failure:
+        raise RuntimeError(
+            "failed attempt audit is missing fields for %s: %s" %
+            (attempt_id, ",".join(missing_failure)))
+    if failure.get("attempt_id") != attempt_id or \
+            failure.get("stage") != "W08" or \
+            failure.get("status") != "failed":
+        raise RuntimeError("failed attempt identity/status mismatch: %s" % attempt_id)
+    if not _nonempty_text(failure.get("failure_stage")):
+        raise RuntimeError("failed attempt has no failure_stage: %s" % attempt_id)
+    if not (_nonempty_text(failure.get("exception_summary")) or
+            _nonempty_text(failure.get("failure_reason_summary"))):
+        raise RuntimeError("failed attempt has no failure reason: %s" % attempt_id)
+    for key in B_ACCESS_FLAGS + ("final_outputs_generated",):
+        if type(failure.get(key)) is not bool or failure.get(key) is not False:
+            raise RuntimeError("failed attempt %s has unsafe %s" % (attempt_id, key))
+
+    if _is_r0_archived_attempt_compat(attempt_id, failure, run_state):
+        return "r0_compat"
+
+    required_run_state_keys = (
+        "stage", "status", "formal_run", "failure_stage", "code_commit",
+    ) + B_ACCESS_FLAGS + ("final_outputs_generated",)
+    missing_run_state = [key for key in required_run_state_keys
+                         if key not in run_state]
+    if missing_run_state:
+        raise RuntimeError(
+            "failed attempt run state is missing fields for %s: %s" %
+            (attempt_id, ",".join(missing_run_state)))
+    if run_state.get("stage") != "W08" or \
+            run_state.get("status") != "failed" or \
+            run_state.get("formal_run") is not True:
+        raise RuntimeError("failed attempt run state is not explicitly failed: %s" %
+                           attempt_id)
+    if run_state.get("failure_stage") != failure.get("failure_stage") or \
+            run_state.get("code_commit") != failure.get("code_commit_at_attempt"):
+        raise RuntimeError("failed attempt artifacts are not cross-reconciled: %s" %
+                           attempt_id)
+    for key in B_ACCESS_FLAGS + ("final_outputs_generated",):
+        if type(run_state.get(key)) is not bool or run_state.get(key) is not False:
+            raise RuntimeError("failed attempt run state %s is unsafe: %s" %
+                               (key, attempt_id))
+    return "explicit_failed"
+
+
 def _validate_reconciled_attempts(project_root, output_root, status):
     final_paths = [name for name in W08_FINAL_OUTPUT_NAMES
                    if os.path.exists(os.path.join(output_root, name))]
@@ -405,8 +482,9 @@ def _validate_reconciled_attempts(project_root, output_root, status):
             if os.path.isdir(os.path.join(attempts_root, child)))
     last_attempt = status.get("last_attempt", {}) if isinstance(status, dict) else {}
     execution = status.get("execution", {}) if isinstance(status, dict) else {}
-    if attempt_dirs and last_attempt.get("status") != "failed" or \
-            attempt_dirs and execution.get("last_attempt_status") != "failed":
+    if attempt_dirs and (
+            last_attempt.get("status") != "failed" or
+            execution.get("last_attempt_status") != "failed"):
         raise RuntimeError("prior failed attempt is not explicitly reconciled")
 
     for attempt_id in attempt_dirs:
@@ -421,11 +499,7 @@ def _validate_reconciled_attempts(project_root, output_root, status):
         run_state = _read_json_path(run_state_path, "failed attempt run state")
         if failure.get("attempt_id") != attempt_id or failure.get("status") != "failed":
             raise RuntimeError("failed attempt identity/status mismatch: %s" % attempt_id)
-        if run_state.get("stage") != "W08" or run_state.get("status") == "complete":
-            raise RuntimeError("failed attempt run state is not fail-closed: %s" % attempt_id)
-        for key in B_ACCESS_FLAGS + ("final_outputs_generated",):
-            if failure.get(key) is not False:
-                raise RuntimeError("failed attempt %s has unsafe %s" % (attempt_id, key))
+        _validate_archived_failure_schema(attempt_id, failure, run_state)
         failure_commit = failure.get("code_commit_at_attempt")
         if not _git_commit_resolves(project_root, failure_commit):
             raise RuntimeError("failed attempt code commit does not resolve: %s" % attempt_id)
@@ -439,6 +513,41 @@ def _validate_reconciled_attempts(project_root, output_root, status):
     if not attempt_dirs and last_attempt.get("status") == "failed":
         raise RuntimeError("execution_status records a failed attempt without an archive")
     return {"attempts_checked": attempt_dirs}
+
+
+def _require_formal_release_authorization(release_gate):
+    """Fail closed if a gate implementation returns a non-authorizing result."""
+    if not isinstance(release_gate, dict):
+        result = {
+            "stage": "W08_FORMAL_RELEASE",
+            "status": "FAIL",
+            "formal_authorized": False,
+            "checks": {},
+            "failure_reasons": ["release gate returned a non-object result"],
+            "B_access": dict((key, False) for key in B_ACCESS_FLAGS),
+            "final_outputs_generated": False,
+        }
+        raise W08ReleaseGateError(result)
+
+    result = dict(release_gate)
+    raw_reasons = result.get("failure_reasons", [])
+    if isinstance(raw_reasons, (list, tuple)):
+        reasons = [str(reason) for reason in raw_reasons]
+    elif raw_reasons is None:
+        reasons = []
+    else:
+        reasons = ["release gate failure_reasons is not a list"]
+    if result.get("status") != "PASS":
+        reasons.append("release gate status is not PASS")
+    if result.get("formal_authorized") is not True:
+        reasons.append("release gate formal_authorized is not true")
+    if not reasons:
+        return result
+    result["failure_reasons"] = list(dict.fromkeys(reasons))
+    result.setdefault("stage", "W08_FORMAL_RELEASE")
+    result.setdefault("B_access", dict((key, False) for key in B_ACCESS_FLAGS))
+    result.setdefault("final_outputs_generated", False)
+    raise W08ReleaseGateError(result)
 
 
 def _run_gate_check(checks, failures, name, callback, project_root, output_root):
@@ -1213,6 +1322,7 @@ def formal(output_root=OUTPUT_ROOT):
     try:
         release_gate = validate_w08_release_gate(
             output_root=output_root, project_root=PROJECT_ROOT)
+        _require_formal_release_authorization(release_gate)
         os.makedirs(output_root, exist_ok=True)
         _atomic_json(os.path.join(output_root, W08_RELEASE_GATE_NAME), release_gate)
 
