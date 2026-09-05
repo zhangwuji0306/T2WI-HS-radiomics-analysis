@@ -6,16 +6,25 @@ CURRENT EXECUTION STATUS
 Authoritative operational workflow: YES
 
 Completed:
-P0 / P1 / G1 / P2 / P3 / G2R
+P0 / P1 / G1 / P2 / P3 / G2R / P4 provenance remediation + independent review
 
 Current gate:
-P4
+P4 PASS_WITH_FINDINGS (P4 PASS; no blocking findings)
 
 Next:
-P5 implementation
-→ G2R2
-→ P5 50-fold technical-only
-→ G3
+P5 implementation: NOT STARTED / NOT AUTHORIZED
+
+P5 authorization:
+NO
+
+B_data_read:
+false
+
+formal_W08_started:
+false
+
+model_freeze_lock:
+NOT GENERATED
 
 Formal W08:
 HOLD
