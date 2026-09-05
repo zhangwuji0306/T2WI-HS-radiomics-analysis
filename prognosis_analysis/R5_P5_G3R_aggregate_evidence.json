@@ -1,0 +1,154 @@
+{
+  "schema": "P5_G3R_aggregate_evidence",
+  "version": "1.0",
+  "stage": "G3R",
+  "status": "PASS",
+  "scope": "A-only technical preflight aggregate and release evidence",
+  "successor": {
+    "current_output": "prognosis_analysis/output/p5_technical_preflight_A_G3R",
+    "successor_of": "prognosis_analysis/output/p5_technical_preflight_A",
+    "legacy_output_preserved": true,
+    "legacy_artifact_sha256": {
+      "P5_fold_feasibility.csv": "42060342b677bb8587eaa7333639ae544cd6ed4e1b38ea3e76de7c5fe0cf3fca",
+      "P5_release_gate.json": "7e29b3ef16004bd4f7394a5dd83cd3f4f5cb04bc59cd4e80c3a1f2aac032ed58",
+      "P5_technical_preflight_summary.json": "df7a69a3831c8cc9bd466de1dde49d4fdd044be0e7e0a4684c271a202377e2ae"
+    }
+  },
+  "certificate_generation": {
+    "code_commit": "77cddd970f176533fd44fe1fbaaac880651fc84f",
+    "generated_at_utc": "2026-09-05T20:21:51Z",
+    "generator": "prognosis_analysis/scripts/w08_technical_preflight_a.py",
+    "certificate": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_release_gate.json",
+    "aggregate_summary": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_technical_preflight_summary.json",
+    "sha256_manifest": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_sha256_manifest.json"
+  },
+  "coverage": {
+    "outer_repeats": 10,
+    "outer_folds": 5,
+    "fold_units": 50,
+    "required_runs": 17,
+    "run_rows": 850,
+    "row_definition": "one run_id by frozen W07 outer repeat/fold technical feasibility row",
+    "fold_definition": "one frozen W07 outer repeat/fold with training-only centre fitting and boundary assignment",
+    "rows_per_run": 50,
+    "run_ids": [
+      "M0",
+      "M1",
+      "M2",
+      "M0_W_available",
+      "M5",
+      "M2_R_low",
+      "M3L",
+      "M2_R_high",
+      "M3H",
+      "M2_dual_radiomics",
+      "M3L_dual_radiomics",
+      "M3H_dual_radiomics",
+      "M4",
+      "M0-R",
+      "M1-R",
+      "M2-R",
+      "M3L_vs_M3H"
+    ],
+    "min_train_events": 62,
+    "min_validation_events": 13,
+    "min_train_censors": 210,
+    "min_validation_censors": 49,
+    "inner_5fold_feasible": true,
+    "all_folds_complete": true,
+    "all_required_runs_estimable": true,
+    "all_paired_populations_equal": true
+  },
+  "frozen_inputs_and_rules": {
+    "population": "W06 A modeling population",
+    "outer_splits": "W07 frozen 10 repeats x 5 folds",
+    "habitat_assets": "frozen SLIC/supervoxel assets",
+    "centre_fitting": "training-only patient-balanced K=2",
+    "R_low_candidate_count": 49,
+    "R_high_candidate_count": 10,
+    "minimumROISize": 10,
+    "support_states": {
+      "structural_absence": "voxel_count == 0",
+      "technical_small_roi": "1 <= voxel_count < 10",
+      "extractable": "voxel_count >= 10",
+      "zero_distinct_from_one_to_nine": true
+    },
+    "eligibility": "model-specific fold eligibility before preprocessing",
+    "paired_population_rule": "identical fold-specific eligible sets and boundary for each comparator"
+  },
+  "binding": {
+    "W04_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+    "W07_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+    "W07_outer_split_config_sha256": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
+    "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+    "W07A_amendment_json_sha256": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14",
+    "W03_candidate_freeze_sha256": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
+    "R_low_candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high_candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+    "P4R_reconciliation": {
+      "status": "approved_reconciliation",
+      "manifest_sha256": "374ddc9f6ecd01c04ff957576f032fec18f0ebbb53f6651a725ad0b6aff7786d",
+      "outcome_performance_informed": false,
+      "scientific_parameters_changed": false,
+      "formal_W08_started": false,
+      "historical_W07A_source_exception": "historical_source_snapshot_unrecoverable"
+    }
+  },
+  "technical_freeze": {
+    "P5_technical_preflight": "PASS",
+    "bindings_verified": true,
+    "event_censor_feasibility": "PASS",
+    "inner_cv_feasibility": "PASS",
+    "compatibility_provenance": {
+      "protocol_minimumROISize": 10,
+      "scientific_minimumROISize": 10,
+      "effective_backend_minimum_size": null,
+      "precheck_count_threshold": ">=10",
+      "pyradiomics_version": "3.0.1",
+      "compatibility_reason": "PyRadiomics 3.0.1 strict <= semantics and precheck count>=10",
+      "compatibility_code_path": "prognosis_analysis/scripts/w08_formal_run_a.py",
+      "compatibility_code_sha256": "37bee9152aec365b8bbe0586d1169ab8870de45b99ad159b1c2642a14cdfa882",
+      "compatibility_config_path": "prognosis_analysis/configs/w02_habitat_radiomics.json",
+      "compatibility_config_sha256": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f"
+    }
+  },
+  "locked_environment": {
+    "fingerprint_source": "prognosis_analysis/G2_environment_fingerprint.json",
+    "fingerprint_source_sha256": "a6151d7a135ea19a3f529199996c4063f2fd7b3da4484aa920a73599939ab74b",
+    "conda_environment": "t2_radiomics",
+    "python": "3.7.12",
+    "numpy": "1.21.6",
+    "pandas": "1.3.5",
+    "scipy": "1.7.3",
+    "scikit_learn": "1.0.2",
+    "matplotlib": "3.5.3",
+    "PyYAML": "6.0",
+    "openpyxl": "3.0.10",
+    "PyRadiomics": "3.0.1",
+    "SimpleITK": "2.2.1"
+  },
+  "access_and_release_boundary": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "performance_generated": false,
+    "patient_level_outputs_written": false,
+    "predictions_generated": false,
+    "model_artifacts_generated": false,
+    "model_freeze_lock_present": false,
+    "current_r5_formal_W08_started": false,
+    "historical_attempt_001_failed": {
+      "archive": "prognosis_analysis/output/w08_formal_A/attempts/attempt_001_failed",
+      "status": "failed",
+      "failure_stage": "nested_cv_modeling_radiomics_extraction",
+      "preserved_as_failed_archive": true
+    }
+  },
+  "current_artifact_sha256": {
+    "P5_fold_feasibility.csv": "e4cc974b3666a9a5d26efa99c8536d79fea857e38a29a0bee3bcf822de4b7ad3",
+    "P5_release_gate.json": "f7219be3294026fa0ce0b72a3a7c01a1d12d647108b02db67ed1c0ec6e58fcdd",
+    "P5_technical_preflight_summary.json": "8f8d09d8ec4643ca8e4b1af469396e3de1afd1bf6b486de2c0474c065c2d5ec4",
+    "P5_sha256_manifest.json": "8b9e82cdea378c1a3271d166926d461c6593c45b4c955e8b055f545e5525ede3"
+  }
+}
