@@ -6,16 +6,16 @@ CURRENT EXECUTION STATUS
 Authoritative operational workflow: YES
 
 Completed:
-P0 / P1 / G1 / P2 / P3 / G2R / P4 provenance remediation + independent review
+P0 / P1 / G1 / P2 / P3 / G2R / P4 provenance remediation + independent review / P5 implementation / G2R2 / 50-fold technical-only preflight / G3 independent review
 
 Current gate:
-P4 PASS_WITH_FINDINGS (P4 PASS; no blocking findings)
+G3 PASS (P4/P4R PASS; no blocking findings)
 
 Next:
-P5 implementation: NOT STARTED / NOT AUTHORIZED
+P6 / W08 formal: ELIGIBLE AFTER G3; NOT STARTED
 
 P5 authorization:
-NO
+YES (COMPLETED)
 
 B_data_read:
 false
@@ -27,7 +27,7 @@ model_freeze_lock:
 NOT GENERATED
 
 Formal W08:
-HOLD
+ELIGIBLE AFTER G3; NOT STARTED
 
 B:
 LOCKED
@@ -50,14 +50,12 @@ W00R FAIL
 ```text
 W01–W07：历史阶段保留，不重跑
 W08 implementation：已完成
-W08 formal：HOLD
+W08 formal：G3 PASS；尚未启动
 
-当前进入：
-Post-freeze remediation
-+
-W07A Pre-W08 protocol amendment
-+
-50-fold technical preflight
+当前状态：
+P5 technical-only preflight 与 G3 已完成
+
+下一可执行阶段：W08 formal
 ```
 
 只有新的 Pre-W08 Gate 全部通过后，才允许正式 W08。

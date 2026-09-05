@@ -21,7 +21,8 @@
 - W05 A-only 数据访问边界已完成：正式入口为 `prognosis_analysis/scripts/build_model_dataset_a.py --split A`；technical A、A clinical/outcomes、B validation 分别使用显式 reader，A outcome 受第一把锁保护，B 仅接受 `model_freeze_lock.json` 授权。A 模式先读取 A393/A137 technical IDs，再按 ID 白名单读取临床/结局和原始 feature，并只生成 A 产物；legacy builder 已 fail closed。W05 合成数据与回归门禁通过，尚未生成 `model_freeze_lock.json`，未读取真实 DFS 或 B 数据。
 - W06 已完成首次 A-only DFS 读取与 endpoint QC：A393 共393例，DFS事件89例、删失304例；随访中位数73.495个月（IQR 48.723–96.296），反向KM中位随访84.402个月，3年/5年可评估分别为312/270例。DFS缺失、非正时间、重复ID及event/time冲突均为0，A modeling population为393例。W06使用`read_A_outcomes`仅请求DFS三列，`model_freeze_lock.json`不存在，B未读取。
 - W07A 与 P3C/P3D/P3E 已完成并通过独立复核；G2R 已在锁定 `t2_radiomics` 环境中完成，完整测试发现集为132/132，通过0失败、0错误、0跳过，W00B/W05/W08 针对性测试分别为9/9、15/15、16/16。`G2_environment_fingerprint.json`记录了环境、依赖及哈希证据；`B_data_read=false`，尚未启动正式 W08。流程文字中的107项与当前基线实际132项测试的计数差异已保留为非阻塞口径事项。
-- P4 document-provenance reconciliation remediation 已完成并经独立 P4 Reviewer 复核：Gate=`PASS_WITH_FINDINGS`（无阻塞问题，P4 可标记为 PASS）。最新 HEAD 与 `origin/main` 均为`2bd4d2306ee4245befec78e08eb398a128d95eba`。W04 taskbook 历史 exact recovery、W04 workflow archive path migration、W07A `historical_source_snapshot_unrecoverable` 例外及 successor 关系均已登记；该治理补丁未改变科学、技术或建模参数。
+- P4 document-provenance reconciliation remediation 已完成并经独立 P4 Reviewer 复核：Gate=`PASS_WITH_FINDINGS`（无阻塞问题，P4 可标记为 PASS）。P4R 历史 exact recovery、W04 workflow archive path migration、W07A `historical_source_snapshot_unrecoverable` 例外及 successor 关系均已登记；该治理补丁未改变科学、技术或建模参数。当前 `HEAD` 与 `origin/main` 均为`457e60dd49bc0cd4264eb354a09e9b667afdc761`。
+- P5 implementation、G2R2 与全 50-fold technical-only preflight 已完成并经独立 G3 Reviewer 接受下游使用：10 repeats × 5 folds 全部完成，17 个固定技术运行定义共850条聚合记录，所有 required runs 可估计、paired populations 有效，`minimumROISize=10`及结构/技术小ROI规则通过；P4R validator、冻结绑定与相关回归测试通过。P5 仅生成本地聚合技术证据，未生成患者级输出、预测、风险分数或性能指标；`B_data_read=false`，正式 W08 尚未启动，`model_freeze_lock.json` 尚未生成。
 - GitHub/Codex 仓库采用代码和文档边界；原始影像、临床数据、患者级结果和原始影像号均保留在本地。
 
 ## In progress
@@ -32,7 +33,7 @@
 
 ## Next task
 
-W07A、P3C/P3D/P3E、G2R 与 P4 document-provenance reconciliation 已完成。P4 Reviewer 结论为无阻塞的 `PASS_WITH_FINDINGS`，当前 P4 已通过；P5 implementation、G2R2、50-fold technical-only preflight 与 G3 尚未启动，当前授权范围不包含这些阶段，等待 protocol owner 后续显式授权。正式 W08、全 A 最终拟合及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。
+W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。正式 W08 是下一项可执行阶段，但尚未启动；全 A 最终拟合及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。
 
 ## Important decisions
 
