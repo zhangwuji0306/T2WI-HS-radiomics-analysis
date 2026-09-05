@@ -1,8 +1,8 @@
 {
   "schema": "G2_environment_fingerprint",
-  "version": "1.0",
+  "version": "1.1",
   "g2_reference": {
-    "base_commit": "72d518cb57525b085b145e8aa19dcecc8e48349e"
+    "base_commit": "72d518cb57525b085b1458eaa19dcecc8e48349e"
   },
   "source_file_sha256": {
     "environment.yml": "4887B051CA22A5E57A3D15416EA4E3B45B1350D7E93618446F8E6FE3DD209E08",
@@ -11,14 +11,14 @@
   "platform": {
     "system": "Windows",
     "release": "10",
-    "version": "10.0.19045",
+    "version": "10.0.19041",
     "machine": "AMD64",
     "python_implementation": "CPython"
   },
   "locked_environment": {
     "name": "t2_radiomics",
-    "availability": "not_found_on_host",
-    "conda_executable_found": false,
+    "conda_environment_available": true,
+    "conda_executable_found": true,
     "python": "3.7.12",
     "dependencies": {
       "numpy": "1.21.6",
@@ -34,63 +34,118 @@
     }
   },
   "actual_interpreter": {
-    "role": "current_available_interpreter_not_locked_environment",
-    "python_version": "3.12.0",
+    "role": "locked_environment",
+    "python_version": "3.7.12",
     "python_implementation": "CPython",
     "executable_name": "python.exe",
     "dependency_import_probe": {
       "numpy": {
-        "distribution_version": "2.4.6",
+        "distribution_version": "1.21.6",
+        "locked_version": "1.21.6",
         "import": "OK",
-        "module_version": "2.4.6"
+        "module_version": "1.21.6"
       },
       "pandas": {
-        "distribution_version": "2.2.2",
+        "distribution_version": "1.3.5",
+        "locked_version": "1.3.5",
         "import": "OK",
-        "module_version": "2.2.2"
+        "module_version": "1.3.5"
       },
       "openpyxl": {
-        "distribution_version": "3.1.2",
+        "distribution_version": "3.0.10",
+        "locked_version": "3.0.10",
         "import": "OK",
-        "module_version": "3.1.2"
+        "module_version": "3.0.10"
       },
       "scipy": {
-        "distribution_version": "1.18.0",
+        "distribution_version": "1.7.3",
+        "locked_version": "1.7.3",
         "import": "OK",
-        "module_version": "1.18.0"
+        "module_version": "1.7.3"
       },
       "scikit-learn": {
-        "distribution_version": "1.8.0",
+        "distribution_version": "1.0.2",
+        "locked_version": "1.0.2",
         "import": "OK",
-        "module_version": "1.8.0"
+        "module_version": "1.0.2"
       },
       "matplotlib": {
-        "distribution_version": "3.11.0",
+        "distribution_version": "3.5.3",
+        "locked_version": "3.5.3",
         "import": "OK",
-        "module_version": "3.11.0"
+        "module_version": "3.5.3"
       },
       "PyYAML": {
-        "distribution_version": "PackageNotFoundError: No package metadata was found for PyYAML",
-        "import": "ERROR: ModuleNotFoundError: No module named 'yaml'",
-        "module_version": null
+        "distribution_version": "6.0",
+        "locked_version": "6.0",
+        "import": "OK",
+        "module_version": "6.0"
       },
       "pyradiomics": {
-        "distribution_version": "PackageNotFoundError: No package metadata was found for pyradiomics",
-        "import": "ERROR: ModuleNotFoundError: No module named 'radiomics'",
-        "module_version": null
+        "distribution_version": "3.0.1",
+        "locked_version": "3.0.1",
+        "import": "OK",
+        "module_version": "v3.0.1"
       },
       "SimpleITK": {
-        "distribution_version": "PackageNotFoundError: No package metadata was found for SimpleITK",
-        "import": "ERROR: ModuleNotFoundError: No module named 'SimpleITK'",
-        "module_version": null
+        "distribution_version": "2.2.1",
+        "locked_version": "2.2.1",
+        "import": "OK",
+        "module_version": "2.2.1"
       },
       "PyWavelets": {
-        "distribution_version": "PackageNotFoundError: No package metadata was found for PyWavelets",
-        "import": "ERROR: ModuleNotFoundError: No module named 'pywt'",
-        "module_version": null
+        "distribution_version": "1.3.0",
+        "locked_version": "1.3.0",
+        "import": "OK",
+        "module_version": "1.3.0"
       }
     }
   },
-  "environment_matches_locked_spec": false,
-  "blocked_by": "blocked_by_missing_locked_environment"
+  "environment_matches_locked_spec": true,
+  "test_verification": {
+    "complete_discovery": {
+      "command": "python -m unittest discover -s tests -p test_*.py",
+      "requested_test_count": 107,
+      "actual_ran": 132,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 70.532,
+      "status": "PASS",
+      "count_check": "actual_discovery_set_contains_132_tests"
+    },
+    "targeted": {
+      "W00B": {
+        "module": "tests.test_w00b_integration",
+        "ran": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 0.027,
+        "status": "PASS"
+      },
+      "W05": {
+        "module": "tests.test_w05_access",
+        "ran": 15,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 0.617,
+        "status": "PASS"
+      },
+      "W08": {
+        "module": "tests.test_w08_nested_cv",
+        "ran": 16,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 82.016,
+        "status": "PASS"
+      }
+    }
+  },
+  "execution_state": {
+    "B_data_read": false,
+    "formal_w08_started": false
+  }
 }
