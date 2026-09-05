@@ -1,38 +1,5 @@
 # T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流
 
-CURRENT EXECUTION STATUS
-========================
-
-Authoritative operational workflow: YES
-
-Completed:
-P0 / P1 / G1 / P2 / P3 / G2R / P4 provenance remediation + independent review / P5 implementation / G2R2 / 50-fold technical-only preflight / G3 independent review
-
-Current gate:
-G3 PASS (P4/P4R PASS; no blocking findings)
-
-Next:
-P6 / W08 formal: ELIGIBLE AFTER G3; NOT STARTED
-
-P5 authorization:
-YES (COMPLETED)
-
-B_data_read:
-false
-
-formal_W08_started:
-false
-
-model_freeze_lock:
-NOT GENERATED
-
-Formal W08:
-ELIGIBLE AFTER G3; NOT STARTED
-
-B:
-LOCKED
-
-
 ## 0. 工作流定位
 
 当前项目不得再按照：
@@ -45,20 +12,10 @@ W00R FAIL
 
 执行。
 
-新的正式状态定义为：
-
-```text
-W01–W07：历史阶段保留，不重跑
-W08 implementation：已完成
-W08 formal：G3 PASS；尚未启动
-
-当前状态：
-P5 technical-only preflight 与 G3 已完成
-
-下一可执行阶段：W08 formal
-```
-
-只有新的 Pre-W08 Gate 全部通过后，才允许正式 W08。
+新的正式状态定义为：W01–W07 为历史阶段，不重跑；W08 formal 只有在新的
+Pre-W08 Gate 全部通过后才允许执行。各阶段的实际执行状态、尝试结果、门禁
+结果和代码提交引用统一记录在 `PROJECT_STATUS.md` 与
+`prognosis_analysis/execution_status.json` 中，不在本规范中固化。
 
 ---
 
@@ -271,7 +228,7 @@ P11 W13 model_freeze_lock
 ### 输入
 
 ```text
-main HEAD
+repository baseline metadata
 PROJECT_STATUS.md
 W04 protocol
 W07 split config/artifact
@@ -282,13 +239,8 @@ freeze_lock.json
 
 ### 必须确认
 
-```text
-formal W08 = not started
-held-out predictions = none
-W08 performance metrics = none
-model_freeze_lock.json = absent
-B_data_read = false
-```
+建立基线时，必须从项目状态文件记录 formal W08、held-out predictions、W08
+performance metrics、`model_freeze_lock.json` 和 B access 的实际状态。
 
 ### 输出
 
@@ -1250,7 +1202,7 @@ no B access
 
 否则不得进入 P4。
 
-当前状态：G2R PASS。若 P5 implementation 阶段新增或修改正式执行代码，不得沿用本次 G2R 结果授权新代码；必须在 P5 technical-only preflight 前完成 G2R2。
+若 P5 implementation 阶段新增或修改正式执行代码，不得沿用既有 G2R 结果授权新代码；必须在 P5 technical-only preflight 前完成 G2R2。
 
 ---
 
@@ -1941,36 +1893,9 @@ P2 不作为当前 W08 release blocker，除非在实施过程中发现真实 ar
 
 ---
 
-# 二十三、当前总控应向所有子智能体广播的统一状态
+# 二十三、执行状态记录
 
-```text
-REMEDIATION_BASELINE_COMMIT = 78b0e8f48becd64413859027e8809e155ecded5e
-
-W01-W07 = historical completed; do not rerun
-
-W08_FORMAL = HOLD
-
-W08_predictions_generated = false
-W08_metrics_generated = false
-
-model_freeze_lock = absent
-
-B_data_read = false
-
-technical method remains frozen:
-threshold = unchanged
-SLIC = unchanged
-K = 2
-minimumROISize = 10
-W03 candidates = unchanged
-W07 splits = unchanged
-
-Current allowed work:
-post-freeze integrity remediation
-P5 technical-only entry implementation
-G2R2 regression gate
-technical-only 50-fold preflight
-
-Formal model evaluation is prohibited
-until FORMAL_W08_RELEASE = PASS.
-```
+本规范只定义不可变的工作流、门禁、允许与禁止事项及其科学和技术约束。
+实际阶段状态、尝试结果、代码提交引用和数据访问标志由
+`PROJECT_STATUS.md` 与 `prognosis_analysis/execution_status.json` 维护；状态
+文件的更新不构成对本规范内容的修改，也不改变本规范的内容哈希。

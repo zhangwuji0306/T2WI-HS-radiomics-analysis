@@ -1,0 +1,39 @@
+{
+  "schema": {
+    "id": "prognosis_execution_status",
+    "version": "1.0",
+    "status_kind": "mutable_aggregate_execution_state"
+  },
+  "recorded_on": "2026-09-06",
+  "execution": {
+    "stage": "W08",
+    "gate": "HOLD",
+    "formal_w08_started": true,
+    "last_attempt_status": "failed"
+  },
+  "last_attempt": {
+    "attempt_id": "attempt_001_failed",
+    "status": "failed",
+    "failure_stage": "nested_cv_modeling_radiomics_extraction",
+    "failure_reason_summary": "Configured minimum ROI size boundary was too small for a required ROI.",
+    "code_commit_at_attempt": "22ec6062529f32da3000a8abadac5864b0dbc083"
+  },
+  "b_access": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false
+  },
+  "model_freeze_lock": {
+    "present": false,
+    "status": "absent"
+  },
+  "outputs": {
+    "final_outputs_generated": false
+  },
+  "repository": {
+    "baseline_head": "78e24da5109938fadf5ae41510994d6471c6a629",
+    "current_repository_head": "78e24da5109938fadf5ae41510994d6471c6a629",
+    "status_recorded_at_head": "78e24da5109938fadf5ae41510994d6471c6a629"
+  }
+}
