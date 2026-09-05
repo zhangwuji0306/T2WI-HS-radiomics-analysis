@@ -1,9 +1,11 @@
 import hashlib
+import inspect
 import json
 import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -174,8 +176,156 @@ class TechnicalPreflightTests(unittest.TestCase):
                 self.population, altered, self.supervoxels,
                 self.availability, binding_hashes=synthetic_bindings())
 
+    def test_every_frozen_binding_value_is_checked_exactly(self):
+        for label in p5._BINDING_FILES:
+            forged = synthetic_bindings()
+            forged[label] = "0" * 64
+            with self.subTest(binding=label):
+                with self.assertRaisesRegex(p5.P5ValidationError, label):
+                    p5.run_technical_preflight(
+                        self.population, self.splits, self.supervoxels,
+                        self.availability, binding_hashes=forged)
+
+    def test_production_entry_rejects_forged_manifest_before_a_read(self):
+        forged = synthetic_bindings()
+        forged["W04_modeling_protocol"] = "0" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(p5, "verify_frozen_bindings",
+                              return_value=forged), \
+                    patch.object(p5, "load_authorized_a_inputs") as loader:
+                with self.assertRaisesRegex(p5.P5ValidationError, "binding"):
+                    p5.run_production(tmp, project_root=tmp)
+                loader.assert_not_called()
+            with self.assertRaises(TypeError):
+                p5.run_production(tmp, project_root=tmp,
+                                  binding_hashes=synthetic_bindings())
+
+    def test_loader_separates_outcomes_and_uses_authorized_frozen_split_read(self):
+        feature_scripts = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "feature_extract", "scripts"))
+        if feature_scripts not in sys.path:
+            sys.path.insert(0, feature_scripts)
+        import data_split_guard  # noqa: E402
+
+        ids = list(self.population["patient_id"])
+        technical_population = self.population.rename(
+            columns={"patient_id": "影像号"})[
+                ["影像号", "technical_cohort", "modeling_eligible"]]
+        outcome_frame = self.population.rename(
+            columns={"patient_id": "影像号"})[
+                ["影像号", "DFS_time", "DFS_event"]]
+        supervoxel_frame = self.supervoxels.rename(
+            columns={"patient_id": "影像号"})
+        availability_frame = pd.DataFrame({
+            "影像号": ids, "reader": ["R1"] * len(ids),
+            "status": ["extractable"] * len(ids),
+        })
+        whole_tumour_frame = pd.DataFrame({
+            "影像号": ids, "读者": ["R1"] * len(ids),
+        })
+        technical_calls = []
+        outcome_calls = []
+        events = []
+
+        def fake_technical(path, **kwargs):
+            technical_calls.append((path, kwargs))
+            events.append("technical")
+            usecols = set(kwargs.get("usecols", []))
+            if kwargs.get("id_column") == "patient_id":
+                return self.splits.copy()
+            if {"technical_cohort", "modeling_eligible"}.issubset(usecols):
+                return technical_population.copy()
+            if "sv_label" in usecols:
+                return supervoxel_frame.copy()
+            if {"reader", "status"}.issubset(usecols):
+                return availability_frame.copy()
+            if "读者" in usecols:
+                return whole_tumour_frame.copy()
+            raise AssertionError("unexpected technical reader call: %s" % kwargs)
+
+        def fake_outcomes(path, **kwargs):
+            outcome_calls.append((path, kwargs))
+            events.append("outcome")
+            return outcome_frame.copy()
+
+        root = os.path.join(tempfile.gettempdir(), "p5_loader_test_root")
+        split_path = os.path.join(
+            root, "prognosis_analysis", "output", "outer_splits_A.csv")
+        os.makedirs(os.path.dirname(split_path), exist_ok=True)
+        with open(split_path, "w", encoding="utf-8") as handle:
+            handle.write("placeholder\n")
+
+        def fake_verify(project_root):
+            events.append("bindings")
+            return synthetic_bindings()
+
+        try:
+            with patch.object(p5, "verify_frozen_bindings", side_effect=fake_verify), \
+                    patch.object(p5, "_sha256_file",
+                                 return_value=p5.W07_OUTER_SPLIT_SHA256), \
+                    patch.object(p5, "_canonical_split_hash",
+                                 return_value=p5.W07_OUTER_SPLIT_SHA256), \
+                    patch.object(data_split_guard, "read_technical_A",
+                                 side_effect=fake_technical), \
+                    patch.object(data_split_guard, "read_A_outcomes",
+                                 side_effect=fake_outcomes):
+                loaded = p5.load_authorized_a_inputs(root)
+        finally:
+            try:
+                os.remove(split_path)
+                os.removedirs(os.path.dirname(split_path))
+            except OSError:
+                pass
+
+        self.assertEqual(set(loaded[0]["patient_id"]), set(ids))
+        self.assertIn("bindings", events)
+        self.assertEqual(events[0], "bindings")
+        self.assertLess(events.index("technical"), events.index("outcome"))
+        self.assertTrue(outcome_calls)
+        self.assertEqual(outcome_calls[0][1]["usecols"],
+                         ["影像号", "DFS_time", "DFS_event"])
+        self.assertTrue(any(
+            call[1].get("id_column") == "patient_id" and
+            call[1].get("usecols") == p5.SPLIT_COLUMNS
+            for call in technical_calls))
+        for _, kwargs in technical_calls:
+            self.assertFalse(set(kwargs.get("usecols", [])) &
+                             {"DFS_time", "DFS_event"})
+        self.assertNotIn("pd.read_csv", inspect.getsource(
+            p5.load_authorized_a_inputs))
+        self.assertNotIn("pd.read_csv", inspect.getsource(
+            p5._load_frozen_split_authorized))
+
+    def test_frozen_split_config_and_roi_tamper_fail_closed(self):
+        altered = self.splits.copy()
+        altered.loc[0, "fold"] = 2
+        with self.assertRaises(p5.P5ValidationError):
+            p5.run_technical_preflight(
+                self.population, altered, self.supervoxels,
+                self.availability, binding_hashes=synthetic_bindings(),
+                expected_split_hash=p5.W07_OUTER_SPLIT_SHA256)
+
+        original_json = p5._json
+
+        def tampered_json(path):
+            value = original_json(path)
+            if os.path.basename(path) == "w07_outer_splits.json":
+                value = dict(value)
+                value["outer_cv"] = dict(value["outer_cv"])
+                value["outer_cv"]["n_splits"] = 4
+            return value
+
+        with patch.object(p5, "_json", side_effect=tampered_json):
+            with self.assertRaises(p5.P5ValidationError):
+                p5.verify_frozen_bindings()
+        with patch.object(p5, "MINIMUM_ROI_SIZE", 11):
+            with self.assertRaises(p5.P5ValidationError):
+                p5.verify_frozen_bindings()
+
     def test_aggregate_output_has_no_patient_or_prediction_material(self):
         result = self.run_preflight()
+        self.assertEqual(result["release_gate"]["status"], "TEST_ONLY")
+        self.assertFalse(result["release_gate"]["bindings_verified"])
         with tempfile.TemporaryDirectory() as tmp:
             paths = p5.write_outputs(result, tmp)
             self.assertEqual(len(paths), 3)

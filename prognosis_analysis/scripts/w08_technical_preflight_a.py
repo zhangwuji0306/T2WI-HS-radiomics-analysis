@@ -6,9 +6,9 @@ and event/censor feasibility gates.  It never imports a model-fitting,
 prediction, or metric implementation.
 
 The production entry point verifies every frozen binding before opening an A
-source.  ``run_technical_preflight`` is the in-memory core used by synthetic
-regression tests; it accepts only already-normalised A-shaped frames and
-returns aggregate records without patient identifiers.
+source.  ``run_technical_preflight`` is a test-only in-memory helper; it
+accepts only already-normalised A-shaped frames and returns a TEST_ONLY gate,
+never a production release PASS.
 """
 from __future__ import absolute_import
 
@@ -368,6 +368,22 @@ def verify_frozen_bindings(project_root=PROJECT_ROOT):
     return hashes
 
 
+def _validate_binding_manifest(binding_hashes):
+    """Require the complete, exact code-bound manifest, not just its keys."""
+    if not isinstance(binding_hashes, dict):
+        raise P5ValidationError("P5 requires a verified frozen binding manifest")
+    required = set(_BINDING_FILES)
+    if set(binding_hashes) != required:
+        raise P5ValidationError("P5 binding manifest keys differ from the frozen manifest")
+    for label, (_, expected) in _BINDING_FILES.items():
+        value = binding_hashes.get(label)
+        if not isinstance(value, str) or value != expected.lower():
+            raise P5ValidationError(
+                "P5 frozen binding value mismatch: %s" % label)
+    return OrderedDict((label, expected.lower())
+                       for label, (_, expected) in _BINDING_FILES.items())
+
+
 def _normalise_supervoxels(supervoxels):
     if not isinstance(supervoxels, pd.DataFrame):
         raise P5ValidationError("A technical supervoxel table must be a DataFrame")
@@ -618,21 +634,12 @@ def _assert_frozen_runtime_constants():
         raise P5ValidationError("P5 runtime constants differ from the frozen protocol")
 
 
-def run_technical_preflight(population, split_frame, supervoxels,
-                           availability=None, binding_hashes=None,
-                           expected_split_hash=None):
-    """Run all 50 synthetic/in-memory technical fold units.
-
-    This function never opens a file and never returns patient identifiers.
-    Production callers must obtain ``binding_hashes`` from
-    :func:`verify_frozen_bindings` first.
-    """
+def _run_preflight_core(population, split_frame, supervoxels,
+                        availability=None, binding_hashes=None,
+                        expected_split_hash=None):
+    """Run the fold-unit computation after its caller has selected a boundary."""
     _assert_frozen_runtime_constants()
-    if not isinstance(binding_hashes, dict):
-        raise P5ValidationError("P5 requires a verified frozen binding manifest")
-    required_bindings = set(_BINDING_FILES)
-    if not required_bindings.issubset(binding_hashes):
-        raise P5ValidationError("P5 binding manifest is incomplete")
+    binding_hashes = _validate_binding_manifest(binding_hashes)
     population = _normalise_population(population)
     supervoxels = _normalise_supervoxels(supervoxels)
     population_ids = set(population["patient_id"])
@@ -762,17 +769,25 @@ def run_technical_preflight(population, split_frame, supervoxels,
         raise P5ValidationError("P5 run coverage is incomplete")
     if not bool(result["inner_5fold_feasible"].all()):
         raise P5ValidationError("P5 inner feasibility aggregate failed")
+    return result
+
+
+def _assemble_preflight_result(fold_frame, binding_hashes, production_verified):
+    """Build the unchanged aggregate schema with an explicit execution boundary."""
+    binding_hashes = _validate_binding_manifest(binding_hashes)
+    status = "technical_only_complete" if production_verified else "test_only"
+    gate_status = "PASS" if production_verified else "TEST_ONLY"
     return {
         "summary": {
             "stage": "P5",
-            "status": "technical_only_complete",
+            "status": status,
             "outer_repeats": N_OUTER_REPEATS,
             "outer_folds": N_OUTER_FOLDS,
-            "fold_units": len(fold_units),
-            "run_rows": len(result),
+            "fold_units": N_OUTER_REPEATS * N_OUTER_FOLDS,
+            "run_rows": len(fold_frame),
             "required_runs": len(RUN_DEFINITIONS),
             "all_required_runs_estimable": True,
-            "all_paired_populations_equal": bool(result["paired_population_equal"].all()),
+            "all_paired_populations_equal": bool(fold_frame["paired_population_equal"].all()),
             "minimumROISize": MINIMUM_ROI_SIZE,
             "R_low_candidate_hash": FROZEN_CANDIDATE_HASHES["R_low"],
             "R_high_candidate_hash": FROZEN_CANDIDATE_HASHES["R_high"],
@@ -785,16 +800,16 @@ def run_technical_preflight(population, split_frame, supervoxels,
             "aggregate_only": True,
             "binding_hashes": dict(binding_hashes),
         },
-        "fold_feasibility": result,
+        "fold_feasibility": fold_frame,
         "release_gate": {
             "stage": "G3",
-            "status": "PASS",
-            "P5_technical_preflight": "PASS",
+            "status": gate_status,
+            "P5_technical_preflight": gate_status,
             "frozen_fold_units": 50,
             "completed_fold_units": 50,
             "all_required_runs_estimable": True,
-            "all_paired_populations_equal": bool(result["paired_population_equal"].all()),
-            "bindings_verified": True,
+            "all_paired_populations_equal": bool(fold_frame["paired_population_equal"].all()),
+            "bindings_verified": bool(production_verified),
             "B_data_read": False,
             "B_reader_invoked": False,
             "B_source_opened": False,
@@ -805,14 +820,27 @@ def run_technical_preflight(population, split_frame, supervoxels,
     }
 
 
+def run_technical_preflight(population, split_frame, supervoxels,
+                           availability=None, binding_hashes=None,
+                           expected_split_hash=None):
+    """Test-only in-memory execution; it can never produce a production PASS."""
+    fold_frame = _run_preflight_core(
+        population, split_frame, supervoxels, availability,
+        binding_hashes=binding_hashes, expected_split_hash=expected_split_hash)
+    return _assemble_preflight_result(
+        fold_frame, binding_hashes, production_verified=False)
+
+
 def _read_authorized_a(path, allowed_ids=None, allow_full=False, usecols=None,
-                       dtype=None):
-    """Call the existing A-only streaming reader; no alternate callback is accepted."""
+                       dtype=None, id_column="影像号"):
+    """Call the existing A-only streaming technical reader."""
     feature_scripts = os.path.join(PROJECT_ROOT, "feature_extract", "scripts")
     if feature_scripts not in sys.path:
         sys.path.insert(0, feature_scripts)
     from data_split_guard import read_technical_A
     kwargs = {"allow_full": bool(allow_full)}
+    if id_column != "影像号":
+        kwargs["id_column"] = id_column
     if allowed_ids is not None:
         kwargs["allowed_ids"] = set(str(value).strip() for value in allowed_ids)
     if usecols is not None:
@@ -820,6 +848,18 @@ def _read_authorized_a(path, allowed_ids=None, allow_full=False, usecols=None,
     if dtype is not None:
         kwargs["dtype"] = dtype
     return read_technical_A(path, **kwargs)
+
+
+def _read_authorized_a_outcomes(path, allowed_ids):
+    """Read only the two A outcome fields after technical IDs are authorized."""
+    feature_scripts = os.path.join(PROJECT_ROOT, "feature_extract", "scripts")
+    if feature_scripts not in sys.path:
+        sys.path.insert(0, feature_scripts)
+    from data_split_guard import read_A_outcomes
+    return read_A_outcomes(
+        path, allowed_ids=set(str(value).strip() for value in allowed_ids),
+        usecols=["影像号", "DFS_time", "DFS_event"],
+        dtype={"影像号": str})
 
 
 def _available_from_w03(path, allowed_ids):
@@ -847,9 +887,54 @@ def _available_from_w_features(paths, allowed_ids):
     return available or set()
 
 
+def _normalise_a_population_metadata(frame):
+    """Validate the technical population fields without opening outcomes."""
+    if not isinstance(frame, pd.DataFrame):
+        raise P5ValidationError("A technical population must be a DataFrame")
+    required = {"影像号", "technical_cohort", "modeling_eligible"}
+    if not required.issubset(frame.columns):
+        raise P5ValidationError("A technical population lacks required metadata")
+    data = frame[["影像号", "technical_cohort", "modeling_eligible"]].copy()
+    data = data.rename(columns={"影像号": "patient_id"})
+    data["patient_id"] = data["patient_id"].astype(str).str.strip()
+    if data["patient_id"].eq("").any() or data["patient_id"].duplicated().any():
+        raise P5ValidationError("A technical population has invalid identifiers")
+    if not data["technical_cohort"].astype(str).str.strip().eq("A393").all():
+        raise P5ValidationError("P5 accepts only the frozen A393 cohort")
+    eligible = pd.to_numeric(data["modeling_eligible"], errors="coerce")
+    if eligible.isna().any() or not eligible.eq(1).all():
+        raise P5ValidationError("A technical population contains non-eligible rows")
+    data["technical_cohort"] = data["technical_cohort"].astype(str).str.strip()
+    data["modeling_eligible"] = eligible.astype(int)
+    return data.reset_index(drop=True)
+
+
+def _load_frozen_split_authorized(split_path, population, expected_hash):
+    """Load the fixed W07 split through the authorized reader, never pandas directly."""
+    if not os.path.isfile(split_path):
+        raise P5ValidationError("frozen W07 outer split artifact is missing")
+    if _sha256_file(split_path).lower() != W07_OUTER_SPLIT_SHA256:
+        raise P5ValidationError("W07 outer split artifact hash mismatch")
+    ids = set(population["patient_id"])
+    split_frame = _read_authorized_a(
+        split_path, allowed_ids=ids, usecols=SPLIT_COLUMNS,
+        dtype={"patient_id": str}, id_column="patient_id")
+    split_frame = _normalise_split(split_frame)
+    if _canonical_split_hash(split_frame).lower() != W07_OUTER_SPLIT_SHA256:
+        raise P5ValidationError("W07 canonical split hash mismatch")
+    if expected_hash != W07_OUTER_SPLIT_SHA256:
+        raise P5ValidationError("W07 split binding value is not the frozen hash")
+    verify_split_frame(split_frame, population, expected_hash)
+    return split_frame
+
+
 def load_authorized_a_inputs(project_root=PROJECT_ROOT):
     """Load only frozen A technical/modeling inputs after binding verification."""
     root = _normalise_root(project_root)
+    # This guard is intentionally inside the loader as well as the production
+    # wrapper, so a direct caller cannot open an A source before the frozen
+    # bindings have been checked.
+    bindings = _validate_binding_manifest(verify_frozen_bindings(root))
     population_path = os.path.join(root, *"prognosis_analysis/output/A_modeling/A_modeling_population.csv".split("/"))
     split_path = os.path.join(root, *"prognosis_analysis/output/outer_splits_A.csv".split("/"))
     supervoxel_path = os.path.join(
@@ -860,13 +945,32 @@ def load_authorized_a_inputs(project_root=PROJECT_ROOT):
         "feature_extract/output/features_v2/muscle_f0.25/features_original.csv",
         "feature_extract/output/features_v2/muscle_f0.25/features_wavelet.csv",
         "feature_extract/output/features_v2/muscle_f0.25/features_log.csv"))
-    population = _read_authorized_a(
+    technical_population = _read_authorized_a(
         population_path, allow_full=True, usecols=[
-            "影像号", "technical_cohort", "DFS_time", "DFS_event", "modeling_eligible"],
+            "影像号", "technical_cohort", "modeling_eligible"],
         dtype={"影像号": str})
+    technical_population = _normalise_a_population_metadata(technical_population)
+    technical_ids = set(technical_population["patient_id"])
+    # Outcome access is a separate, explicit operation after technical ID
+    # authorization.  The technical reader is never given outcome columns.
+    outcomes = _read_authorized_a_outcomes(population_path, technical_ids)
+    if "影像号" not in outcomes.columns or \
+            not {"DFS_time", "DFS_event"}.issubset(outcomes.columns):
+        raise P5ValidationError("A outcome reader returned an incomplete endpoint frame")
+    outcomes = outcomes[["影像号", "DFS_time", "DFS_event"]].copy()
+    outcomes = outcomes.rename(columns={"影像号": "patient_id"})
+    outcomes["patient_id"] = outcomes["patient_id"].astype(str).str.strip()
+    if set(outcomes["patient_id"]) != technical_ids or \
+            outcomes["patient_id"].duplicated().any():
+        raise P5ValidationError("A outcome rows do not exactly match authorized technical IDs")
+    population = technical_population.merge(
+        outcomes, on="patient_id", how="inner", validate="one_to_one")
     population = _normalise_population(population)
     ids = set(population["patient_id"])
-    split_frame = pd.read_csv(split_path, dtype={"patient_id": str})
+    if set(ids) != technical_ids:
+        raise P5ValidationError("A population normalization changed authorized IDs")
+    split_frame = _load_frozen_split_authorized(
+        split_path, population, bindings["W07_outer_split_artifact"])
     supervoxels = _read_authorized_a(
         supervoxel_path, allowed_ids=ids,
         usecols=["影像号", "reader", "sv_label", "n_tumor_voxels", "Mean"],
@@ -913,12 +1017,16 @@ def write_outputs(result, output_root):
 
 def run_production(output_root=DEFAULT_OUTPUT, project_root=PROJECT_ROOT):
     """Run the local protected A-only P5 entry point after all binding gates."""
-    binding_hashes = verify_frozen_bindings(project_root)
+    binding_hashes = _validate_binding_manifest(verify_frozen_bindings(project_root))
+    if binding_hashes["W07_outer_split_artifact"] != W07_OUTER_SPLIT_SHA256:
+        raise P5ValidationError("W07 split binding value is not the frozen hash")
     population, split_frame, supervoxels, availability = load_authorized_a_inputs(project_root)
-    expected_split_hash = binding_hashes["W07_outer_split_artifact"]
-    result = run_technical_preflight(
+    fold_frame = _run_preflight_core(
         population, split_frame, supervoxels, availability,
-        binding_hashes=binding_hashes, expected_split_hash=expected_split_hash)
+        binding_hashes=binding_hashes,
+        expected_split_hash=binding_hashes["W07_outer_split_artifact"])
+    result = _assemble_preflight_result(
+        fold_frame, binding_hashes, production_verified=True)
     write_outputs(result, output_root)
     return result
 
