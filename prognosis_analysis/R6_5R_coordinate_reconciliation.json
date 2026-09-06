@@ -1,0 +1,303 @@
+{
+  "disposition": "III",
+  "disposition_detail": "Runner-recovery axis is III because the historical exact replay runner is unavailable. The current canonical production reconstruction is 282/67, not the 288/68 numerical premise stated in the supplied III branch; no historical canonical equivalence or numerical release conclusion is claimed.",
+  "execution": {
+    "checks": {
+      "P3B_eight_field_validation": "PASS",
+      "canonical_R_high_eligibility_derivation": "PASS",
+      "full_train_transform_membership": "PASS",
+      "full_validation_transform_membership": "PASS",
+      "provider_state_validation": "PASS"
+    },
+    "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('local_private/r6_5r_coordinate_reconciliation_tmp.py')",
+    "elapsed_seconds": 272.314,
+    "environment": {
+      "numpy": "1.21.6",
+      "pandas": "1.3.5",
+      "platform": "Windows-10-10.0.19041-SP0",
+      "pyradiomics": "v3.0.1",
+      "python": "3.7.12",
+      "scipy": "1.7.3",
+      "simpleitk": "2.2.1",
+      "sklearn": "1.0.2"
+    },
+    "exit_code": 0
+  },
+  "path_a": {
+    "exact_reconstruction": {
+      "R_high_extractable": null,
+      "R_high_structural_absence": null,
+      "R_high_technical_small_roi": null,
+      "boundary": null,
+      "boundary_representation": null,
+      "resulting_train_n": null,
+      "resulting_validation_n": null,
+      "starting_outer_train_n": null,
+      "starting_outer_validation_n": null,
+      "train_id_hash": null,
+      "validation_id_hash": null
+    },
+    "historical_code_commit_recorded_by_R6_2": "ae92f7cbbaf2ab5bfb608ab029ab0566d7203c55",
+    "historical_diagnostic_runner_literal": "historical_diagnostic_runner_not_exactly_recoverable",
+    "recorded_R6_2_coordinate_observation": {
+      "interpretation": "recorded historical diagnostic observation; not replayed or reinterpreted",
+      "outer_train_n": 282,
+      "outer_validation_n": 67,
+      "run_id": "M2_R_high",
+      "source": "prognosis_analysis/R6_2_diagnostic_replay_audit.md and output/r6_2_diagnostic_replay/r6_2_diagnostic_replay.json"
+    },
+    "runner_path": "prognosis_analysis/scripts/_r6_2_diagnostic_replay.py",
+    "runner_present_in_checked_historical_commit": false,
+    "runner_present_in_worktree": false,
+    "status": "not_exactly_recoverable"
+  },
+  "path_b": {
+    "coordinate": {
+      "frozen_w07_split_canonical_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+      "frozen_w07_split_file_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+      "outer_train_id_hash": "7eeb6103574fd96ee4b698a00c7a5205dce6092490f3fb149c704057cd03af4b",
+      "outer_validation_id_hash": "941f0b0bfac12b74ec6f4115878ae994027a81b11360b061d0e12eeb8e790674",
+      "starting_outer_train_n": 314,
+      "starting_outer_validation_n": 79
+    },
+    "eligibility": {
+      "algorithm": "w08.derive_fold_populations",
+      "coverage": {
+        "effective_n": 67,
+        "eligibility_before_preprocessing": true,
+        "minimumROISize": 10,
+        "population": "R_high",
+        "required_blocks": [
+          "R_high"
+        ],
+        "source": "P3B",
+        "training_block_state_counts": {
+          "R_high": {
+            "extractable": 282,
+            "structural_absence": 21,
+            "technical_small_roi": 11
+          }
+        },
+        "training_eligible_id_hash": "90b08549c4bd7204a8437ce5fb984af608ba019a0cc10e6d1124b9fbddaf41b1",
+        "training_eligible_n": 282,
+        "training_model_state_counts": {
+          "extractable": 282,
+          "structural_absence": 21,
+          "technical_small_roi": 11
+        },
+        "training_opportunities": 314,
+        "training_structural_absence": 21,
+        "training_technical_small_roi_unavailable": 11,
+        "valid_predictions": 67,
+        "validation_block_state_counts": {
+          "R_high": {
+            "extractable": 67,
+            "structural_absence": 7,
+            "technical_small_roi": 5
+          }
+        },
+        "validation_eligible_id_hash": "148ac9faad72ba250b558246967b26adfe3c52f9ff09e07377e6c3bef374dd06",
+        "validation_extractable": 67,
+        "validation_model_state_counts": {
+          "extractable": 67,
+          "structural_absence": 7,
+          "technical_small_roi": 5
+        },
+        "validation_opportunities": 79,
+        "validation_structural_absence": 7,
+        "validation_technical_small_roi_unavailable": 5
+      },
+      "eligibility_before_preprocessing": true,
+      "minimumROISize": 10,
+      "population_name": "R_high",
+      "required_blocks": [
+        "R_high"
+      ],
+      "source": "P3B"
+    },
+    "p3b": {
+      "eligibility_stage": "after_provider_transform_before_any_preprocessing",
+      "fields": [
+        "R_low_voxel_count",
+        "R_high_voxel_count",
+        "R_low_state",
+        "R_high_state",
+        "R_low_structurally_defined",
+        "R_high_structurally_defined",
+        "R_low_technically_extractable",
+        "R_high_technically_extractable"
+      ],
+      "minimumROISize": 10,
+      "source": "P3B",
+      "state_hashes": {
+        "combined": "3073fab85237e3a637bbfdc34244e91014d761f1ba57f947f0060d005ce66d99",
+        "train": "4981f5b2785b8f223d42a69a41567b4175d819f47b9566f92def1ac0f22f4c05",
+        "validation": "84af0be99d65e12e5aedca20b688c9c00ca06ac4de6fa13bd1f7cb44447cc8b7"
+      },
+      "states": {
+        "extractable": "voxel_count >= 10",
+        "structural_absence": "voxel_count == 0",
+        "technical_small_roi": "1 <= voxel_count < 10"
+      },
+      "train": {
+        "R_high": {
+          "state_counts": {
+            "extractable": 282,
+            "structural_absence": 21,
+            "technical_small_roi": 11
+          }
+        },
+        "R_low": {
+          "state_counts": {
+            "extractable": 312,
+            "structural_absence": 1,
+            "technical_small_roi": 1
+          }
+        },
+        "n": 314
+      },
+      "validation": {
+        "R_high": {
+          "state_counts": {
+            "extractable": 67,
+            "structural_absence": 7,
+            "technical_small_roi": 5
+          }
+        },
+        "R_low": {
+          "state_counts": {
+            "extractable": 79,
+            "structural_absence": 0,
+            "technical_small_roi": 0
+          }
+        },
+        "n": 79
+      },
+      "zero_is_distinct_from_one_to_nine": true
+    },
+    "procedure": [
+      "w08.load_frozen_outer_splits",
+      "AOnlyFoldFeatureProvider.fit(full outer training, seed=14346)",
+      "AOnlyFoldFeatureProvider.transform(full outer training)",
+      "AOnlyFoldFeatureProvider.transform(full outer validation)",
+      "w08._validate_fold_provider_output(require_p3b=True)",
+      "w08.derive_fold_populations(population_names=['R_high'], require_p3b=True)"
+    ],
+    "provider_state": {
+      "boundary": 2.8650061106378706,
+      "boundary_representation": "aggregate/explicit",
+      "centres": [
+        2.1318701285178037,
+        3.598142092757938
+      ],
+      "feature_generation": "fold-specific habitat masks; G and R regenerated",
+      "feature_source_summary": {
+        "all_fit_training_hashes": [
+          "7eeb6103574fd96ee4b698a00c7a5205dce6092490f3fb149c704057cd03af4b"
+        ],
+        "all_source": [
+          "fold_fit_regenerated"
+        ],
+        "all_validation_ids_used_for_fit": [
+          false
+        ],
+        "required_fold_specific_column_count": 65
+      },
+      "fit_scope": "full_outer_training_only",
+      "fold_specific_habitat": true,
+      "formal_capable": true,
+      "patient_weighting": "each patient total supervoxel weight=1",
+      "provider_class": "AOnlyFoldFeatureProvider",
+      "representation_source": "A_preprocessed_R1_SLIC_supervoxel_mean",
+      "seed": 14346,
+      "supervoxel_count": 209459,
+      "training_id_hash": "7eeb6103574fd96ee4b698a00c7a5205dce6092490f3fb149c704057cd03af4b",
+      "validation_ids_used_for_fit": false
+    },
+    "status": "completed"
+  },
+  "provenance": {
+    "current_git_head": "96daac40a7814add7c35d4a94e9e0d4201b6aea4",
+    "file_sha256": {
+      "habitat_analysis/configs/main_cross_case_kmeans_k2_4mm.json": "fc2f856b3bc3fcd3d358f4476fd87a8117568712b3fc382c5e24e315e976bb3f",
+      "habitat_analysis/freeze_lock.json": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
+      "prognosis_analysis/R6_4A_remediation.json": "9d49225d2e7cd7883bb3a4612aa8b8181644f519602d67feddce58dee9fb9af0",
+      "prognosis_analysis/R6_4A_remediation_audit.md": "8ccf360083e5310026c1474b5ece850153174e316ad2767802ba9af916f277ed",
+      "prognosis_analysis/W07A_pre_W08_protocol_amendment.json": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14",
+      "prognosis_analysis/W07A_pre_W08_protocol_amendment.md": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+      "prognosis_analysis/configs/w07_outer_splits.json": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
+      "prognosis_analysis/configs/w08_nested_cv.json": "0d4cbec42fc0a26e59a31d189285e83eb134628ea949c92100325d04873637a0",
+      "prognosis_analysis/modeling_protocol.json": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+      "prognosis_analysis/output/A_modeling/A_modeling_population.csv": "5c93441f535ba86d965c3da14b4b33fe52f73d4337cd15a670b3ca2b8a2c23e4",
+      "prognosis_analysis/output/outer_splits_A.csv": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+      "prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
+      "prognosis_analysis/scripts/w07_outer_splits.py": "a74a6358d54f545b3b3226002462ea709c128b180361caa9e044cb9f8108f7d9",
+      "prognosis_analysis/scripts/w08_formal_run_a.py": "c782e63739011467c0a5c0c7cf68d0a600294d94835ec7128ec64bb8d3494a09",
+      "prognosis_analysis/scripts/w08_nested_cv.py": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce"
+    },
+    "historical_R6_2_aggregate_output": {
+      "path": "prognosis_analysis/output/r6_2_diagnostic_replay/r6_2_diagnostic_replay.json",
+      "sha256": "3bea77bcfa4f55b3f27c0497fdfbb9a5f2742971de9f62afd07f1fbd02149f09"
+    },
+    "historical_R6_2_audit": {
+      "path": "prognosis_analysis/R6_2_diagnostic_replay_audit.md",
+      "sha256": "6ac0226a6efa1fa374260658e4dc8bf30a602a50ebcb9054d5eb7ab739dd7796"
+    }
+  },
+  "verification": {
+    "aggregate_json_and_privacy_scan": {
+      "status": "PASS",
+      "patient_id_literal_hits": 0,
+      "absolute_path_literal_hits": 0,
+      "patient_level_technical_output_written": false
+    },
+    "technical_binding_regression": {
+      "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','tests.test_w07_outer_splits','tests.test_w08_technical_preflight_a')",
+      "exit_code": 0,
+      "tests_run": 28,
+      "failures": 0,
+      "errors": 0
+    },
+    "combined_provenance_regression": {
+      "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','tests.test_w07_outer_splits','tests.test_w08_technical_preflight_a','tests.test_provenance_reconciliation')",
+      "exit_code": 1,
+      "tests_run": 60,
+      "failures": 1,
+      "errors": 7,
+      "finding": "pre-existing provenance snapshot mismatch and execution_status wording assertions; no project files were changed"
+    }
+  },
+  "schema": "r6_5r_coordinate_reconciliation",
+  "schema_version": "1.0",
+  "scope": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "cox_fit_called": false,
+    "formal_w08_started": false,
+    "outer_fold": 1,
+    "path_a_exact_replay": false,
+    "path_b_canonical_reconstruction": true,
+    "performance_generated": false,
+    "population": "R_high",
+    "prediction_generated": false,
+    "repeat": 1,
+    "risk_score_generated": false
+  },
+  "stage_state": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "Cox_fit_called": false,
+    "W08_gate": "HOLD",
+    "formal_W08_status": "prior_attempt_failed; no R6-5R formal run",
+    "model_freeze_lock_generated": false,
+    "model_freeze_lock_present": false,
+    "performance_metrics_generated": false,
+    "predictions_generated": false,
+    "risk_scores_generated": false
+  },
+  "status": "completed"
+}

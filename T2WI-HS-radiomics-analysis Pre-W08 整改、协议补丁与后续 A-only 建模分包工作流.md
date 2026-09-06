@@ -1,11 +1,11 @@
 # T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流
 
-## 当前 R6 整改执行状态（2026-09-06）
+## 当前 R6 整改执行状态（2026-09-07）
 
 - R6-0 failure baseline bookkeeping 已完成并经独立复核。
 - R6-1 numerical-failure observability 已完成；第二轮独立 Reviewer 接受下游使用，并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`。
 - R6-1 仅新增失败上下文可观测性、脱敏序列化与回归测试；未改变冻结 solver 数学、参数、候选池、数据边界或历史失败归档。
-- 锁定 `t2_radiomics` 环境已恢复。R6-2 first-failure diagnostic replay 已完成并经第一轮独立 Reviewer 接受下游分类；R6-3 已由主 Agent 按 canonical workflow 校正为 Class A，机器可读 validation=`PASS`，下一路径为 R6-4A。R6-4A 已完成并经第二轮 `Sol/medium` Reviewer 判定 `NUMERICAL REMEDIATION ACCEPTED`：统一 Elastic-Net `max_iter=3000`，tolerance 与统计模型保持不变，synthetic stress study 为16/16收敛、最大迭代数1814，锁定环境 targeted suite 为76/76通过。R6-5 numerical regression 随后未通过第一轮 `Luna/xhigh` Reviewer：A-only 局部验证未严格复现冻结 R_high 坐标（288/68 对 282/67），没有形成 R6-5 数值等价性证据；按 G3 前禁止 final Cox fitting 的边界停止，不再重试。当前 W08 gate 仍为 `HOLD`，R6-6/G3R、正式 W08、性能评估、W09 与 B validation 均保持禁止，等待 protocol-owner 决策。
+- 锁定 `t2_radiomics` 环境已恢复。R6-2 first-failure diagnostic replay 已完成并经第一轮独立 Reviewer 接受下游分类；R6-3 已由主 Agent 按 canonical workflow 校正为 Class A，机器可读 validation=`PASS`，下一路径为 R6-4A。R6-4A 已完成并经第二轮 `Sol/medium` Reviewer 判定 `NUMERICAL REMEDIATION ACCEPTED`：统一 Elastic-Net `max_iter=3000`，tolerance 与统计模型保持不变，synthetic stress study 为16/16收敛、最大迭代数1814，锁定环境 targeted suite 为76/76通过。经 protocol-owner 授权，R6-5R 仅对 `repeat=1 / outer_fold=1 / R_high` 完成 first-failure coordinate reconciliation：Path A exact runner 不可恢复并登记 `historical_diagnostic_runner_not_exactly_recoverable`；Path B 当前 canonical 为 `282/67`。第一轮 `Luna/xhigh` Reviewer 判定 `HARD HOLD`，因批准 I/II/III 分支均要求 current canonical=`288/68`。当前 W08 gate 仍为 `HOLD`，不得进入 R6-5 数值等价性、R6-6/G3R、正式 W08、性能评估、W09 或 B validation，等待 protocol-owner 处置。
 
 ## 0. 工作流定位
 
