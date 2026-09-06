@@ -352,6 +352,7 @@ def _write_attempt_failure(context, project_root, stage, exception):
         "failure_stage": stage,
         "exception_summary": _safe_exception_text(
             exception, project_root, output_root),
+        "numerical_failure_audit": w08.serialise_failure_audit(exception),
         "code_commit_at_attempt": context.get("code_commit"),
         "B_data_read": False,
         "B_reader_invoked": False,
@@ -1957,6 +1958,7 @@ def _write_failure_state(output_root, project_root, stage, started_epoch,
         "exception_class": exception.__class__.__name__,
         "failure_reason": _safe_exception_text(
             exception, project_root, output_root),
+        "numerical_failure_audit": w08.serialise_failure_audit(exception),
         "code_commit": code_commit,
         "environment_fingerprint": environment,
         "B_data_read": False,

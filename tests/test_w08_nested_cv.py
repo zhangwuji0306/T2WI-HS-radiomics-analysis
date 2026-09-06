@@ -1,6 +1,8 @@
 import hashlib
+import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -381,6 +383,227 @@ class W08NestedCVTests(unittest.TestCase):
         self.assertTrue(all(
             row["candidate_failed"]
             for row in raised.exception.audit["candidate_records"]))
+
+    def test_inner_failure_context_contains_candidate_and_solver_details(self):
+        frame = synthetic_frame(30).iloc[:30].reset_index(drop=True)
+        frame["DFS_event"] = [1] * 15 + [0] * 15
+
+        def fail_fit(model, X, time, event):
+            clipping = w08._new_clipping_audit()
+            clipping["count"] = 3
+            audit = {
+                "iterations": 7,
+                "converged": False,
+                "fit_status": "non_converged",
+                "convergence_reason": "forced_test_failure",
+                "failure_reason": "forced_test_failure",
+                "stability_actions": ["backtrack_objective"],
+                "line_search_backtracking_count": 4,
+                "last_objective": 1.25,
+                "last_objective_improvement": 0.0,
+                "last_coefficient_delta": 0.02,
+                "linear_predictor_clipping": clipping,
+                "nonzero_coefficients": None,
+            }
+            model.coef_ = None
+            model.fit_audit = audit
+            raise w08.W08NumericalFailure(
+                "forced inner failure", audit=audit)
+
+        with mock.patch.object(w08.CoxElasticNetModel, "fit", new=fail_fit):
+            with self.assertRaises(w08.W08CandidateSelectionFailure) as raised:
+                w08.tune_elastic_net(
+                    frame, "M3L", inner_seed=22346, lambda_count=1,
+                    max_iter=1, tolerance=1e-6,
+                    failure_context={
+                        "repeat": 2, "outer_fold": 4, "fold": 4,
+                        "run_id": "M3L", "model_id": "M3L",
+                        "population": "R_low",
+                    })
+
+        record = raised.exception.audit["candidate_records"][0]
+        context = record["failure_context"]
+        self.assertEqual(context["failure_stage"], "inner_candidate")
+        self.assertEqual(context["repeat"], 2)
+        self.assertEqual(context["outer_fold"], 4)
+        self.assertEqual(context["run_id"], "M3L")
+        self.assertEqual(context["inner_fold"], 1)
+        self.assertEqual(context["alpha_index"], 0)
+        self.assertEqual(context["lambda_index"], 0)
+        self.assertIn("lambda_ratio", context)
+        self.assertIn("lambda", context)
+        self.assertEqual(context["iterations"], 7)
+        self.assertEqual(context["convergence_status"], "non_converged")
+        self.assertEqual(context["line_search_backtracking_count"], 4)
+        self.assertEqual(context["linear_predictor_clipping_count"], 3)
+        self.assertEqual(record["iterations"], 7)
+        self.assertEqual(record["convergence_status"], "non_converged")
+        self.assertEqual(record["convergence_reason"], "forced_test_failure")
+        self.assertEqual(record["line_search_backtracking_count"], 4)
+        self.assertEqual(record["linear_predictor_clipping_count"], 3)
+        self.assertEqual(record["last_objective"], 1.25)
+        self.assertEqual(record["last_coefficient_delta"], 0.02)
+        self.assertEqual(record["preprocessing_p"],
+                         context["preprocessing_p"])
+        self.assertEqual(record["preprocessing_feature_block_counts"],
+                         context["preprocessing_feature_block_counts"])
+
+    def test_outer_refit_failure_context_contains_selection_and_preprocessing(self):
+        frame = synthetic_frame(30).reset_index(drop=True)
+
+        def fail_fit(model, X, time, event):
+            clipping = w08._new_clipping_audit()
+            clipping["count"] = 2
+            audit = {
+                "iterations": 9,
+                "converged": False,
+                "fit_status": "non_converged",
+                "convergence_reason": None,
+                "failure_reason": "forced_outer_refit_failure",
+                "stability_actions": ["iteration_budget_exhausted"],
+                "line_search_backtracking_count": 5,
+                "last_objective": 2.5,
+                "last_objective_improvement": 0.01,
+                "last_coefficient_delta": 0.03,
+                "linear_predictor_clipping": clipping,
+                "nonzero_coefficients": None,
+            }
+            model.coef_ = None
+            model.fit_audit = audit
+            raise w08.W08NumericalFailure(
+                "forced outer refit failure", audit=audit)
+
+        selection = {
+            "alpha": 0.5,
+            "lambda_ratio": 0.1,
+            "mean_uno_c_index": 0.62,
+            "candidate_attempts": 1,
+            "candidate_failures": 0,
+            "stability_actions": [],
+        }
+        with mock.patch.object(w08, "tune_elastic_net",
+                               return_value=selection), \
+                mock.patch.object(w08.CoxElasticNetModel, "fit", new=fail_fit):
+            with self.assertRaises(w08.W08NumericalFailure) as raised:
+                w08._fit_outer_model(
+                    frame.iloc[:24].reset_index(drop=True),
+                    frame.iloc[24:].reset_index(drop=True), "M3L",
+                    inner_seed=22346, lambda_count=1, max_iter=1,
+                    tolerance=1e-7,
+                    run_definition={
+                        "run_id": "M3L", "model_id": "M3L",
+                        "population": "R_low",
+                    },
+                    failure_context={
+                        "repeat": 3, "outer_fold": 2, "fold": 2,
+                    })
+
+        self.assertEqual(str(raised.exception), "forced outer refit failure")
+        context = raised.exception.audit["failure_context"]
+        self.assertEqual(context["failure_stage"], "outer_final_refit")
+        self.assertEqual(context["repeat"], 3)
+        self.assertEqual(context["outer_fold"], 2)
+        self.assertEqual(context["run_id"], "M3L")
+        self.assertEqual(context["model_id"], "M3L")
+        self.assertEqual(context["population"], "R_low")
+        self.assertEqual(context["n_train"], 24)
+        self.assertEqual(context["n_validation"], 6)
+        self.assertEqual(context["selected_alpha"], 0.5)
+        self.assertEqual(context["selected_lambda_ratio"], 0.1)
+        self.assertGreater(context["outer_lambda_max"], 0.0)
+        self.assertGreater(context["final_lambda"], 0.0)
+        self.assertEqual(context["selected_inner_score"], 0.62)
+        self.assertGreater(context["retained_feature_number"], 0)
+        self.assertEqual(context["preprocessing_p"],
+                         context["retained_feature_number"])
+        self.assertIn("R_low", context["preprocessing_feature_block_counts"])
+        self.assertEqual(context["iterations"], 9)
+        self.assertEqual(context["last_objective"], 2.5)
+        self.assertEqual(context["last_objective_improvement"], 0.01)
+        self.assertEqual(context["last_coefficient_delta"], 0.03)
+        self.assertIn("non_zero_coefficient_number", context)
+        self.assertIsNone(context["non_zero_coefficient_number"])
+
+    def test_failure_audit_serialization_is_json_safe_and_deidentified(self):
+        exception = w08.W08NumericalFailure(
+            "forced serialization failure", audit={
+                "patient_id": "PATIENT-001",
+                "failure_context": {
+                    "run_id": "M3L",
+                    "n_train": np.int64(24),
+                    "patient_ids": ["PATIENT-001"],
+                    "source_path": r"C:\private\patient-001\scan.nii.gz",
+                },
+                "last_objective": np.float64(np.nan),
+            })
+        serialised = w08.serialise_failure_audit(exception)
+        encoded = json.dumps(serialised, ensure_ascii=False, allow_nan=False)
+        self.assertNotIn("PATIENT-001", encoded)
+        self.assertNotIn("patient_id", serialised["audit"])
+        self.assertNotIn("patient_ids", serialised["audit"]["failure_context"])
+        self.assertNotIn("patient-001", json.dumps(serialised))
+        self.assertNotIn("scan.nii.gz", json.dumps(serialised))
+        self.assertIsNone(serialised["audit"]["last_objective"])
+        self.assertEqual(serialised["audit"]["failure_context"]["n_train"], 24)
+
+    def test_patient_id_does_not_enter_formal_failure_audit(self):
+        exception = w08.W08NumericalFailure(
+            "forced failure", audit={
+                "failure_context": {
+                    "patient_id": "PATIENT-002",
+                    "run_id": "M3L",
+                    "training_id_hash": "hash-only",
+                }})
+        payload = w08.serialise_failure_audit(exception)
+        self.assertNotIn("PATIENT-002", json.dumps(payload))
+        self.assertNotIn("patient_id", json.dumps(payload))
+        self.assertIn("training_id_hash", json.dumps(payload))
+
+    def test_solver_instrumentation_does_not_change_baseline_outputs(self):
+        baseline_commit = "899cf71e1895985f1f2eb5daf482d1c595dad154"
+        source = subprocess.check_output([
+            "git", "show", "%s:prognosis_analysis/scripts/w08_nested_cv.py" %
+            baseline_commit], cwd=os.path.abspath(os.path.join(
+                os.path.dirname(__file__), "..")))
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "w08_nested_cv_baseline.py")
+            with open(path, "wb") as handle:
+                handle.write(source)
+            spec = importlib.util.spec_from_file_location(
+                "w08_nested_cv_baseline", path)
+            baseline = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(baseline)
+
+        rng = np.random.RandomState(20260906)
+        X = rng.normal(size=(40, 3))
+        time = np.arange(1.0, 41.0)
+        event = np.asarray([1 if index % 3 == 0 else 0
+                            for index in range(40)])
+
+        def snapshot(module, model):
+            return (
+                model.coef_.copy(), model.baseline_times_.copy(),
+                model.baseline_survival_.copy(),
+                model.predict_risk(X).copy(),
+                model.predict_survival(X, {"horizon": 24.0})["horizon"].copy())
+
+        baseline_ph = baseline.CoxPHModel(max_iter=250, tolerance=1e-7).fit(
+            X, time, event)
+        current_ph = w08.CoxPHModel(max_iter=250, tolerance=1e-7).fit(
+            X, time, event)
+        for before, after in zip(snapshot(baseline, baseline_ph),
+                                 snapshot(w08, current_ph)):
+            np.testing.assert_array_equal(before, after)
+
+        baseline_en = baseline.CoxElasticNetModel(
+            alpha=0.5, penalty=0.1, max_iter=250, tolerance=1e-7).fit(
+            X, time, event)
+        current_en = w08.CoxElasticNetModel(
+            alpha=0.5, penalty=0.1, max_iter=250, tolerance=1e-7).fit(
+            X, time, event)
+        for before, after in zip(snapshot(baseline, baseline_en),
+                                 snapshot(w08, current_en)):
+            np.testing.assert_array_equal(before, after)
 
 
 class W08FormalRadiomicsBoundaryCompatibilityTests(unittest.TestCase):

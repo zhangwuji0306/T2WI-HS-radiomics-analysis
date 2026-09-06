@@ -366,6 +366,114 @@ class W08CandidateSelectionFailure(W08ValidationError):
         self.audit = audit or {}
 
 
+_FAILURE_AUDIT_SENSITIVE_KEYS = frozenset((
+    "patient_id", "patient_ids", "identifier", "identifiers",
+    "source_path", "file_path", "path",
+))
+
+
+def _json_safe_failure_value(value, key=None):
+    """Return a JSON-safe, de-identified failure-audit value."""
+    if key is not None and str(key) in _FAILURE_AUDIT_SENSITIVE_KEYS:
+        return None
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, dict):
+        output = {}
+        for item_key, item_value in value.items():
+            if str(item_key) in _FAILURE_AUDIT_SENSITIVE_KEYS:
+                continue
+            output[str(item_key)] = _json_safe_failure_value(
+                item_value, key=item_key)
+        return output
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_failure_value(item) for item in value]
+    if isinstance(value, set):
+        return sorted((_json_safe_failure_value(item) for item in value),
+                      key=lambda item: str(item))
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def serialise_failure_audit(exception):
+    """Serialise numerical-failure context without patient-level identifiers."""
+    return {
+        "exception_class": exception.__class__.__name__,
+        "exception_message": str(exception),
+        "audit": _json_safe_failure_value(getattr(exception, "audit", {}) or {}),
+    }
+
+
+def _attach_failure_context(exception, context):
+    """Add observability context while preserving exception type and message."""
+    audit = dict(getattr(exception, "audit", {}) or {})
+    existing = dict(audit.get("failure_context", {}) or {})
+    existing.update({key: value for key, value in context.items()
+                     if value is not None or key == "non_zero_coefficient_number"})
+    audit["failure_context"] = existing
+    if "failure_stage" in existing:
+        audit["failure_stage"] = existing["failure_stage"]
+    exception.audit = audit
+    return exception
+
+
+def _linear_predictor_clipping_count(audit):
+    clipping = audit.get("linear_predictor_clipping", {}) or {}
+    return int(clipping.get("count", audit.get(
+        "linear_predictor_clipping_count", 0)) or 0)
+
+
+def _feature_block_counts(preprocessor):
+    """Count retained post-preprocessing features by frozen feature block."""
+    blocks = preprocessor.spec["blocks"]
+    counts = OrderedDict()
+    counts["C"] = int(len(preprocessor.clinical.feature_names))
+    if "H_high_fraction" in blocks:
+        counts["H_high_fraction"] = 1
+    if "G" in blocks:
+        counts["G"] = int(len(GLOBAL_COLUMNS))
+    if preprocessor.radiomics is not None:
+        for block in ("R_low", "R_high", "W"):
+            if block in blocks:
+                prefix = RADIOMICS_PREFIXES[block]
+                counts[block] = int(sum(
+                    str(column).startswith(prefix)
+                    for column in preprocessor.radiomics.kept_columns))
+    return dict(counts)
+
+
+def _solver_observability(audit):
+    """Extract stable scalar solver diagnostics for failure records."""
+    audit = audit or {}
+    return {
+        "iterations": audit.get("iterations"),
+        "convergence_status": audit.get(
+            "fit_status", "converged" if audit.get("converged") else "unknown"),
+        "converged": bool(audit.get("converged", False)),
+        "convergence_reason": audit.get("convergence_reason"),
+        "failure_reason": audit.get("failure_reason", ""),
+        "stability_actions": list(audit.get("stability_actions", []) or []),
+        "line_search_backtracking_count": int(
+            audit.get("line_search_backtracking_count", 0) or 0),
+        "linear_predictor_clipping_count": _linear_predictor_clipping_count(audit),
+        "last_objective": audit.get("last_objective"),
+        "last_objective_improvement": audit.get("last_objective_improvement"),
+        "last_coefficient_delta": audit.get("last_coefficient_delta"),
+        "non_zero_coefficient_number": audit.get("nonzero_coefficients"),
+    }
+
+
+def _finalise_fit_audit(audit):
+    """Add scalar observability aliases without changing solver decisions."""
+    audit = dict(audit or {})
+    audit.setdefault("linear_predictor_clipping_count",
+                     _linear_predictor_clipping_count(audit))
+    return audit
+
+
 def _absolute(path):
     return os.path.normcase(os.path.abspath(os.fspath(path)))
 
@@ -1681,9 +1789,14 @@ class CoxPHModel(object):
         beta = np.zeros(X.shape[1], dtype=float)
         clipping = _new_clipping_audit()
         converged = False
+        line_search_backtracking_count = 0
+        last_objective = None
+        last_objective_improvement = None
+        last_coefficient_delta = None
         for iteration in range(self.max_iter):
             _record_linear_predictor_clipping(clipping, X, beta, "fit")
             old = _cox_negative_loglik(X, time, event, beta)
+            last_objective = old
             _, score = _cox_components(X, time, event, beta)
             gradient = -score / float(np.sum(event))
             information = _cox_information(X, time, event, beta) / float(np.sum(event))
@@ -1703,8 +1816,11 @@ class CoxPHModel(object):
                 new = _cox_negative_loglik(X, time, event, proposal)
                 if np.isfinite(new) and new <= old + 1e-12:
                     beta = proposal
+                    last_objective_improvement = old - new
+                    last_coefficient_delta = float(np.max(np.abs(length * step)))
                     accepted = True
                     break
+                line_search_backtracking_count += 1
                 length *= 0.5
             if not accepted:
                 audit = {
@@ -1715,10 +1831,15 @@ class CoxPHModel(object):
                     "failure_reason": "line_search_failed",
                     "stability_actions": ["line_search_failed"],
                     "linear_predictor_clipping": clipping,
+                    "line_search_backtracking_count": int(
+                        line_search_backtracking_count),
+                    "last_objective": last_objective,
+                    "last_objective_improvement": last_objective_improvement,
+                    "last_coefficient_delta": last_coefficient_delta,
                 }
-                self.fit_audit = audit
+                self.fit_audit = _finalise_fit_audit(audit)
                 raise W08NumericalFailure(
-                    "Unpenalized Cox line search failed", audit=audit)
+                    "Unpenalized Cox line search failed", audit=self.fit_audit)
             if np.max(np.abs(length * step)) < self.tolerance:
                 converged = True
                 break
@@ -1731,19 +1852,29 @@ class CoxPHModel(object):
                 "failure_reason": "iteration_budget_exhausted",
                 "stability_actions": ["iteration_budget_exhausted"],
                 "linear_predictor_clipping": clipping,
+                "line_search_backtracking_count": int(
+                    line_search_backtracking_count),
+                "last_objective": last_objective,
+                "last_objective_improvement": last_objective_improvement,
+                "last_coefficient_delta": last_coefficient_delta,
             }
-            self.fit_audit = audit
+            self.fit_audit = _finalise_fit_audit(audit)
             raise W08NumericalFailure(
-                "Unpenalized Cox fit did not converge", audit=audit)
+                "Unpenalized Cox fit did not converge", audit=self.fit_audit)
         self.coef_ = beta
-        self.fit_audit = {
+        self.fit_audit = _finalise_fit_audit({
             "iterations": iteration + 1,
             "converged": True,
             "fit_status": "converged",
             "convergence_reason": "coefficient_delta",
             "stability_actions": [],
             "linear_predictor_clipping": clipping,
-        }
+            "line_search_backtracking_count": int(
+                line_search_backtracking_count),
+            "last_objective": last_objective,
+            "last_objective_improvement": last_objective_improvement,
+            "last_coefficient_delta": last_coefficient_delta,
+        })
         self._fit_baseline(X, time, event)
         return self
 
@@ -1838,6 +1969,10 @@ class CoxElasticNetModel(object):
         actions = []
         converged = False
         convergence_reason = None
+        line_search_backtracking_count = 0
+        last_objective = None
+        last_objective_improvement = None
+        last_coefficient_delta = None
         for iteration in range(self.max_iter):
             _record_linear_predictor_clipping(clipping, X, beta, "fit")
             previous_objective = self._objective(X, time, event, beta)
@@ -1849,6 +1984,7 @@ class CoxElasticNetModel(object):
                     np.abs(beta - local_step * gradient_y) - local_step * self.penalty * self.alpha, 0.0)
                 if not np.isfinite(proposal).all():
                     local_step *= 0.5
+                    line_search_backtracking_count += 1
                     actions.append("backtrack_nonfinite")
                     continue
                 _record_linear_predictor_clipping(
@@ -1858,10 +1994,13 @@ class CoxElasticNetModel(object):
                 actual_smooth, _ = self._smooth(X, time, event, proposal)
                 if np.isfinite(actual_smooth) and actual_smooth <= quadratic + 1e-10:
                     accepted = True
+                    last_coefficient_delta = float(
+                        np.max(np.abs(proposal - beta)))
                     beta = proposal
                     step = min(local_step * 1.25, 1e6)
                     break
                 local_step *= 0.5
+                line_search_backtracking_count += 1
                 actions.append("backtrack_objective")
             if not accepted:
                 actions.append("line_search_failed")
@@ -1870,16 +2009,24 @@ class CoxElasticNetModel(object):
                     "converged": False,
                     "fit_status": "non_converged",
                     "convergence_reason": None,
+                    "failure_reason": "line_search_failed",
                     "stability_actions": sorted(set(actions)),
                     "nonzero_coefficients": None,
                     "linear_predictor_clipping": clipping,
+                    "line_search_backtracking_count": int(
+                        line_search_backtracking_count),
+                    "last_objective": previous_objective,
+                    "last_objective_improvement": last_objective_improvement,
+                    "last_coefficient_delta": last_coefficient_delta,
                 }
                 self.coef_ = None
-                self.fit_audit = audit
+                self.fit_audit = _finalise_fit_audit(audit)
                 raise W08NumericalFailure(
-                    "Elastic-Net Cox line search failed", audit=audit)
+                    "Elastic-Net Cox line search failed", audit=self.fit_audit)
             objective = self._objective(X, time, event, beta)
             objective_improvement = previous_objective - objective
+            last_objective = objective
+            last_objective_improvement = objective_improvement
             objective_tolerance = self.tolerance * max(
                 1.0, abs(previous_objective)) * 10.0
             if np.max(np.abs(beta - previous)) < self.tolerance:
@@ -1898,17 +2045,23 @@ class CoxElasticNetModel(object):
                 "converged": False,
                 "fit_status": "non_converged",
                 "convergence_reason": None,
+                "failure_reason": "iteration_budget_exhausted",
                 "stability_actions": sorted(set(actions + [
                     "iteration_budget_exhausted"])) or ["stable_path"],
                 "nonzero_coefficients": None,
                 "linear_predictor_clipping": clipping,
+                "line_search_backtracking_count": int(
+                    line_search_backtracking_count),
+                "last_objective": last_objective,
+                "last_objective_improvement": last_objective_improvement,
+                "last_coefficient_delta": last_coefficient_delta,
             }
             self.coef_ = None
-            self.fit_audit = audit
+            self.fit_audit = _finalise_fit_audit(audit)
             raise W08NumericalFailure(
-                "Elastic-Net Cox fit did not converge", audit=audit)
+                "Elastic-Net Cox fit did not converge", audit=self.fit_audit)
         self.coef_ = beta
-        self.fit_audit = {
+        self.fit_audit = _finalise_fit_audit({
             "iterations": iteration + 1,
             "converged": True,
             "fit_status": "converged",
@@ -1916,7 +2069,12 @@ class CoxElasticNetModel(object):
             "stability_actions": sorted(set(actions)) or ["stable_path"],
             "nonzero_coefficients": int(np.sum(np.abs(beta) > 1e-10)),
             "linear_predictor_clipping": clipping,
-        }
+            "line_search_backtracking_count": int(
+                line_search_backtracking_count),
+            "last_objective": last_objective,
+            "last_objective_improvement": last_objective_improvement,
+            "last_coefficient_delta": last_coefficient_delta,
+        })
         self._fit_baseline(X, time, event)
         return self
 
@@ -2196,7 +2354,7 @@ def _select_candidate(records):
 
 
 def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
-                     max_iter=250, tolerance=1e-7):
+                     max_iter=250, tolerance=1e-7, failure_context=None):
     """Tune alpha and lambda using only the supplied outer-training frame."""
     if model_id not in MODEL_SPECS or MODEL_SPECS[model_id]["family"] != "Elastic_Net_Cox":
         raise W08ValidationError("inner tuning is only for Elastic-Net models")
@@ -2240,6 +2398,11 @@ def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
                     "convergence_reason": None,
                     "stability_actions": [],
                     "linear_predictor_clipping": _new_clipping_audit(),
+                    "failure_stage": None,
+                    "iterations": None,
+                    "convergence_status": "not_started",
+                    "line_search_backtracking_count": 0,
+                    "linear_predictor_clipping_count": 0,
                 }
                 try:
                     model = CoxElasticNetModel(
@@ -2267,11 +2430,41 @@ def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
                         model.fit_audit.get("stability_actions", []))
                     record["linear_predictor_clipping"] = model.fit_audit.get(
                         "linear_predictor_clipping", _new_clipping_audit())
+                    record.update(_solver_observability(model.fit_audit))
                     stability_actions.extend(record["stability_actions"])
                 except W08NumericalFailure as exc:
+                    candidate_context = dict(failure_context or {})
+                    candidate_context.update({
+                        "failure_stage": "inner_candidate",
+                        "inner_fold": int(inner_index),
+                        "alpha": float(alpha),
+                        "alpha_index": int(alpha_index),
+                        "lambda_index": int(lambda_index),
+                        "lambda_ratio": float(ratio),
+                        "lambda": float(penalty),
+                        "n_train": int(len(inner_train)),
+                        "train_events": int(np.sum(train_event)),
+                        "n_validation": int(len(inner_validation)),
+                        "validation_events": int(np.sum(validation_event)),
+                        "preprocessing_p": int(len(preprocessor.feature_names)),
+                        "preprocessing_feature_block_counts":
+                            _feature_block_counts(preprocessor),
+                    })
+                    _attach_failure_context(exc, candidate_context)
+                    audit = exc.audit or {}
+                    _attach_failure_context(
+                        exc, dict(candidate_context, **_solver_observability(audit)))
                     audit = exc.audit or {}
                     record["candidate_failed"] = True
                     record["failure_reason"] = str(exc)
+                    record["exception_class"] = exc.__class__.__name__
+                    record["failure_stage"] = "inner_candidate"
+                    record["failure_context"] = dict(
+                        audit.get("failure_context", candidate_context))
+                    record["preprocessing_p"] = int(
+                        candidate_context["preprocessing_p"])
+                    record["preprocessing_feature_block_counts"] = dict(
+                        candidate_context["preprocessing_feature_block_counts"])
                     record["fit_status"] = audit.get("fit_status", "non_converged")
                     record["convergence_reason"] = audit.get("convergence_reason")
                     record["converged"] = False
@@ -2279,6 +2472,8 @@ def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
                         audit.get("stability_actions", []))
                     record["linear_predictor_clipping"] = audit.get(
                         "linear_predictor_clipping", _new_clipping_audit())
+                    record.update(_solver_observability(audit))
+                    record["failure_reason"] = str(exc)
                     stability_actions.extend(record["stability_actions"])
                 scores.append(record["uno_c_index"])
                 records.append(record)
@@ -2301,8 +2496,18 @@ def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
     try:
         selected = _select_candidate(summary)
     except W08ValidationError as exc:
+        selection_context = dict(failure_context or {})
+        selection_context.update({
+            "failure_stage": "inner_candidate_selection",
+            "inner_seed": int(inner_seed),
+            "candidate_attempts": int(len(records)),
+            "candidate_failures": int(sum(
+                row["candidate_failed"] for row in records)),
+        })
         raise W08CandidateSelectionFailure(
             str(exc), audit={
+                "failure_stage": "inner_candidate_selection",
+                "failure_context": selection_context,
                 "candidate_attempts": int(len(records)),
                 "candidate_failures": int(sum(
                     row["candidate_failed"] for row in records)),
@@ -2321,7 +2526,7 @@ def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
 
 
 def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
-               max_iter=250, tolerance=1e-7):
+               max_iter=250, tolerance=1e-7, failure_context=None):
     """Tune a P3D pure-ridge sensitivity using outer-training data only."""
     if model_id not in ("M0", "M1", "M2"):
         raise W08ValidationError(
@@ -2373,6 +2578,11 @@ def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
                 "convergence_reason": None,
                 "stability_actions": [],
                 "linear_predictor_clipping": _new_clipping_audit(),
+                "failure_stage": None,
+                "iterations": None,
+                "convergence_status": "not_started",
+                "line_search_backtracking_count": 0,
+                "linear_predictor_clipping_count": 0,
             }
             try:
                 model = CoxRidgeModel(
@@ -2398,11 +2608,41 @@ def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
                     model.fit_audit.get("stability_actions", []))
                 record["linear_predictor_clipping"] = model.fit_audit.get(
                     "linear_predictor_clipping", _new_clipping_audit())
+                record.update(_solver_observability(model.fit_audit))
                 stability_actions.extend(record["stability_actions"])
             except W08NumericalFailure as exc:
+                candidate_context = dict(failure_context or {})
+                candidate_context.update({
+                    "failure_stage": "inner_candidate",
+                    "inner_fold": int(inner_index),
+                    "alpha": 0.0,
+                    "alpha_index": 0,
+                    "lambda_index": int(lambda_index),
+                    "lambda_ratio": float(ratio),
+                    "lambda": float(penalty),
+                    "n_train": int(len(inner_train)),
+                    "train_events": int(np.sum(train_event)),
+                    "n_validation": int(len(inner_validation)),
+                    "validation_events": int(np.sum(validation_event)),
+                    "preprocessing_p": int(len(preprocessor.feature_names)),
+                    "preprocessing_feature_block_counts":
+                        _feature_block_counts(preprocessor),
+                })
+                _attach_failure_context(exc, candidate_context)
+                audit = exc.audit or {}
+                _attach_failure_context(
+                    exc, dict(candidate_context, **_solver_observability(audit)))
                 audit = exc.audit or {}
                 record["candidate_failed"] = True
                 record["failure_reason"] = str(exc)
+                record["exception_class"] = exc.__class__.__name__
+                record["failure_stage"] = "inner_candidate"
+                record["failure_context"] = dict(
+                    audit.get("failure_context", candidate_context))
+                record["preprocessing_p"] = int(
+                    candidate_context["preprocessing_p"])
+                record["preprocessing_feature_block_counts"] = dict(
+                    candidate_context["preprocessing_feature_block_counts"])
                 record["fit_status"] = audit.get("fit_status", "non_converged")
                 record["convergence_reason"] = audit.get("convergence_reason")
                 record["converged"] = False
@@ -2410,6 +2650,8 @@ def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
                     audit.get("stability_actions", []))
                 record["linear_predictor_clipping"] = audit.get(
                     "linear_predictor_clipping", _new_clipping_audit())
+                record.update(_solver_observability(audit))
+                record["failure_reason"] = str(exc)
                 stability_actions.extend(record["stability_actions"])
             records.append(record)
     grouped = {}
@@ -2435,8 +2677,18 @@ def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
     try:
         selected = _select_candidate(summary)
     except W08ValidationError as exc:
+        selection_context = dict(failure_context or {})
+        selection_context.update({
+            "failure_stage": "inner_candidate_selection",
+            "inner_seed": int(inner_seed),
+            "candidate_attempts": int(len(records)),
+            "candidate_failures": int(sum(
+                row["candidate_failed"] for row in records)),
+        })
         raise W08CandidateSelectionFailure(
             str(exc), audit={
+                "failure_stage": "inner_candidate_selection",
+                "failure_context": selection_context,
                 "candidate_attempts": int(len(records)),
                 "candidate_failures": int(sum(
                     row["candidate_failed"] for row in records)),
@@ -2464,87 +2716,155 @@ def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
 
 def _fit_outer_model(train_frame, validation_frame, model_id, inner_seed,
                      lambda_count=LAMBDA_COUNT, max_iter=250, tolerance=1e-7,
-                     run_definition=None):
+                     run_definition=None, failure_context=None):
     run_definition = dict(run_definition or {
         "run_id": model_id, "model_id": model_id,
         "population": MODEL_SPECS[model_id]["population"],
     })
-    penalty_definition = _run_penalty_definition(run_definition)
-    family = penalty_definition["family"]
-    preprocessor = ModelPreprocessor(model_id).fit(train_frame)
-    X_train = preprocessor.transform(train_frame)
-    X_validation = preprocessor.transform(validation_frame)
-    train_time = train_frame["DFS_time"].to_numpy(dtype=float)
-    train_event = train_frame["DFS_event"].to_numpy(dtype=int)
-    if family == "Cox_PH_unpenalized":
-        model = CoxPHModel(max_iter=max_iter, tolerance=tolerance).fit(
-            X_train, train_time, train_event)
-        selection = {
-            "alpha": None, "lambda_ratio": None, "lambda": None,
-            "candidate_attempts": 0, "candidate_failures": 0,
-            "inner_folds": 0, "lambda_count": 0,
-            "mean_uno_c_index": None, "stability_actions": [],
-            "family": family,
-            "lambda_selection_scope": "not_applicable_unpenalized_primary",
-            "outer_validation_used_for_lambda": False,
-            "outer_validation_used_for_selection": False,
-        }
-    elif family == "pure_ridge_Cox":
-        selection = tune_ridge(
-            train_frame, model_id, inner_seed, lambda_count=lambda_count,
-            max_iter=max_iter, tolerance=tolerance)
-        outer_lambda_reference = _ridge_lambda_reference(
-            X_train, train_time, train_event)
-        final_lambda = float(outer_lambda_reference * selection["lambda_ratio"])
-        if not np.isfinite(final_lambda) or final_lambda <= 0.0:
-            raise W08ValidationError("outer ridge lambda is nonpositive or nonfinite")
-        model = CoxRidgeModel(
-            final_lambda, max_iter=max_iter, tolerance=tolerance).fit(
+    context = dict(failure_context or {})
+    context.update({
+        "run_id": run_definition["run_id"],
+        "model_id": run_definition["model_id"],
+        "population": run_definition["population"],
+        "inner_seed": int(inner_seed),
+        "n_train": int(len(train_frame)),
+        "train_events": int(np.sum(train_frame["DFS_event"].to_numpy(dtype=int))),
+        "n_validation": int(len(validation_frame)),
+        "validation_events": int(
+            np.sum(validation_frame["DFS_event"].to_numpy(dtype=int))),
+    })
+    preprocessor = None
+    stage_context = {}
+    try:
+        penalty_definition = _run_penalty_definition(run_definition)
+        family = penalty_definition["family"]
+        preprocessor = ModelPreprocessor(model_id).fit(train_frame)
+        context.update({
+            "preprocessing_p": int(len(preprocessor.feature_names)),
+            "preprocessing_feature_block_counts":
+                _feature_block_counts(preprocessor),
+        })
+        X_train = preprocessor.transform(train_frame)
+        X_validation = preprocessor.transform(validation_frame)
+        train_time = train_frame["DFS_time"].to_numpy(dtype=float)
+        train_event = train_frame["DFS_event"].to_numpy(dtype=int)
+        if family == "Cox_PH_unpenalized":
+            stage_context = {
+                "failure_stage": "outer_final_refit",
+                "selected_alpha": None,
+                "selected_lambda_ratio": None,
+                "outer_lambda_max": None,
+                "final_lambda": None,
+                "selected_inner_score": None,
+                "retained_feature_number": int(len(preprocessor.feature_names)),
+                "non_zero_coefficient_number": None,
+            }
+            model = CoxPHModel(max_iter=max_iter, tolerance=tolerance).fit(
                 X_train, train_time, train_event)
-        selection["outer_lambda_reference"] = float(outer_lambda_reference)
-        selection["outer_lambda_max"] = float(outer_lambda_reference)
-        selection["outer_lambda"] = final_lambda
-        selection["lambda_reference_scope"] = (
-            "inner_training_only_trace_I0_over_p_and_outer_training_refit")
-        selection["outer_validation_used_for_lambda"] = False
-        selection["outer_validation_used_for_selection"] = False
-        selection["stability_actions"] = sorted(set(
-            selection["stability_actions"] +
-            model.fit_audit.get("stability_actions", [])))
-    else:
-        selection = tune_elastic_net(
-            train_frame, model_id, inner_seed, lambda_count=lambda_count,
-            max_iter=max_iter, tolerance=tolerance)
-        outer_lambda_max = _lambda_max(
-            X_train, train_time, train_event, selection["alpha"])
-        final_lambda = float(outer_lambda_max * selection["lambda_ratio"])
-        model = CoxElasticNetModel(
-            selection["alpha"], final_lambda, max_iter=max_iter,
-            tolerance=tolerance).fit(X_train, train_time, train_event)
-        selection["outer_lambda_max"] = float(outer_lambda_max)
-        selection["outer_lambda"] = final_lambda
-        selection["stability_actions"] = sorted(set(
-            selection["stability_actions"] + model.fit_audit.get("stability_actions", [])))
-        selection["family"] = family
-        selection["lambda_selection_scope"] = "outer_training_inner_5fold_only"
-        selection["outer_validation_used_for_lambda"] = False
-        selection["outer_validation_used_for_selection"] = False
-    _require_converged_model(model, "outer %s Cox fit" % model_id)
-    selection["converged"] = bool(model.fit_audit.get("converged", False))
-    selection["fit_status"] = model.fit_audit.get("fit_status", "unknown")
-    selection["convergence_reason"] = model.fit_audit.get("convergence_reason")
-    selection["linear_predictor_clipping"] = model.fit_audit.get(
-        "linear_predictor_clipping", _new_clipping_audit())
-    risk = model.predict_risk(X_validation)
-    if not np.isfinite(risk).all():
-        raise W08NumericalFailure(
-            "outer linear predictor is nonfinite", audit=model.fit_audit)
-    survival = model.predict_survival(X_validation, HORIZONS_MONTHS)
-    grid_horizons = OrderedDict(("month_%d" % month, float(month))
-                                for month in range(12, 61, 12))
-    survival_grid = {"horizons": grid_horizons,
-                     "predictions": model.predict_survival(X_validation, grid_horizons)}
-    return model, preprocessor, selection, risk, survival, survival_grid
+            selection = {
+                "alpha": None, "lambda_ratio": None, "lambda": None,
+                "candidate_attempts": 0, "candidate_failures": 0,
+                "inner_folds": 0, "lambda_count": 0,
+                "mean_uno_c_index": None, "stability_actions": [],
+                "family": family,
+                "lambda_selection_scope": "not_applicable_unpenalized_primary",
+                "outer_validation_used_for_lambda": False,
+                "outer_validation_used_for_selection": False,
+            }
+        elif family == "pure_ridge_Cox":
+            selection = tune_ridge(
+                train_frame, model_id, inner_seed, lambda_count=lambda_count,
+                max_iter=max_iter, tolerance=tolerance,
+                failure_context=context)
+            outer_lambda_reference = _ridge_lambda_reference(
+                X_train, train_time, train_event)
+            final_lambda = float(outer_lambda_reference * selection["lambda_ratio"])
+            if not np.isfinite(final_lambda) or final_lambda <= 0.0:
+                raise W08ValidationError("outer ridge lambda is nonpositive or nonfinite")
+            stage_context = {
+                "failure_stage": "outer_final_refit",
+                "selected_alpha": 0.0,
+                "selected_lambda_ratio": float(selection["lambda_ratio"]),
+                "outer_lambda_max": float(outer_lambda_reference),
+                "final_lambda": final_lambda,
+                "selected_inner_score": selection.get("mean_uno_c_index"),
+                "retained_feature_number": int(len(preprocessor.feature_names)),
+                "non_zero_coefficient_number": None,
+            }
+            model = CoxRidgeModel(
+                final_lambda, max_iter=max_iter, tolerance=tolerance).fit(
+                    X_train, train_time, train_event)
+            selection["outer_lambda_reference"] = float(outer_lambda_reference)
+            selection["outer_lambda_max"] = float(outer_lambda_reference)
+            selection["outer_lambda"] = final_lambda
+            selection["lambda_reference_scope"] = (
+                "inner_training_only_trace_I0_over_p_and_outer_training_refit")
+            selection["outer_validation_used_for_lambda"] = False
+            selection["outer_validation_used_for_selection"] = False
+            selection["stability_actions"] = sorted(set(
+                selection["stability_actions"] +
+                model.fit_audit.get("stability_actions", [])))
+        else:
+            selection = tune_elastic_net(
+                train_frame, model_id, inner_seed, lambda_count=lambda_count,
+                max_iter=max_iter, tolerance=tolerance,
+                failure_context=context)
+            outer_lambda_max = _lambda_max(
+                X_train, train_time, train_event, selection["alpha"])
+            final_lambda = float(outer_lambda_max * selection["lambda_ratio"])
+            stage_context = {
+                "failure_stage": "outer_final_refit",
+                "selected_alpha": float(selection["alpha"]),
+                "selected_lambda_ratio": float(selection["lambda_ratio"]),
+                "outer_lambda_max": float(outer_lambda_max),
+                "final_lambda": final_lambda,
+                "selected_inner_score": selection.get("mean_uno_c_index"),
+                "retained_feature_number": int(len(preprocessor.feature_names)),
+                "non_zero_coefficient_number": None,
+            }
+            model = CoxElasticNetModel(
+                selection["alpha"], final_lambda, max_iter=max_iter,
+                tolerance=tolerance).fit(X_train, train_time, train_event)
+            selection["outer_lambda_max"] = float(outer_lambda_max)
+            selection["outer_lambda"] = final_lambda
+            selection["stability_actions"] = sorted(set(
+                selection["stability_actions"] + model.fit_audit.get("stability_actions", [])))
+            selection["family"] = family
+            selection["lambda_selection_scope"] = "outer_training_inner_5fold_only"
+            selection["outer_validation_used_for_lambda"] = False
+            selection["outer_validation_used_for_selection"] = False
+        _require_converged_model(model, "outer %s Cox fit" % model_id)
+        selection["converged"] = bool(model.fit_audit.get("converged", False))
+        selection["fit_status"] = model.fit_audit.get("fit_status", "unknown")
+        selection["convergence_reason"] = model.fit_audit.get("convergence_reason")
+        selection["linear_predictor_clipping"] = model.fit_audit.get(
+            "linear_predictor_clipping", _new_clipping_audit())
+        stage_context["non_zero_coefficient_number"] = (
+            model.fit_audit.get("nonzero_coefficients")
+            if model.fit_audit.get("nonzero_coefficients") is not None
+            else (int(np.sum(np.abs(model.coef_) > 1e-10))
+                  if model.coef_ is not None else None))
+        stage_context["failure_stage"] = "outer_validation_prediction"
+        risk = model.predict_risk(X_validation)
+        if not np.isfinite(risk).all():
+            raise W08NumericalFailure(
+                "outer linear predictor is nonfinite", audit=model.fit_audit)
+        survival = model.predict_survival(X_validation, HORIZONS_MONTHS)
+        grid_horizons = OrderedDict(("month_%d" % month, float(month))
+                                    for month in range(12, 61, 12))
+        survival_grid = {"horizons": grid_horizons,
+                         "predictions": model.predict_survival(X_validation, grid_horizons)}
+        return model, preprocessor, selection, risk, survival, survival_grid
+    except (W08NumericalFailure, W08CandidateSelectionFailure) as exc:
+        enriched = dict(context)
+        enriched.update(stage_context)
+        if isinstance(exc, W08NumericalFailure):
+            enriched.update(_solver_observability(exc.audit))
+        if "failure_stage" not in enriched:
+            enriched["failure_stage"] = (exc.audit or {}).get(
+                "failure_stage", "outer_model_fit")
+        _attach_failure_context(exc, enriched)
+        raise
 
 
 def _outer_fold_rows(split_frame, eligible):
@@ -2713,7 +3033,12 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
             model, preprocessor, selection, risk, survival, survival_grid = _fit_outer_model(
                 train_model, validation_model, model_id, inner_seed,
                 lambda_count=lambda_count, max_iter=solver_max_iter,
-                tolerance=solver_tolerance, run_definition=run)
+                tolerance=solver_tolerance, run_definition=run,
+                failure_context={
+                    "repeat": int(repeat),
+                    "outer_fold": int(fold),
+                    "fold": int(fold),
+                })
             penalty_audit = _penalty_audit(run, preprocessor)
             train_time = train_model["DFS_time"].to_numpy(dtype=float)
             train_event = train_model["DFS_event"].to_numpy(dtype=int)

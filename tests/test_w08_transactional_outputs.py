@@ -112,6 +112,44 @@ class W08TransactionalOutputTests(unittest.TestCase):
             self.assertEqual(failure["status"], "failed")
             self.assertFalse(failure["final_outputs_generated"])
 
+    def test_failed_archive_serializes_deidentified_numerical_context(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            context = formal._begin_attempt(output_root, CURRENT_COMMIT, 1.0)
+            exception = formal.w08.W08NumericalFailure(
+                "forced numerical failure", audit={
+                    "failure_context": {
+                        "run_id": "M3L",
+                        "patient_id": "PATIENT-003",
+                        "source_path": r"C:\private\patient-003\scan.nii.gz",
+                        "failure_stage": "outer_final_refit",
+                        "non_zero_coefficient_number": None,
+                        "iterations": 11,
+                    }})
+            formal._write_attempt_failure(
+                context, os.path.dirname(os.path.dirname(__file__)),
+                "nested_cv_modeling", exception)
+            failed_root = context["failed_root"]
+            with open(os.path.join(failed_root, "failure_audit.json"),
+                      encoding="utf-8") as handle:
+                failure = json.load(handle)
+            numerical = failure["numerical_failure_audit"]
+            encoded = json.dumps(numerical, ensure_ascii=False)
+            self.assertNotIn("PATIENT-003", encoded)
+            self.assertNotIn("patient_id", encoded)
+            self.assertNotIn("patient-003", encoded)
+            self.assertNotIn("scan.nii.gz", encoded)
+            self.assertEqual(
+                numerical["audit"]["failure_context"]["failure_stage"],
+                "outer_final_refit")
+            self.assertEqual(
+                numerical["audit"]["failure_context"]["iterations"], 11)
+            self.assertIn(
+                "non_zero_coefficient_number",
+                numerical["audit"]["failure_context"])
+            self.assertIsNone(
+                numerical["audit"]["failure_context"][
+                    "non_zero_coefficient_number"])
+
     def test_stale_staging_and_partial_canonical_output_block_new_attempt(self):
         with tempfile.TemporaryDirectory() as output_root:
             stale = os.path.join(output_root, "attempts", "attempt_stale.staging")
