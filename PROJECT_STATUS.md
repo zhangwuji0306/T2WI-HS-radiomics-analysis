@@ -23,6 +23,7 @@
 - W07A 与 P3C/P3D/P3E 已完成并通过独立复核；G2R 已在锁定 `t2_radiomics` 环境中完成，完整测试发现集为132/132，通过0失败、0错误、0跳过，W00B/W05/W08 针对性测试分别为9/9、15/15、16/16。`G2_environment_fingerprint.json`记录了环境、依赖及哈希证据；B access 仍为 false。流程文字中的107项与当前基线实际132项测试的计数差异已保留为非阻塞口径事项。
 - P4 document-provenance reconciliation remediation 已完成并经独立 P4 Reviewer 复核：Gate=`PASS_WITH_FINDINGS`（无阻塞问题，P4 可标记为 PASS）。P4R 历史 exact recovery、W04 workflow archive path migration、W07A `historical_source_snapshot_unrecoverable` 例外及 successor 关系均已登记；该治理补丁未改变科学、技术或建模参数。
 - P5 implementation、G2R2 与全 50-fold technical-only preflight 已完成并经独立 G3 Reviewer 接受下游使用：10 repeats × 5 folds 全部完成，17 个固定技术运行定义共850条聚合记录，所有 required runs 可估计、paired populations 有效，`minimumROISize=10`及结构/技术小ROI规则通过；P4R validator、冻结绑定与相关回归测试通过。P5 仅生成本地聚合技术证据，未生成患者级输出、预测、风险分数或性能指标。当前 R6 formal W08 已按 G3 PASS 启动，但在冻结 nested-CV 建模阶段因 `Elastic-Net Cox fit did not converge` 硬失败；失败尝试已归档，最终 W08 输出与 held-out predictions 未生成。R6-0 baseline bookkeeping 已完成并经独立复核，R6-1 numerical-failure observability 已完成并经第二轮独立 Reviewer 接受下游使用（带非阻塞环境发现）；当前 W08 gate 仍为 `HOLD`，B access 四项均为 false，`model_freeze_lock.json` 不存在。
+- R6-2 first-failure diagnostic replay 已在锁定 `t2_radiomics` 环境完成并经第一轮独立 Reviewer 接受下游分类：在首次失败坐标 `repeat=1 / outer_fold=1 / M3H / R_high / outer_final_refit` 复现 `iteration_budget_exhausted`；建议 R6-3 分类为 Class C。R6-2 未生成正式 W08 预测、性能指标、W09 或模型冻结产物；其锁定环境 targeted suite 两次实际运行均为70/70通过，命令与 stdout/退出码已记录于 `prognosis_analysis/R6_2_diagnostic_replay_audit.md`。
 - W08 formal 当前状态、失败尝试摘要、代码提交引用和 B access 标志以 `prognosis_analysis/execution_status.json` 为机器可读记录；本文件与该状态保持一致。
 - GitHub/Codex 仓库采用代码和文档边界；原始影像、临床数据、患者级结果和原始影像号均保留在本地。
 
@@ -34,7 +35,7 @@
 
 ## Next task
 
-W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。R6 formal W08 因冻结 Elastic-Net Cox 拟合不收敛而硬失败，当前保持 `HOLD`；R6-1 observability 已通过第二轮独立复核并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`。锁定 `t2_radiomics` 环境已恢复并通过版本核验，R6-2 diagnostic replay 尚未启动。全 A 最终拟合、W09 评估及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。后续应按 R6-2 协议执行诊断重放；在 R6 remediation gates 完成前不得重试正式 W08。
+W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。R6 formal W08 因冻结 Elastic-Net Cox 拟合不收敛而硬失败，当前保持 `HOLD`；R6-1 observability 已通过第二轮独立复核并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`，R6-2 diagnostic replay 已复现首次失败并达到 `ACCEPTED FOR R6-3 CLASSIFICATION`。建议 R6-3 按 Class C 处理；全 A 最终拟合、W09 评估及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。下一步进入 R6-3 failure classification；在 R6 remediation gates 完成前不得重试正式 W08。
 
 ## Important decisions
 
