@@ -68,6 +68,13 @@ conda env update -n t2_radiomics -f environment.yml
 conda run -n t2_radiomics --no-capture-output python <script>
 ```
 
+若当前 PowerShell 无法识别 `conda`，使用仓库内的环境入口。该入口会依次检查当前命令、`CONDA_EXE`、Conda 环境注册表及 Miniforge/Miniconda/Anaconda 常见安装位置，并核对全部锁定版本：
+
+```powershell
+.\tools\run_t2_radiomics.ps1
+.\tools\run_t2_radiomics.ps1 -PythonArguments @("<script>", "<参数>")
+```
+
 涉及 SimpleITK 的本地脚本需要使用本机配置的 ASCII junction。不要将本地绝对路径写入清单、报告或仓库文档。
 
 ### 上游处理顺序

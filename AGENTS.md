@@ -29,7 +29,7 @@
 ## 四、运行环境速查
 
 - 计算环境：conda 环境 `t2_radiomics`（Python 3.7.12 + pyradiomics 3.0.1 + SimpleITK 2.2.1，严格版本锁定）。
-- 本地 conda 不在 PATH 时，用本机安装路径对应的 `conda.exe run -n t2_radiomics --no-capture-output python <脚本>` 调用。
+- 本地 conda 不在 PATH 时，先运行 `tools/run_t2_radiomics.ps1` 自动定位环境并核对锁定版本；脚本执行通过其 `-PythonArguments` 参数调用，避免依赖本机绝对路径。
 - 本地涉及 SimpleITK 的脚本经本机配置的 ASCII junction 调用；该路径仅适用于本地 Windows，不得写入云端命令或作为仓库内的通用路径。
 - Codex 云端使用 Linux/Bash 环境；云端依赖由根目录 `setup.sh` 和 `requirements-cloud.txt` 提供，使用仓库相对路径。
 - 当前入口见`项目说明.md`；科学主协议为`T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md`，当前唯一执行SOP为`T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md`；参数与方法锁定见`组学分析方案.md`（预处理与整块肿瘤特征技术规范）、`生境分析方案与工作流.md`及`habitat_analysis/analysis_freeze.md`。当前分析输出仅写入本地`habitat_analysis/output/`和`prognosis_analysis/output/`对应阶段目录，均不得提交。

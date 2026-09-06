@@ -34,7 +34,7 @@
 
 ## Next task
 
-W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。R6 formal W08 因冻结 Elastic-Net Cox 拟合不收敛而硬失败，当前保持 `HOLD`；R6-1 observability 已通过第二轮独立复核并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`，但锁定 `t2_radiomics` 环境当前不可用，R6-2 diagnostic replay 尚未启动。全 A 最终拟合、W09 评估及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。后续应在恢复锁定环境后按 R6-2 协议执行诊断重放；在 R6 remediation gates 完成前不得重试正式 W08。
+W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。R6 formal W08 因冻结 Elastic-Net Cox 拟合不收敛而硬失败，当前保持 `HOLD`；R6-1 observability 已通过第二轮独立复核并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`。锁定 `t2_radiomics` 环境已恢复并通过版本核验，R6-2 diagnostic replay 尚未启动。全 A 最终拟合、W09 评估及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。后续应按 R6-2 协议执行诊断重放；在 R6 remediation gates 完成前不得重试正式 W08。
 
 ## Important decisions
 
