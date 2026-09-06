@@ -1,0 +1,197 @@
+{
+  "schema": {
+    "id": "R6_remediation_baseline",
+    "version": "1.0",
+    "status": "established"
+  },
+  "creation": {
+    "created_at": "2026-09-06T11:40:46.9064187+08:00",
+    "created_at_commit": "21492ef4b8aaf488355c648d953c02070b9acd45",
+    "purpose": "R6-0 remediation starting point for the failed formal W08 run",
+    "scope": "Read-only provenance and failure-state baseline; no B-data access, solver execution, diagnostic replay, or formal rerun"
+  },
+  "repository": {
+    "branch": "main",
+    "remediation_start_commit": "21492ef4b8aaf488355c648d953c02070b9acd45",
+    "origin_main_at_baseline_creation": "21492ef4b8aaf488355c648d953c02070b9acd45",
+    "working_tree_clean_at_baseline_creation": true,
+    "failed_formal_w08_commit": "fdd0ce0f779fb10555465a4d040f6e390969f541",
+    "failed_formal_w08_commit_parent": "ddef0b91fd043c790dfaf570362e335db1046051",
+    "locked_inputs_and_solver_unchanged_since_failed_commit": true,
+    "post_failure_changes_at_baseline": [
+      "PROJECT_STATUS.md",
+      "prognosis_analysis/W08_R6_formal_failure_audit.md",
+      "prognosis_analysis/execution_status.json"
+    ]
+  },
+  "frozen_provenance": {
+    "hash_algorithm": "SHA-256",
+    "W04_modeling_protocol": {
+      "path": "prognosis_analysis/modeling_protocol.json",
+      "sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+      "git_blob": "5c0219564415d6033672b27e1e61b0a537e5c6fa",
+      "failed_commit_git_blob": "5c0219564415d6033672b27e1e61b0a537e5c6fa"
+    },
+    "W07_outer_split_config": {
+      "path": "prognosis_analysis/configs/w07_outer_splits.json",
+      "sha256": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
+      "git_blob": "8497f8a6724ebe69dd8d8cdc293caf1ab730ff23",
+      "failed_commit_git_blob": "8497f8a6724ebe69dd8d8cdc293caf1ab730ff23"
+    },
+    "W07_outer_split_artifact": {
+      "path": "prognosis_analysis/output/outer_splits_A.csv",
+      "sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+      "git_blob": "3abc0b1deaa04bbce19c959ce4d7259420725599"
+    },
+    "W07A_protocol_amendment_json": {
+      "path": "prognosis_analysis/W07A_pre_W08_protocol_amendment.json",
+      "sha256": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14",
+      "git_blob": "25d4b0a326ebfe61f9974e4c29c71a031e9a6f99",
+      "failed_commit_git_blob": "25d4b0a326ebfe61f9974e4c29c71a031e9a6f99"
+    },
+    "W07A_locked_protocol": {
+      "path": "prognosis_analysis/W07A_pre_W08_protocol_amendment.md",
+      "sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+      "git_blob": "d5dedd9530126fcfab327efed1278811c5fabea7",
+      "failed_commit_git_blob": "d5dedd9530126fcfab327efed1278811c5fabea7"
+    },
+    "W08_nested_cv_config": {
+      "path": "prognosis_analysis/configs/w08_nested_cv.json",
+      "sha256": "f432b9741071a37be37fb63361e2007978ee6f47d4ce269b36a8692aa4fcbe7a",
+      "git_blob": "4da0a6acc1047f7e7767b27d706ab8a0ff476085",
+      "failed_commit_git_blob": "4da0a6acc1047f7e7767b27d706ab8a0ff476085"
+    },
+    "current_solver_code": {
+      "path": "prognosis_analysis/scripts/w08_nested_cv.py",
+      "sha256": "7bee63c3bd81df96b240dd24ef4af07228c6a6d8031174efa288974df2436259",
+      "git_blob": "075fe9624d8b8130f31016cd488d926feff3486c",
+      "failed_commit_git_blob": "075fe9624d8b8130f31016cd488d926feff3486c"
+    },
+    "W08_embedded_bindings": {
+      "W04_modeling_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+      "W07_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+      "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70"
+    }
+  },
+  "formal_w08_failure": {
+    "stage": "W08 formal",
+    "status": "failed",
+    "release_state": "HOLD",
+    "formal_run_started": true,
+    "failure_type": "W08NumericalFailure",
+    "failure_stage": "nested_cv_modeling",
+    "failure_reason": "Elastic-Net Cox fit did not converge",
+    "failed_attempt_id": "attempt_1788647247630504_d8ea5057fc8b",
+    "failed_attempt_archive": "prognosis_analysis/output/w08_formal_A/attempts/attempt_1788647247630504_d8ea5057fc8b_failed",
+    "required_outer_validation_folds": 50,
+    "formal_50_of_50_completion": false,
+    "formal_completion_certificate_present": false,
+    "failure_record_preserved": true
+  },
+  "failure_archive_integrity": {
+    "archive_root": "prognosis_analysis/output/w08_formal_A/attempts",
+    "hash_algorithm_for_metadata_files": "SHA-256",
+    "archives": [
+      {
+        "archive_directory": "attempt_001_failed",
+        "path": "prognosis_analysis/output/w08_formal_A/attempts/attempt_001_failed",
+        "directory_present": true,
+        "status": "failed",
+        "failure_stage": "nested_cv_modeling_radiomics_extraction",
+        "required_top_level_entries_present": [
+          "work/",
+          "slic_cache/",
+          "failure_audit_invalid_original.json",
+          "failure_audit.json",
+          "formal_stderr.log",
+          "formal_stdout.log",
+          "run_state.json"
+        ],
+        "file_count": 398,
+        "total_bytes": 5820718,
+        "slic_cache_npz_count": 393,
+        "metadata_files": {
+          "failure_audit_invalid_original.json": "70d24a6fc0eb9186a39c2d0c3282b24a5b58e698b2b2cb76de163b2118b50abb",
+          "failure_audit.json": "ee5a4e3423b96139051a85016aae5f9ad95219f7cb98b95f4c84238ff00f6648",
+          "formal_stderr.log": "990b62d7075124b6a0fa5d59e1364df0c7c05ce56b9eadbd162670999faa553a",
+          "formal_stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855a",
+          "run_state.json": "dcb8f6824210a24b9c13d97200df0d1efd2cbbb5748c4370eeb887d4974484da"
+        }
+      },
+      {
+        "archive_directory": "attempt_1788647247630504_d8ea5057fc8b_failed",
+        "path": "prognosis_analysis/output/w08_formal_A/attempts/attempt_1788647247630504_d8ea5057fc8b_failed",
+        "directory_present": true,
+        "status": "failed",
+        "failure_stage": "nested_cv_modeling",
+        "required_top_level_entries_present": [
+          "work/",
+          "slic_cache/",
+          "attempt_state.json",
+          "failure_audit.json",
+          "run_state.json"
+        ],
+        "file_count": 396,
+        "total_bytes": 5818107,
+        "slic_cache_npz_count": 393,
+        "metadata_files": {
+          "attempt_state.json": "35a3fdb3060a6e027022c4e2ba6c6d77a65dbae67ebb1e2f198c34316b09d816",
+          "failure_audit.json": "9add223e361a7e36418fb82a9d9806718c58dcdb2e0f8d954b9db00f921dc075",
+          "run_state.json": "7b4b1659a5a47840382cedebf324d8dfb704f991cf3226d428969f2d67c2ec07"
+        }
+      }
+    ],
+    "current_formal_archive_matches_execution_status": true,
+    "historical_attempt_001_preserved_without_rename_or_delete": true
+  },
+  "access_and_output_boundary": {
+    "B_access": {
+      "B_data_read": false,
+      "B_reader_invoked": false,
+      "B_source_opened": false,
+      "B_statistics_generated": false
+    },
+    "model_freeze_lock": {
+      "path": "prognosis_analysis/model_freeze_lock.json",
+      "present": false,
+      "status": "absent"
+    },
+    "final_outputs": {
+      "generated": false,
+      "held_out_predictions_present": false,
+      "expected_absent": [
+        "predictions.csv",
+        "fold_results.csv",
+        "selection_results.csv",
+        "formal_output_manifest.json"
+      ]
+    },
+    "W09": {
+      "executed": false,
+      "metrics_generated": false,
+      "performance_evaluation_executed": false,
+      "conclusions_generated": false
+    }
+  },
+  "verification_provenance": {
+    "verified_read_only": true,
+    "verification_commands": [
+      "git status --short --branch",
+      "git rev-parse HEAD",
+      "git rev-parse origin/main",
+      "git show -s --format='%H%n%P%n%s' fdd0ce0f779fb10555465a4d040f6e390969f541",
+      "git diff --name-status fdd0ce0f779fb10555465a4d040f6e390969f541..HEAD",
+      "git rev-parse <commit>:<path> for locked inputs and solver",
+      "Get-FileHash -Algorithm SHA256 for locked inputs, solver, and archive metadata",
+      "Get-ChildItem -Recurse for failure-archive inventory",
+      "Test-Path for model_freeze_lock.json and named W08/W09 final artifacts"
+    ],
+    "prohibited_actions_not_performed": [
+      "B-data read",
+      "diagnostic replay",
+      "solver patch",
+      "complete W08 rerun",
+      "performance calculation"
+    ]
+  }
+}
