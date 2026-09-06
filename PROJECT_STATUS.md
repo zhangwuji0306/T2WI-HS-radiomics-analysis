@@ -25,6 +25,7 @@
 - P5 implementation、G2R2 与全 50-fold technical-only preflight 已完成并经独立 G3 Reviewer 接受下游使用：10 repeats × 5 folds 全部完成，17 个固定技术运行定义共850条聚合记录，所有 required runs 可估计、paired populations 有效，`minimumROISize=10`及结构/技术小ROI规则通过；P4R validator、冻结绑定与相关回归测试通过。P5 仅生成本地聚合技术证据，未生成患者级输出、预测、风险分数或性能指标。当前 R6 formal W08 已按 G3 PASS 启动，但在冻结 nested-CV 建模阶段因 `Elastic-Net Cox fit did not converge` 硬失败；失败尝试已归档，最终 W08 输出与 held-out predictions 未生成。R6-0 baseline bookkeeping 已完成并经独立复核，R6-1 numerical-failure observability 已完成并经第二轮独立 Reviewer 接受下游使用（带非阻塞环境发现）；当前 W08 gate 仍为 `HOLD`，B access 四项均为 false，`model_freeze_lock.json` 不存在。
 - R6-2 first-failure diagnostic replay 已在锁定 `t2_radiomics` 环境完成并经第一轮独立 Reviewer 接受下游分类：在首次失败坐标 `repeat=1 / outer_fold=1 / M3H / R_high / outer_final_refit` 复现 `iteration_budget_exhausted`；R6-3 已由主 Agent 按 canonical workflow 校正为 Class A，下一路径为 R6-4A，机器可读 validation=`PASS`。R6-2/R6-3 未生成正式 W08 预测、性能指标、W09 或模型冻结产物；其锁定环境 targeted suite 两次实际运行均为70/70通过，命令与 stdout/退出码已记录于 `prognosis_analysis/R6_2_diagnostic_replay_audit.md`。
 - R6-4A convergence-efficiency remediation 已完成：统一 Elastic-Net `max_iter=3000`，`tolerance=1e-7`、目标函数、梯度、收敛判据、科学网格、候选池、冻结 split 与人群绑定均未改变；synthetic stress study 为16/16收敛，最大迭代数1814。第一轮 Reviewer 的审计引用洁净性发现已由新 Worker 修复，第二轮 `Sol/medium` Reviewer 判定 `NUMERICAL REMEDIATION ACCEPTED`；锁定环境 R6-4A/W08 targeted suite 独立复跑为76/76通过、退出码0，compileall通过。W08 gate 仍为 `HOLD`，下一阶段仅为 R6-5，尚未开始 R6-5/R6-6/R6-7。
+- R6-5 numerical regression 未通过下游审查并保持 `HOLD`：锁定环境 probe/compileall 通过，targeted suite 为79/79，A-only adapter smoke 通过；但局部 first-failure 验证在应用 R_high eligibility 后得到288/68，未复现 R6-2 冻结记录的282/67，且未形成完整 R6-5 数值等价性证据。该局部结果未采纳，R6-5 两份证据文件未生成；按 G3 前禁止 final Cox fitting 的边界，不再重试 outer-final refit。B access 四项仍为 false，正式 W08、预测、性能与模型冻结产物均未新增。
 - W08 formal 当前状态、失败尝试摘要、代码提交引用和 B access 标志以 `prognosis_analysis/execution_status.json` 为机器可读记录；本文件与该状态保持一致。
 - GitHub/Codex 仓库采用代码和文档边界；原始影像、临床数据、患者级结果和原始影像号均保留在本地。
 
@@ -36,7 +37,7 @@
 
 ## Next task
 
-W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。R6 formal W08 因冻结 Elastic-Net Cox 拟合不收敛而硬失败，当前保持 `HOLD`；R6-1 observability 已通过第二轮独立复核并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`，R6-2 diagnostic replay 已复现首次失败并达到 `ACCEPTED FOR R6-3 CLASSIFICATION`，R6-3 已校正为 Class A 并进入 R6-4A，R6-4A 已经第二轮独立复核并达到 `NUMERICAL REMEDIATION ACCEPTED`。全 A 最终拟合、W09 评估及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。下一步仅进入 R6-5；在 R6-5、R6-6/G3R 等后续 gate 完成前不得重试正式 W08。
+W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。R6 formal W08 因冻结 Elastic-Net Cox 拟合不收敛而硬失败，当前保持 `HOLD`；R6-1 observability 已通过第二轮独立复核并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`，R6-2 diagnostic replay 已复现首次失败并达到 `ACCEPTED FOR R6-3 CLASSIFICATION`，R6-3 已校正为 Class A 并进入 R6-4A，R6-4A 已经第二轮独立复核并达到 `NUMERICAL REMEDIATION ACCEPTED`，但 R6-5 未通过第一轮独立复核。全 A 最终拟合、W09 评估及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。下一步停止并请求 protocol-owner 决策；在 R6-5、R6-6/G3R 等后续 gate 完成前不得重试 outer-final refit 或正式 W08。
 
 ## Important decisions
 
