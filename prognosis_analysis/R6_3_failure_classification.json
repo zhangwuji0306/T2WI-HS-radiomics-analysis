@@ -1,0 +1,115 @@
+{
+  "schema": "r6_3_failure_classification_audit",
+  "schema_version": "1.0",
+  "status": "disposition_ready",
+  "validation": "PASS",
+  "recommended_class": "C",
+  "recommended_class_label": "frozen Elastic-Net solver convergence / iteration-budget failure",
+  "unique_recommendation": true,
+  "first_failure": {
+    "repeat": 1,
+    "outer_fold": 1,
+    "run_id": "M3H",
+    "model_id": "M3H",
+    "population": "R_high",
+    "inner_seed": 13346,
+    "n_train": 282,
+    "train_events": 66,
+    "n_validation": 67,
+    "validation_events": 15,
+    "post_preprocessing_feature_count": 25,
+    "feature_block_counts": {
+      "C": 13,
+      "G": 6,
+      "R_high": 6
+    },
+    "selected_alpha": 0.5,
+    "selected_lambda_ratio_index": 50,
+    "failure_stage": "outer_final_refit",
+    "fit_status": "non_converged",
+    "failure_reason": "iteration_budget_exhausted",
+    "iterations": 250,
+    "line_search_backtracking_count": 81,
+    "linear_predictor_clipping_count": 0,
+    "coefficient_output": null,
+    "prediction_output": false
+  },
+  "classification": {
+    "A": {
+      "status": "false",
+      "label": "data/input/eligibility or population mismatch"
+    },
+    "B": {
+      "status": "false",
+      "label": "preprocessing/habitat/technical extractability mismatch"
+    },
+    "C": {
+      "status": "true",
+      "label": "frozen Elastic-Net solver convergence/iteration-budget failure"
+    },
+    "D": {
+      "status": "false",
+      "label": "environment/reproducibility mismatch"
+    },
+    "E": {
+      "status": "false",
+      "label": "implementation/protocol violation or untracked behavior change"
+    }
+  },
+  "frozen_bindings": {
+    "W04_modeling_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+    "W07_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+    "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+    "W08_nested_cv_config_sha256": "f432b9741071a37be37fb63361e2007978ee6f47d4ce269b36a8692aa4fcbe7a",
+    "R6_1_solver_source_sha256": "8f97fcc01cd7c821dd88468bd090d0ae6735018cdda775be491ae7d5b03026fb",
+    "R_low_candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high_candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+    "max_iter": 250,
+    "tolerance": 1e-7,
+    "alpha_grid": [0.1, 0.5, 0.9, 1.0],
+    "lambda_values_per_alpha": 100,
+    "lambda_min_ratio": 0.0001,
+    "minimumROISize": 10,
+    "A_population": 393,
+    "A_events": 89,
+    "outer_repeats": 10,
+    "outer_folds": 5
+  },
+  "stage_boundary": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "W08_gate": "HOLD",
+    "formal_outputs_generated": false,
+    "held_out_predictions_generated": false,
+    "performance_metrics_generated": false,
+    "W09_generated": false,
+    "model_freeze_lock_generated": false
+  },
+  "r6_4": {
+    "protocol_owner_decision_required": true,
+    "available_dispositions": [
+      "close_failed_attempt_as_class_C_and_retain_W08_HOLD",
+      "approve_separate_remediation_or_protocol_amendment_then_re_gate_before_rerun"
+    ],
+    "solver_or_scientific_parameter_change_implemented": false,
+    "formal_rerun_authorized": false,
+    "B_unlock": false
+  },
+  "provenance": {
+    "classification_basis": [
+      "prognosis_analysis/R6_0_baseline_audit.md",
+      "prognosis_analysis/R6_1_observability_audit.md",
+      "prognosis_analysis/R6_2_diagnostic_replay_audit.md",
+      "prognosis_analysis/output/r6_2_diagnostic_replay/r6_2_diagnostic_replay.json",
+      "prognosis_analysis/W07A_pre_W08_protocol_amendment.md",
+      "prognosis_analysis/W08_nested_cv_protocol.md",
+      "prognosis_analysis/W08_implementation_audit.md",
+      "prognosis_analysis/configs/w08_nested_cv.json",
+      "prognosis_analysis/modeling_protocol.json",
+      "prognosis_analysis/execution_status.json"
+    ],
+    "patient_level_content_copied": false
+  }
+}
