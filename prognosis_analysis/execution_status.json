@@ -12,11 +12,11 @@
     "last_attempt_status": "failed"
   },
   "last_attempt": {
-    "attempt_id": "attempt_001_failed",
+    "attempt_id": "attempt_1788647247630504_d8ea5057fc8b_failed",
     "status": "failed",
-    "failure_stage": "nested_cv_modeling_radiomics_extraction",
-    "failure_reason_summary": "Configured minimum ROI size boundary was too small for a required ROI.",
-    "code_commit_at_attempt": "22ec6062529f32da3000a8abadac5864b0dbc083"
+    "failure_stage": "nested_cv_modeling",
+    "failure_reason_summary": "Elastic-Net Cox fit did not converge; formal W08 hard-failed under the frozen convergence protocol.",
+    "code_commit_at_attempt": "fdd0ce0f779fb10555465a4d040f6e390969f541"
   },
   "b_access": {
     "B_data_read": false,
@@ -33,7 +33,7 @@
   },
   "repository": {
     "baseline_head": "78e24da5109938fadf5ae41510994d6471c6a629",
-    "last_known_repository_head": "496e7800268df489f01dd71d71ff9f1e5b13e5c2",
-    "status_recorded_at_head": "496e7800268df489f01dd71d71ff9f1e5b13e5c2"
+    "last_known_repository_head": "fdd0ce0f779fb10555465a4d040f6e390969f541",
+    "status_recorded_at_head": "fdd0ce0f779fb10555465a4d040f6e390969f541"
   }
 }

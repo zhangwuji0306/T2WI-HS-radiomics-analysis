@@ -22,7 +22,7 @@
 - W06 已完成首次 A-only DFS 读取与 endpoint QC：A393 共393例，DFS事件89例、删失304例；随访中位数73.495个月（IQR 48.723–96.296），反向KM中位随访84.402个月，3年/5年可评估分别为312/270例。DFS缺失、非正时间、重复ID及event/time冲突均为0，A modeling population为393例。W06使用`read_A_outcomes`仅请求DFS三列，`model_freeze_lock.json`不存在，B未读取。
 - W07A 与 P3C/P3D/P3E 已完成并通过独立复核；G2R 已在锁定 `t2_radiomics` 环境中完成，完整测试发现集为132/132，通过0失败、0错误、0跳过，W00B/W05/W08 针对性测试分别为9/9、15/15、16/16。`G2_environment_fingerprint.json`记录了环境、依赖及哈希证据；B access 仍为 false。流程文字中的107项与当前基线实际132项测试的计数差异已保留为非阻塞口径事项。
 - P4 document-provenance reconciliation remediation 已完成并经独立 P4 Reviewer 复核：Gate=`PASS_WITH_FINDINGS`（无阻塞问题，P4 可标记为 PASS）。P4R 历史 exact recovery、W04 workflow archive path migration、W07A `historical_source_snapshot_unrecoverable` 例外及 successor 关系均已登记；该治理补丁未改变科学、技术或建模参数。
-- P5 implementation、G2R2 与全 50-fold technical-only preflight 已完成并经独立 G3 Reviewer 接受下游使用：10 repeats × 5 folds 全部完成，17 个固定技术运行定义共850条聚合记录，所有 required runs 可估计、paired populations 有效，`minimumROISize=10`及结构/技术小ROI规则通过；P4R validator、冻结绑定与相关回归测试通过。P5 仅生成本地聚合技术证据，未生成患者级输出、预测、风险分数或性能指标。随后 W08 formal 首次尝试失败并已归档；当前 W08 gate 为 `HOLD`，B access 四项均为 false，`model_freeze_lock.json` 不存在，最终输出未生成。
+- P5 implementation、G2R2 与全 50-fold technical-only preflight 已完成并经独立 G3 Reviewer 接受下游使用：10 repeats × 5 folds 全部完成，17 个固定技术运行定义共850条聚合记录，所有 required runs 可估计、paired populations 有效，`minimumROISize=10`及结构/技术小ROI规则通过；P4R validator、冻结绑定与相关回归测试通过。P5 仅生成本地聚合技术证据，未生成患者级输出、预测、风险分数或性能指标。当前 R6 formal W08 已按 G3 PASS 启动，但在冻结 nested-CV 建模阶段因 `Elastic-Net Cox fit did not converge` 硬失败；失败尝试已归档，最终 W08 输出与 held-out predictions 未生成。当前 W08 gate 为 `HOLD`，B access 四项均为 false，`model_freeze_lock.json` 不存在。
 - W08 formal 当前状态、失败尝试摘要、代码提交引用和 B access 标志以 `prognosis_analysis/execution_status.json` 为机器可读记录；本文件与该状态保持一致。
 - GitHub/Codex 仓库采用代码和文档边界；原始影像、临床数据、患者级结果和原始影像号均保留在本地。
 
@@ -34,7 +34,7 @@
 
 ## Next task
 
-W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。W08 formal 首次尝试因配置的最小 ROI 尺寸边界错误失败，当前保持 `HOLD`；全 A 最终拟合及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。下一阶段为 R2 W08 runtime release gate，完成前不得重试正式 W08。
+W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。R6 formal W08 因冻结 Elastic-Net Cox 拟合不收敛而硬失败，当前保持 `HOLD`；全 A 最终拟合、W09 评估及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。下一步需进入协议规定的 R6 remediation/protocol review；在获得明确的冻结协议处置决定前不得修改算法或重试正式 W08。
 
 ## Important decisions
 
