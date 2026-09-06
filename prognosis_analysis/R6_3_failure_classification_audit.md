@@ -2,9 +2,11 @@
 
 ## Disposition
 
-**唯一推荐类别：Class C — frozen Elastic-Net solver convergence / iteration-budget failure.**
+**唯一推荐类别：Class A — iteration budget insufficient / `iteration_budget_exhausted`.**
 
 Machine-readable classification validation: `PASS`.
+
+Authorized next remediation path: `R6-4A`.
 
 Disposition is ready for protocol-owner review. The W08 gate remains `HOLD`. No
 formal W08 rerun, performance output, W09 output, model freeze, or B access is
@@ -38,9 +40,9 @@ repeat/fold.
 
 | Class | Determination | Exclusion or support basis |
 |---|---|---|
-| A — data/input/eligibility or population mismatch | **FALSE** | The replay used the recorded A-only population (`393` cases; `89` events), the frozen W07 outer split, and the fold-specific `R_high` population. The failure occurred after population construction and after inner CV, at solver refit rather than at source validation, eligibility, or split resolution. |
+| A — iteration budget insufficient | **TRUE; unique recommendation** | The frozen Elastic-Net path reached `max_iter=250`, remained `non_converged`, and raised `iteration_budget_exhausted` during `outer_final_refit`. Clipping count was `0`, and the failure occurred after population construction and inner-CV selection. |
 | B — preprocessing/habitat/technical extractability mismatch | **FALSE** | R6-2 reached `M3H` with `R_high` features present after fold-specific preprocessing (`p=25`, including six `R_high` features). The preceding `M2_R_high` run completed in the same fold, and the technical preflight/replay evidence did not identify a habitat, mask, extractability, or preprocessing mismatch at the failure coordinate. |
-| C — frozen Elastic-Net solver convergence/iteration-budget failure | **TRUE; unique recommendation** | The locked solver reached exactly `max_iter=250`, remained `non_converged`, and raised `iteration_budget_exhausted` during `outer_final_refit`. The failure is directly observed on the frozen Elastic-Net path after candidate selection. |
+| C — linear-predictor clipping participates in failure | **FALSE** | The recorded clipping count at the first failure was `0`; the diagnostic evidence does not show clipping participating in the failed iterations. |
 | D — environment/reproducibility mismatch | **FALSE** | The locked `t2_radiomics` environment passed the recorded probe, and the first-failure replay reproduced the same coordinate and failure mode. The locked targeted suite was recorded as `70/70` on two runs. No version or environment mismatch was recorded. |
 | E — implementation/protocol violation or untracked behavior change | **FALSE** | R6-1 observability was recorded as instrumentation-only; the current solver hash matches the R6-2 binding, the frozen W04/W07/W07A inputs and candidate hashes are unchanged, and the baseline-equivalence test covers Cox PH and Elastic-Net outputs. No untracked parameter, split, population, or B-boundary change was found. |
 
@@ -88,19 +90,23 @@ therefore:
 - `model_freeze_lock.json` absent;
 - formal predictions, performance metrics, and W09 artifacts absent.
 
-## R6-4 protocol-owner disposition boundary
+## R6-4A remediation boundary
 
-R6-4 must decide the Class C disposition. The protocol owner may either close
-the failed attempt as Class C and retain `HOLD`, or approve a separately
-specified remediation/amendment package and send it through a new provenance
-and release gate before any rerun. This audit does not select or implement a
-solver change, scientific parameter change, fallback, or formal rerun. Any
-branch that changes solver mathematics, convergence settings, candidate
-handling, or protocol interpretation requires explicit protocol-owner
-approval, a new frozen provenance record, and a fresh gate before execution.
-Until that disposition is approved and its gate is passed, the only valid
-execution state is W08 `HOLD`, with B and all downstream stages remaining
-locked.
+The authorized next path is R6-4A, which preserves the statistical model and
+allows only a uniform, pre-specified convergence-efficiency remediation. A
+fixed iteration-budget study or increase may use one common `max_iter` for
+every Elastic-Net candidate; `tolerance=1e-7`, objective, convergence
+criteria, alpha/lambda grids, candidate pools, W07 splits, W04/W07A
+populations, and `minimumROISize=10` remain unchanged. A fixed-order
+same-alpha lambda-path warm start may also be evaluated only if the candidate
+grid and final optimization objective remain unchanged and zero-start and
+warm-start solutions are numerically equivalent after sufficient convergence.
+
+R6-4A does not authorize changing solver mathematics, deleting candidates,
+skipping failed folds, changing eligibility, changing the endpoint, formal
+W08 rerun, performance analysis, W09, or B access. R6-4A must be followed by
+R6-5 numerical equivalence and regression, then R6-6 final-code technical
+preflight/G3R, before any R6-7 formal W08 rerun.
 
 ## Evidence basis
 

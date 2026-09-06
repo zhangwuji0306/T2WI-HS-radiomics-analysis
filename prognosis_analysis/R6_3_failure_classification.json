@@ -3,9 +3,10 @@
   "schema_version": "1.0",
   "status": "disposition_ready",
   "validation": "PASS",
-  "recommended_class": "C",
-  "recommended_class_label": "frozen Elastic-Net solver convergence / iteration-budget failure",
+  "recommended_class": "A",
+  "recommended_class_label": "iteration budget insufficient / iteration_budget_exhausted",
   "unique_recommendation": true,
+  "authorized_next_remediation_path": "R6-4A",
   "first_failure": {
     "repeat": 1,
     "outer_fold": 1,
@@ -36,16 +37,16 @@
   },
   "classification": {
     "A": {
-      "status": "false",
-      "label": "data/input/eligibility or population mismatch"
+      "status": "true",
+      "label": "iteration budget insufficient / iteration_budget_exhausted"
     },
     "B": {
       "status": "false",
       "label": "preprocessing/habitat/technical extractability mismatch"
     },
     "C": {
-      "status": "true",
-      "label": "frozen Elastic-Net solver convergence/iteration-budget failure"
+      "status": "false",
+      "label": "linear-predictor clipping participates in failure"
     },
     "D": {
       "status": "false",
@@ -88,7 +89,8 @@
     "model_freeze_lock_generated": false
   },
   "r6_4": {
-    "protocol_owner_decision_required": true,
+    "protocol_owner_decision_required": false,
+    "authorized_next_remediation_path": "R6-4A",
     "available_dispositions": [
       "close_failed_attempt_as_class_C_and_retain_W08_HOLD",
       "approve_separate_remediation_or_protocol_amendment_then_re_gate_before_rerun"
