@@ -1,5 +1,12 @@
 # T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流
 
+## 当前 R6 整改执行状态（2026-09-06）
+
+- R6-0 failure baseline bookkeeping 已完成并经独立复核。
+- R6-1 numerical-failure observability 已完成；第二轮独立 Reviewer 接受下游使用，并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`。
+- R6-1 仅新增失败上下文可观测性、脱敏序列化与回归测试；未改变冻结 solver 数学、参数、候选池、数据边界或历史失败归档。
+- 锁定 `t2_radiomics` 环境当前不可用，因此 R6-2 diagnostic replay 尚未启动；正式 W08、性能评估、W09 与 B validation 继续保持禁止。
+
 ## 0. 工作流定位
 
 当前项目不得再按照：
