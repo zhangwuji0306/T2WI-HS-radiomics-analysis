@@ -6,6 +6,8 @@ R6-0 baseline established at remediation-start commit `21492ef4b8aaf488355c648d9
 
 The failed formal W08 code commit is `fdd0ce0f779fb10555465a4d040f6e390969f541`. The formal run failed closed in `nested_cv_modeling` with `W08NumericalFailure: Elastic-Net Cox fit did not converge`. The required 50/50 outer-validation completion was not achieved.
 
+The original failed-run identifier is `attempt_1788647247630504_d8ea5057fc8b`; its failed archive identifier is `attempt_1788647247630504_d8ea5057fc8b_failed`, at `prognosis_analysis/output/w08_formal_A/attempts/attempt_1788647247630504_d8ea5057fc8b_failed`. The archive-internal metadata retains the original identifier.
+
 ## Git and frozen provenance
 
 | Binding | Path | SHA-256 | Git blob | Blob at failed commit |
@@ -26,7 +28,7 @@ Both failed attempts are present under `prognosis_analysis/output/w08_formal_A/a
 
 | Archive | State | Inventory | Metadata evidence |
 |---|---|---:|---|
-| `attempt_001_failed` | preserved historical failed attempt; failure stage `nested_cv_modeling_radiomics_extraction` | 398 files, 5,820,718 bytes, 393 `.npz` cache files | `failure_audit_invalid_original.json`, `failure_audit.json`, `formal_stderr.log`, `formal_stdout.log`, and `run_state.json` are present and hashed in `R6_remediation_baseline.json` |
+| `attempt_001_failed` | preserved historical failed attempt; failure stage `nested_cv_modeling_radiomics_extraction` | 398 files, 5,820,718 bytes, 393 `.npz` cache files | `failure_audit_invalid_original.json`, `failure_audit.json`, `formal_stderr.log`, `formal_stdout.log`, and `run_state.json` are present and hashed in `R6_remediation_baseline.json`; the empty `formal_stdout.log` has SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 | `attempt_1788647247630504_d8ea5057fc8b_failed` | current formal W08 failed attempt; failure stage `nested_cv_modeling` | 396 files, 5,818,107 bytes, 393 `.npz` cache files | `attempt_state.json`, `failure_audit.json`, and `run_state.json` are present and hashed in `R6_remediation_baseline.json`; metadata matches the execution-status failure commit, type, stage, and B flags |
 
 `attempt_001_failed` was neither renamed nor deleted. No final W08 output, held-out prediction, or model-freeze artifact is treated as available.

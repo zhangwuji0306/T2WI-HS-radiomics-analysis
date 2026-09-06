@@ -81,8 +81,9 @@
     "failure_type": "W08NumericalFailure",
     "failure_stage": "nested_cv_modeling",
     "failure_reason": "Elastic-Net Cox fit did not converge",
-    "failed_attempt_id": "attempt_1788647247630504_d8ea5057fc8b",
-    "failed_attempt_archive": "prognosis_analysis/output/w08_formal_A/attempts/attempt_1788647247630504_d8ea5057fc8b_failed",
+    "original_attempt_id": "attempt_1788647247630504_d8ea5057fc8b",
+    "failed_attempt_archive_id": "attempt_1788647247630504_d8ea5057fc8b_failed",
+    "archive_path": "prognosis_analysis/output/w08_formal_A/attempts/attempt_1788647247630504_d8ea5057fc8b_failed",
     "required_outer_validation_folds": 50,
     "formal_50_of_50_completion": false,
     "formal_completion_certificate_present": false,
@@ -114,7 +115,7 @@
           "failure_audit_invalid_original.json": "70d24a6fc0eb9186a39c2d0c3282b24a5b58e698b2b2cb76de163b2118b50abb",
           "failure_audit.json": "ee5a4e3423b96139051a85016aae5f9ad95219f7cb98b95f4c84238ff00f6648",
           "formal_stderr.log": "990b62d7075124b6a0fa5d59e1364df0c7c05ce56b9eadbd162670999faa553a",
-          "formal_stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855a",
+          "formal_stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "run_state.json": "dcb8f6824210a24b9c13d97200df0d1efd2cbbb5748c4370eeb887d4974484da"
         }
       },
