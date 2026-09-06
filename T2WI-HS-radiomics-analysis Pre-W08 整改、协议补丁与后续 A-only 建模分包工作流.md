@@ -5,7 +5,7 @@
 - R6-0 failure baseline bookkeeping 已完成并经独立复核。
 - R6-1 numerical-failure observability 已完成；第二轮独立 Reviewer 接受下游使用，并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`。
 - R6-1 仅新增失败上下文可观测性、脱敏序列化与回归测试；未改变冻结 solver 数学、参数、候选池、数据边界或历史失败归档。
-- 锁定 `t2_radiomics` 环境已恢复。R6-2 first-failure diagnostic replay 已完成并经第一轮独立 Reviewer 接受下游分类；R6-3 已完成第一轮独立复核，唯一推荐分类为 Class C，机器可读 validation=`PASS`，当前等待 R6-4 protocol-owner disposition。正式 W08、性能评估、W09 与 B validation 继续保持禁止。
+- 锁定 `t2_radiomics` 环境已恢复。R6-2 first-failure diagnostic replay 已完成并经第一轮独立 Reviewer 接受下游分类；R6-3 已由主 Agent 按 canonical workflow 校正为 Class A，机器可读 validation=`PASS`，下一路径为 R6-4A。R6-4A 已完成并经第二轮 `Sol/medium` Reviewer 判定 `NUMERICAL REMEDIATION ACCEPTED`：统一 Elastic-Net `max_iter=3000`，tolerance 与统计模型保持不变，synthetic stress study 为16/16收敛、最大迭代数1814，锁定环境 targeted suite 为76/76通过。当前 W08 gate 仍为 `HOLD`，下一阶段仅为 R6-5；正式 W08、性能评估、W09 与 B validation 继续保持禁止。
 
 ## 0. 工作流定位
 

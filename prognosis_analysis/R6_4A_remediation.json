@@ -1,0 +1,136 @@
+{
+  "schema": "r6_4a_remediation_audit",
+  "schema_version": "1.0",
+  "status": "disposition_ready",
+  "validation": "PASS",
+  "authorized_path": "R6-4A",
+  "failure_class": "A",
+  "scope": {
+    "objective": "uniform convergence-efficiency remediation without changing the statistical model",
+    "formal_w08_run": false,
+    "local_first_failure_replay_used": false,
+    "patient_level_material_written": false,
+    "B_data_read": false,
+    "warm_start": false
+  },
+  "frozen_bindings": {
+    "W04_modeling_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+    "W07_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+    "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+    "R_low_candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high_candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+    "W08_config_sha256_before_r6_4a": "f432b9741071a37be37fb63361e2007978ee6f47d4ce269b36a8692aa4fcbe7a",
+    "R6_1_solver_source_sha256": "8f97fcc01cd7c821dd88468bd090d0ae6735018cdda775be491ae7d5b03026fb",
+    "implementation_source_sha256_after_r6_4a": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce",
+    "config_sha256_after_r6_4a": "0d4cbec42fc0a26e59a31d189285e83eb134628ea949c92100325d04873637a0"
+  },
+  "solver_change": {
+    "old_max_iter": 250,
+    "new_uniform_elastic_net_max_iter": 3000,
+    "tolerance": 1e-7,
+    "objective_changed": false,
+    "gradient_changed": false,
+    "convergence_criteria_changed": false,
+    "alpha_grid_changed": false,
+    "lambda_grid_changed": false,
+    "candidate_order_changed": false,
+    "candidate_pool_changed": false,
+    "W07_split_changed": false,
+    "W04_W07A_population_changed": false,
+    "minimumROISize": 10,
+    "warm_start_implemented": false,
+    "selection_reason": "3000 exceeds the final synthetic-study maximum of 1814 iterations by 1186 iterations; no candidate required warm start"
+  },
+  "synthetic_convergence_study": {
+    "runner": "temporary in-memory synthetic runner; not retained",
+    "random_seeds": [101, 202],
+    "designs": [
+      {
+        "n": 282,
+        "p": 25,
+        "feature_structure": "highly correlated blocks",
+        "event_structure": "deterministic exponential event/censoring construction with a bounded event-fraction gate"
+      },
+      {
+        "n": 240,
+        "p": 60,
+        "feature_structure": "independent standardized Gaussian predictors",
+        "event_structure": "deterministic exponential event/censoring construction with a bounded event-fraction gate"
+      }
+    ],
+    "alpha_grid": [0.1, 0.5, 0.9, 1.0],
+    "stress_lambda_ratio": 0.0001,
+    "final_stress_fits": 16,
+    "final_stress_converged": 16,
+    "final_stress_failed": 0,
+    "final_stress_max_iterations": 1814,
+    "pilot_budget_ladder": {
+      "seed": 101,
+      "n": 282,
+      "p": 25,
+      "feature_structure": "highly correlated blocks",
+      "alpha": 0.5,
+      "lambda_ratio": 0.01,
+      "results": [
+        {"max_iter": 250, "status": "failed", "iterations": 250, "failure_reason": "iteration_budget_exhausted"},
+        {"max_iter": 1000, "status": "converged", "iterations": 705},
+        {"max_iter": 2000, "status": "converged", "iterations": 705},
+        {"max_iter": 4000, "status": "converged", "iterations": 705}
+      ]
+    },
+    "numerical_equivalence_tolerance": 1e-10
+  },
+  "solver_regression": {
+    "deterministic_cox_ph_case": "existing W08 regression retained",
+    "deterministic_elastic_net_case": "max_iter=250 versus max_iter=3000",
+    "selected_alpha_same": true,
+    "selected_lambda_ratio_same": true,
+    "objective_coefficients_predictions_within_tolerance": true,
+    "failed_fit_state_cleared": true,
+    "failure_handling": "fail closed; no candidate deletion, candidate skipping, or fold-specific exception"
+  },
+  "negative_tests": {
+    "lower_minimum_roi_fails": true,
+    "altered_w07_split_fails": true,
+    "changed_alpha_grid_fails": true,
+    "changed_lambda_grid_fails": true,
+    "B_access_fails_closed": true,
+    "stale_g3_certificate_fails": true,
+    "frozen_binding_mismatch_fails": true,
+    "patient_level_diagnostic_material_in_git": false
+  },
+  "commands": [
+    {
+      "command": "temporary in-memory synthetic convergence study runner; removed after use",
+      "exit_code": 0,
+      "purpose": "synthetic convergence study; temporary runner removed after use"
+    },
+    {
+      "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','compileall','-q','prognosis_analysis/scripts/w08_nested_cv.py','tests/test_r6_4a_convergence.py')",
+      "exit_code": 0,
+      "purpose": "syntax/bytecode validation"
+    },
+    {
+      "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','tests.test_r6_4a_convergence','tests.test_w08_nested_cv','tests.test_w08_transactional_outputs','tests.test_w08_formal_release_gate','tests.test_w08_technical_preflight_a')",
+      "exit_code": 0,
+      "tests_run": 76,
+      "failures": 0,
+      "errors": 0,
+      "purpose": "R6-4A implementation, solver, boundary, B-blinding, stale-G3 and transactional regression suite"
+    }
+  ],
+  "stage_boundary": {
+    "W08_gate": "HOLD",
+    "formal_w08_rerun": false,
+    "held_out_predictions_generated": false,
+    "risk_scores_generated": false,
+    "performance_metrics_generated": false,
+    "W09_generated": false,
+    "model_freeze_lock_generated": false,
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false
+  },
+  "next_required_stage": "R6-5"
+}

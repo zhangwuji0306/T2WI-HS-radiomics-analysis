@@ -4,6 +4,7 @@
   "frozen_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
   "frozen_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
   "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+  "elastic_net_max_iter": 3000,
   "outer_cv": {
     "folds": 5,
     "repeats": 10,

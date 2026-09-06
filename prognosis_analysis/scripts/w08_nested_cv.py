@@ -86,6 +86,8 @@ P3B_COVERAGE_FIELDS = (
 ALPHA_GRID = (0.1, 0.5, 0.9, 1.0)
 LAMBDA_COUNT = 100
 LAMBDA_MIN_RATIO = 1e-4
+ELASTIC_NET_MAX_ITER = 3000
+ELASTIC_NET_TOLERANCE = 1e-7
 RIDGE_LAMBDA_COUNT = 100
 RIDGE_LAMBDA_MAX_RATIO = 1e4
 RIDGE_LAMBDA_MIN_RATIO = 1e-4
@@ -515,7 +517,7 @@ def _validate_config(config):
                 "W07A_protocol_sha256", "models", "fixed_runs", "provenance",
                 "extractability_state", "paired_comparators", "coverage_schema",
                 "output_schema", "audit_schema", "fixed_sensitivity_runs",
-                "penalty_semantics", "ridge_sensitivity"}
+                "penalty_semantics", "ridge_sensitivity", "elastic_net_max_iter"}
     missing = sorted(required - set(config))
     if missing:
         raise W08ValidationError("W08 config missing keys: %s" % missing)
@@ -538,6 +540,10 @@ def _validate_config(config):
         raise W08ValidationError("W08 inner CV must be 5-fold DFS_event stratified")
     if list(config.get("alpha_grid", [])) != list(ALPHA_GRID):
         raise W08ValidationError("W08 alpha grid differs from W04")
+    if type(config.get("elastic_net_max_iter")) is not int or \
+            config["elastic_net_max_iter"] != ELASTIC_NET_MAX_ITER:
+        raise W08ValidationError(
+            "W08 Elastic-Net max_iter differs from the R6-4A fixed budget")
     if config.get("lambda_grid", {}).get("values_per_alpha") != LAMBDA_COUNT:
         raise W08ValidationError("W08 lambda grid must contain 100 values per alpha")
     if config.get("lambda_grid", {}).get("minimum_ratio") != LAMBDA_MIN_RATIO:
@@ -1931,7 +1937,8 @@ class CoxElasticNetModel(object):
     stabilization before raising a hard, auditable error.
     """
 
-    def __init__(self, alpha, penalty, max_iter=250, tolerance=1e-7):
+    def __init__(self, alpha, penalty, max_iter=ELASTIC_NET_MAX_ITER,
+                 tolerance=ELASTIC_NET_TOLERANCE):
         self.alpha = float(alpha)
         self.penalty = float(penalty)
         self.max_iter = int(max_iter)
@@ -1960,6 +1967,12 @@ class CoxElasticNetModel(object):
         X = np.asarray(X, dtype=float)
         time = np.asarray(time, dtype=float)
         event = np.asarray(event, dtype=int)
+        # Clear predictive state before every attempt so a later numerical
+        # failure cannot expose coefficients or a baseline from an earlier fit.
+        self.coef_ = None
+        self.baseline_times_ = None
+        self.baseline_survival_ = None
+        self.fit_audit = {}
         if np.sum(event) < 1:
             raise W08ValidationError("Elastic-Net Cox fit requires an event")
         beta = np.zeros(X.shape[1], dtype=float)
@@ -2354,7 +2367,8 @@ def _select_candidate(records):
 
 
 def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
-                     max_iter=250, tolerance=1e-7, failure_context=None):
+                     max_iter=ELASTIC_NET_MAX_ITER,
+                     tolerance=ELASTIC_NET_TOLERANCE, failure_context=None):
     """Tune alpha and lambda using only the supplied outer-training frame."""
     if model_id not in MODEL_SPECS or MODEL_SPECS[model_id]["family"] != "Elastic_Net_Cox":
         raise W08ValidationError("inner tuning is only for Elastic-Net models")
@@ -2715,7 +2729,9 @@ def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
 
 
 def _fit_outer_model(train_frame, validation_frame, model_id, inner_seed,
-                     lambda_count=LAMBDA_COUNT, max_iter=250, tolerance=1e-7,
+                     lambda_count=LAMBDA_COUNT,
+                     max_iter=ELASTIC_NET_MAX_ITER,
+                     tolerance=ELASTIC_NET_TOLERANCE,
                      run_definition=None, failure_context=None):
     run_definition = dict(run_definition or {
         "run_id": model_id, "model_id": model_id,
@@ -2908,7 +2924,7 @@ def _resolve_runs(models=None, runs=None):
 def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                       models=None, runs=None, strict_schema=False, require_fixed_hash=False,
                       lambda_count=LAMBDA_COUNT, max_outer_folds=None,
-                      solver_max_iter=250, solver_tolerance=1e-7,
+                      solver_max_iter=None, solver_tolerance=None,
                       population=None):
     """Run W08 against an already-authorized A-only frame without file I/O.
 
@@ -2917,6 +2933,18 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
     accidentally truncated.
     """
     config = _validate_config(config or load_config())
+    if solver_max_iter is None:
+        solver_max_iter = int(config["elastic_net_max_iter"])
+    if solver_tolerance is None:
+        solver_tolerance = ELASTIC_NET_TOLERANCE
+    if require_fixed_hash and int(solver_max_iter) != int(
+            config["elastic_net_max_iter"]):
+        raise W08ValidationError(
+            "formal W08 must use the registered Elastic-Net max_iter")
+    if require_fixed_hash and float(solver_tolerance) != \
+            ELASTIC_NET_TOLERANCE:
+        raise W08ValidationError(
+            "formal W08 must use tolerance=1e-7")
     selected_runs = _resolve_runs(models=models, runs=runs)
     selected_models = sorted(set(item["model_id"] for item in selected_runs),
                              key=lambda item: list(MODEL_SPECS).index(item))
@@ -3271,7 +3299,9 @@ def run_w08(feature_frame, provider, config_path=DEFAULT_CONFIG,
     return run_w08_in_memory(
         data, outer_splits, provider, config=config,
         strict_schema=strict_schema, require_fixed_hash=True,
-        lambda_count=LAMBDA_COUNT, population=population)
+        lambda_count=LAMBDA_COUNT,
+        solver_max_iter=int(config["elastic_net_max_iter"]),
+        solver_tolerance=ELASTIC_NET_TOLERANCE, population=population)
 
 
 def main():
