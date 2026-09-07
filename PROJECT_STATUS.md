@@ -37,7 +37,7 @@
 
 ## Next task
 
-W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。R6 formal W08 因冻结 Elastic-Net Cox 拟合不收敛而硬失败，当前保持 `HOLD`；R6-1 observability 已通过第二轮独立复核并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`，R6-2 diagnostic replay 已复现首次失败并达到 `ACCEPTED FOR R6-3 CLASSIFICATION`，R6-3 已校正为 Class A 并进入 R6-4A，R6-4A 已经第二轮独立复核并达到 `NUMERICAL REMEDIATION ACCEPTED`，R6-5R 坐标核对已在 superseding protocol-owner disposition 下由第二轮 `Sol/medium` Reviewer 接受，R6-5 已由第二轮 `Sol/medium` Reviewer 接受为 `NUMERICAL EQUIVALENCE AND REGRESSION ACCEPTED`。全 A 最终拟合、W09 评估及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。下一步仅可执行 R6-6/G3R；R6-6.5 必须在 G3R 接受后执行，未完成这些 gate 前不得启动正式 W08 或任何真实 A-side outer-final Cox。
+W07A、P3C/P3D/P3E、G2R、P4 document-provenance reconciliation、P5 implementation、G2R2、50-fold technical-only preflight 与 G3 均已完成；G3 Reviewer 已接受下游使用。R6 formal W08 因冻结 Elastic-Net Cox 拟合不收敛而硬失败，当前保持 `HOLD`；R6-1 observability 已通过第二轮独立复核并达到 `ACCEPTED FOR DIAGNOSTIC REPLAY`，R6-2 diagnostic replay 已复现首次失败并达到 `ACCEPTED FOR R6-3 CLASSIFICATION`，R6-3 已校正为 Class A 并进入 R6-4A，R6-4A 已经第二轮独立复核并达到 `NUMERICAL REMEDIATION ACCEPTED`，R6-5R 坐标核对已在 superseding protocol-owner disposition 下由第二轮 `Sol/medium` Reviewer 接受，R6-5 已由第二轮 `Sol/medium` Reviewer 接受为 `NUMERICAL EQUIVALENCE AND REGRESSION ACCEPTED`，R6-6/G3R technical preflight 已由第一轮 `Luna/xhigh` Reviewer 接受为 `G3R ACCEPTED FOR FORMAL W08` technical gate。全 A 最终拟合、W09 评估及第二阶段 `model_freeze_lock.json` 生成均尚未执行，B 仍保持锁定。下一步仅可执行强制 R6-6.5 convergence sentinel；在其独立接受前不得启动正式 W08、任何真实 A-side outer-final Cox 或 B validation。
 
 ## Important decisions
 
