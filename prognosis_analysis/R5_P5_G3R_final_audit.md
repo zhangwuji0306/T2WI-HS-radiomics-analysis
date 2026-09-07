@@ -5,7 +5,7 @@
 - Stage: `G3R`
 - Status: `PASS`
 - Technical execution code commit: `b8c98e9ef2de4a1cc86811f7598f57b1627925c6`
-- Evidence binding commit: `0000000000000000000000000000000000000000`
+- Evidence binding commit: `e4bb14868de08229d5c5db949d08edc389fa52ba`
 - P5 coverage: `10` repeats × `5` frozen W07 outer folds = `50/50` fold units
 - Aggregate coverage: `17` fixed technical runs × `50` folds = `850` rows
 - Observed P5 execution duration: `201.760` seconds
@@ -87,4 +87,4 @@ The final aggregate and this audit are the only allowlisted R5 evidence paths. T
 - Review scope: current-code `b8c98e9` P5 technical-only rerun.
 - Review result: 50/50 folds, 17 runs, 850 aggregate rows, artifact hashes, frozen bindings, P4R validator, B/formal W08 boundaries, and preserved local archives were accepted with no blocker; the P5 targeted suite passed 15/15.
 - Non-blocking findings: the allowlisted R5 evidence in this audit is being rebound from the prior execution commit; the complete provenance unittest suite retains one historical wording assertion that does not match the current legitimate Elastic-Net Cox failure summary, while the P5 targeted suite passed 15/15 and the P4R validator passed.
-- The all-zero `evidence_binding_commit` is temporary append-only bookkeeping; it must be replaced by the actual direct successor commit during finalization before formal W08 release-gate validation.
+- The evidence binding commit is the direct successor of the current technical execution code; the finalization commit is limited to the two allowlisted R5 evidence paths.
