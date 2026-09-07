@@ -1,0 +1,283 @@
+{
+  "schema": "r6_5_numerical_equivalence",
+  "schema_version": "1.0",
+  "status": "completed",
+  "validation": "PASS",
+  "execution": {
+    "git_head": "79a6d9a9d3a064fedb2db2741e37ea4ffb610451",
+    "environment": {
+      "python": "3.7.12",
+      "numpy": "1.21.6",
+      "pandas": "1.3.5",
+      "scipy": "1.7.3",
+      "sklearn": "1.0.2",
+      "pyradiomics": "v3.0.1",
+      "simpleitk": "2.2.1"
+    },
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "formal_w08_rerun_started": false,
+    "real_A_outer_final_Cox_called_in_r6_5": false,
+    "formal_prediction_generated": false,
+    "formal_risk_score_generated": false,
+    "performance_generated": false,
+    "model_freeze_lock_generated": false
+  },
+  "coordinate_binding": {
+    "status": "PASS",
+    "repeat": 1,
+    "outer_fold": 1,
+    "population": "R_high",
+    "canonical_population": {
+      "full_outer_train_n": 314,
+      "full_outer_validation_n": 79,
+      "eligible_train_n": 282,
+      "eligible_validation_n": 67,
+      "eligible_train_id_hash": "90b08549c4bd7204a8437ce5fb984af608ba019a0cc10e6d1124b9fbddaf41b1",
+      "eligible_validation_id_hash": "148ac9faad72ba250b558246967b26adfe3c52f9ff09e07377e6c3bef374dd06",
+      "full_outer_train_id_hash": "7eeb6103574fd96ee4b698a00c7a5205dce6092490f3fb149c704057cd03af4b",
+      "full_outer_validation_id_hash": "941f0b0bfac12b74ec6f4115878ae994027a81b11360b061d0e12eeb8e790674"
+    },
+    "p3b": {
+      "source": "P3B",
+      "minimumROISize": 10,
+      "eligibility_stage": "after_provider_transform_before_any_preprocessing",
+      "fields": [
+        "R_low_voxel_count",
+        "R_high_voxel_count",
+        "R_low_state",
+        "R_high_state",
+        "R_low_structurally_defined",
+        "R_high_structurally_defined",
+        "R_low_technically_extractable",
+        "R_high_technically_extractable"
+      ],
+      "state_definitions": {
+        "structural_absence": "voxel_count == 0",
+        "technical_small_roi": "1 <= voxel_count < 10",
+        "extractable": "voxel_count >= 10"
+      },
+      "state_hashes": {
+        "train": "4981f5b2785b8f223d42a69a41567b4175d819f47b9566f92def1ac0f22f4c05",
+        "validation": "84af0be99d65e12e5aedca20b688c9c00ca06ac4de6fa13bd1f7cb44447cc8b7",
+        "combined": "3073fab85237e3a637bbfdc34244e91014d761f1ba57f947f0060d005ce66d99"
+      },
+      "state_counts": {
+        "train": {"extractable": 282, "structural_absence": 21, "technical_small_roi": 11},
+        "validation": {"extractable": 67, "structural_absence": 7, "technical_small_roi": 5}
+      }
+    },
+    "w07": {
+      "split_file_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+      "canonical_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+      "file_path": "prognosis_analysis/output/outer_splits_A.csv"
+    },
+    "provider": {
+      "class": "AOnlyFoldFeatureProvider",
+      "fit_scope": "full_outer_training_only",
+      "validation_ids_used_for_fit": false,
+      "fold_specific_habitat": true,
+      "formal_capable": true,
+      "seed": 14346,
+      "boundary": 2.8650061106378706,
+      "boundary_representation": "aggregate/explicit",
+      "centres": [2.1318701285178037, 3.598142092757938],
+      "validation_used_for_boundary_fit": false
+    },
+    "registered_evidence_hashes": {
+      "R6_5R_coordinate_reconciliation_json": "151507a3cfe816c101ac86a6352e15ce4b05c2403bfa9f759c3e46cdd90af968",
+      "R6_5R_coordinate_reconciliation_audit_md": "2ff4e422e2cc29f83f6371fb54e250e7d2486e6c8b3ab613a2af8df2b68e6e7e",
+      "R6_5R_coordinate_reconciliation_review_md": "ac623aaf538b8867b7298614de1cc7090ee2c2b0afecdebff8c31164169fb5fa",
+      "R6_5R_superseding_disposition_review_md": "b640238c0a028a4d877dd249fd1f8c7781f7beab25bcbcf10694f3463f0f305b",
+      "R6_4A_remediation_json": "9d49225d2e7cd7883bb3a4612aa8b8181644f519602d67feddce58dee9fb9af0",
+      "R6_4A_remediation_audit_md": "8ccf360083e5310026c1474b5ece850153174e316ad2767802ba9af916f277ed"
+    }
+  },
+  "protocol_bindings": {
+    "W04_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+    "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+    "technical_freeze_sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
+    "w07_config_sha256": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
+    "w08_config_sha256": "0d4cbec42fc0a26e59a31d189285e83eb134628ea949c92100325d04873637a0",
+    "candidate_pools": {
+      "R_low_sha256": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+      "R_high_sha256": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
+    },
+    "w08_solver_source_sha256": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce",
+    "test_source_sha256": "cc748d8e937fc45d530aed277d860b3676d52fb72952171e9bd94efdcdf3ba01"
+  },
+  "solver_lock": {
+    "elastic_net_max_iter": 3000,
+    "tolerance": 1e-7,
+    "alpha_grid": [0.1, 0.5, 0.9, 1.0],
+    "lambda_grid": {
+      "values_per_alpha": 100,
+      "minimum_ratio": 0.0001,
+      "scale": "log-spaced from training-only lambda_max to lambda_max*1e-4",
+      "selection": "inner CV only",
+      "lambda_max_scope": "each inner-training fit and outer-training refit",
+      "tie_break": ["larger lambda within 1e-12", "smaller alpha in frozen grid order"]
+    },
+    "objective": "penalized Cox partial likelihood",
+    "gradient": "unchanged from R6-4A accepted solver",
+    "convergence_criteria": "unchanged from R6-4A accepted solver",
+    "zero_start": true,
+    "warm_start": false,
+    "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+    "candidate_pool_changed": false,
+    "candidate_order_changed": false,
+    "W07_split_changed": false,
+    "population_changed": false,
+    "minimumROISize": 10
+  },
+  "synthetic_numerical_equivalence": {
+    "status": "PASS",
+    "comparison_tolerance": 1e-10,
+    "old_solver": {
+      "source_commit": "899cf71e1895985f1f2eb5daf482d1c595dad154",
+      "source_path": "prognosis_analysis/scripts/w08_nested_cv.py",
+      "source_git_blob_sha1": "075fe9624d8b8130f31016cd488d926feff3486c"
+    },
+    "new_solver": {
+      "source_commit": "79a6d9a9d3a064fedb2db2741e37ea4ffb610451",
+      "source_path": "prognosis_analysis/scripts/w08_nested_cv.py",
+      "source_sha256": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce"
+    },
+    "direct_fit": {
+      "fixture": {"kind": "deterministic_synthetic_survival", "seed": 20260906, "n": 40, "p": 3, "event_count": 14},
+      "old": {"max_iter": 250, "iterations": 6, "objective": 2.6673510312306403, "coefficient_sha256": "4e695978f2f50d8bb92fb1a53ddcec9c6ceabfd90c20610d490fc4fbf89cd8dc", "risk_score_sha256": "2124e2b3b5f25b66a4442a0638e628572153f95c6cf5c00c19cd0d8c999328a6", "risk_score_count": 40},
+      "new": {"max_iter": 3000, "iterations": 6, "objective": 2.6673510312306403, "coefficient_sha256": "4e695978f2f50d8bb92fb1a53ddcec9c6ceabfd90c20610d490fc4fbf89cd8dc", "risk_score_sha256": "2124e2b3b5f25b66a4442a0638e628572153f95c6cf5c00c19cd0d8c999328a6", "risk_score_count": 40},
+      "absolute_max_coefficient_delta": 0.0,
+      "absolute_max_risk_score_delta": 0.0,
+      "absolute_objective_delta": 0.0,
+      "pass": true
+    },
+    "selection_fit": {
+      "status": "PASS",
+      "kind": "pure_selection_reducer_equivalence",
+      "comparison_tolerance": 1e-10,
+      "fixture": {
+        "kind": "deterministic_preassigned_selection_utility",
+        "alpha_grid": [0.1, 0.5, 0.9, 1.0],
+        "alpha_count": 4,
+        "lambda_count": 100,
+        "records": 400,
+        "records_per_alpha": 100,
+        "score_field": "selection_score",
+        "score_origin": "preassigned test utility; no fit, risk, outcome, or performance calculation",
+        "top_tied_lambda_indices": [37, 42]
+      },
+      "grid": {
+        "values_per_alpha": 100,
+        "start_ratio": 1.0,
+        "end_ratio": 0.0001,
+        "spacing": "logarithmic",
+        "lambda_max_scope": "each inner-training fit and outer-training refit (preserved; no lambda_max fit in pure fixture)",
+        "selected_lambda_index": 37,
+        "selected_lambda_ratio": 0.031992671377973826,
+        "index_mapping_verified": true,
+        "minimum_ratio_verified": true
+      },
+      "old": {
+        "source_commit": "899cf71e1895985f1f2eb5daf482d1c595dad154",
+        "selection_output": {"alpha": 0.1, "alpha_index": 0, "lambda_index": 37, "lambda_ratio": 0.031992671377973826}
+      },
+      "new": {
+        "source_commit": "79a6d9a9d3a064fedb2db2741e37ea4ffb610451",
+        "selection_output": {"alpha": 0.1, "alpha_index": 0, "lambda_index": 37, "lambda_ratio": 0.031992671377973826}
+      },
+      "reducer_execution": "old and new _select_candidate source bodies executed in memory after replacing the historical score-field token with selection_score; no model fit or metric function was called",
+      "tie_break_verified": "larger lambda ratio within 1e-12, then smaller alpha index in frozen grid order",
+      "same_selected_alpha": true,
+      "same_selected_lambda_ratio": true,
+      "same_selected_lambda_index": true,
+      "same_selection_output": true
+    }
+  },
+  "stress_evidence": {
+    "status": "PRESERVED_FROM_ACCEPTED_R6_4A",
+    "source_json": "prognosis_analysis/R6_4A_remediation.json",
+    "source_audit": "prognosis_analysis/R6_4A_remediation_audit.md",
+    "final_stress_fits": 16,
+    "final_stress_converged": 16,
+    "final_stress_failed": 0,
+    "maximum_iterations": 1814,
+    "uniform_budget": 3000,
+    "fold_or_model_specific_budget": false,
+    "candidate_deletion": false,
+    "candidate_skipping": false
+  },
+  "regression": {
+    "compileall": {
+      "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','compileall','-q','prognosis_analysis/scripts','tests')",
+      "exit_code": 0,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    },
+    "locked_targeted_plus_r65": {
+      "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','tests.test_r6_4a_convergence','tests.test_w08_nested_cv','tests.test_w08_transactional_outputs','tests.test_w08_formal_release_gate','tests.test_w08_technical_preflight_a','tests.test_r6_5_validation')",
+      "exit_code": 0,
+      "tests_run": 81,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "unexpected_skips": 0
+    },
+    "binding_and_negative_suites": {
+      "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','tests.test_w07_outer_splits','tests.test_b_blinding','tests.test_w05_access')",
+      "exit_code": 0,
+      "tests_run": 37,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "unexpected_skips": 0
+    },
+    "pre_existing_provenance_suite": {
+      "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','tests.test_provenance_reconciliation')",
+      "exit_code": 1,
+      "tests_run": 32,
+      "failures": 1,
+      "errors": 7,
+      "skips": 0,
+      "classification": "pre-existing unrelated failure",
+      "finding": "existing manifest.successor_revision_history.pre_w08_sop[1] snapshot mismatch plus an existing execution_status wording assertion; no R6-5 evidence or scientific/technical/modeling file was changed"
+    },
+    "modeling_protocol_in_combined_binding_run": {
+      "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','tests.test_w07_outer_splits','tests.test_modeling_protocol','tests.test_b_blinding','tests.test_w05_access')",
+      "exit_code": 1,
+      "tests_run": 44,
+      "failures": 0,
+      "errors": 1,
+      "skips": 0,
+      "classification": "pre-existing unrelated failure",
+      "finding": "tests.test_modeling_protocol.ModelingProtocolFreezeTests.test_source_revisions_match_local_files reports the same pre_w08_sop[1] snapshot mismatch"
+    }
+  },
+  "stage_boundary": {
+    "W08_gate": "HOLD",
+    "prior_formal_w08_attempt": "failed_attempt_preserved; no R6-5 rerun",
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "formal_W08_rerun_started": false,
+    "real_A_outer_final_Cox_called_in_r6_5": false,
+    "formal_predictions_generated": false,
+    "formal_risk_scores_generated": false,
+    "performance_metrics_generated": false,
+    "model_freeze_lock_present": false,
+    "R6_6_started": false,
+    "R6_6_5_started": false,
+    "formal_W08_release": false
+  },
+  "privacy": {
+    "patient_level_artifacts_written": false,
+    "patient_level_artifacts_added_to_git": false,
+    "absolute_local_paths_in_evidence": false,
+    "patient_identifier_literals_in_evidence": false,
+    "temporary_files_cleaned": true
+  }
+}
