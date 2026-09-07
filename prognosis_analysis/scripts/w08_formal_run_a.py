@@ -967,6 +967,22 @@ def _nonempty_text(value):
     return isinstance(value, str) and bool(value.strip())
 
 
+def _raw_archived_attempt_id(archive_id):
+    """Return the writer attempt id represented by a failed archive name."""
+    suffix = "_failed"
+    if not _nonempty_text(archive_id) or \
+            not archive_id.endswith(suffix):
+        raise RuntimeError("failed attempt archive has an invalid directory id: %s" %
+                           archive_id)
+    raw_attempt_id = archive_id[:-len(suffix)]
+    if not _nonempty_text(raw_attempt_id) or \
+            raw_attempt_id.endswith(suffix) or \
+            "/" in raw_attempt_id or "\\" in raw_attempt_id:
+        raise RuntimeError("failed attempt archive has an invalid directory id: %s" %
+                           archive_id)
+    return raw_attempt_id
+
+
 def _is_r0_archived_attempt_compat(attempt_id, failure, run_state):
     """Recognise the one R0 archive whose run state was captured mid-modeling."""
     required_run_state_keys = (
@@ -989,6 +1005,7 @@ def _is_r0_archived_attempt_compat(attempt_id, failure, run_state):
 
 
 def _validate_archived_failure_schema(attempt_id, failure, run_state):
+    raw_attempt_id = _raw_archived_attempt_id(attempt_id)
     required_failure_keys = (
         "attempt_id", "stage", "status", "failure_stage",
         "code_commit_at_attempt",
@@ -999,8 +1016,22 @@ def _validate_archived_failure_schema(attempt_id, failure, run_state):
         raise RuntimeError(
             "failed attempt audit is missing fields for %s: %s" %
             (attempt_id, ",".join(missing_failure)))
-    if failure.get("attempt_id") != attempt_id or \
-            failure.get("stage") != "W08" or \
+    failure_attempt_id = failure.get("attempt_id")
+    run_state_has_attempt_id = "attempt_id" in run_state
+    run_state_attempt_id = run_state.get("attempt_id")
+    if failure_attempt_id == raw_attempt_id:
+        if not run_state_has_attempt_id or \
+                run_state_attempt_id != raw_attempt_id:
+            raise RuntimeError(
+                "failed attempt writer identity mismatch: %s" % attempt_id)
+    elif failure_attempt_id == attempt_id:
+        if run_state_has_attempt_id and \
+                run_state_attempt_id != attempt_id:
+            raise RuntimeError(
+                "failed attempt registered identity mismatch: %s" % attempt_id)
+    else:
+        raise RuntimeError("failed attempt identity/status mismatch: %s" % attempt_id)
+    if failure.get("stage") != "W08" or \
             failure.get("status") != "failed":
         raise RuntimeError("failed attempt identity/status mismatch: %s" % attempt_id)
     if not _nonempty_text(failure.get("failure_stage")):

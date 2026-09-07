@@ -103,6 +103,49 @@ def _write_archived_attempt(output_root, attempt_id="attempt_002_failed",
         json.dump(run_state, handle)
 
 
+def _write_writer_style_archived_attempt(output_root,
+                                         archive_id="attempt_002_failed",
+                                         raw_attempt_id="attempt_002",
+                                         failure_attempt_id=None,
+                                         run_state_attempt_id=None):
+    attempt_root = os.path.join(output_root, "attempts", archive_id)
+    os.makedirs(attempt_root)
+    failure = {
+        "attempt_id": (raw_attempt_id if failure_attempt_id is None
+                        else failure_attempt_id),
+        "stage": "W08",
+        "status": "failed",
+        "failure_stage": "nested_cv_modeling_radiomics_extraction",
+        "exception_summary": "synthetic failure",
+        "code_commit_at_attempt": CURRENT_COMMIT,
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+    }
+    with open(os.path.join(attempt_root, "failure_audit.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(failure, handle)
+    run_state = {
+        "stage": "W08",
+        "status": "failed",
+        "formal_run": True,
+        "failure_stage": "nested_cv_modeling_radiomics_extraction",
+        "code_commit": CURRENT_COMMIT,
+        "attempt_id": (raw_attempt_id if run_state_attempt_id is None
+                        else run_state_attempt_id),
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+    }
+    with open(os.path.join(attempt_root, "run_state.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(run_state, handle)
+
+
 def _write_r0_compatible_attempt(output_root):
     attempt_id = "attempt_001_failed"
     attempt_root = os.path.join(output_root, "attempts", attempt_id)
@@ -501,6 +544,31 @@ class W08ReleaseGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["checks"]["prior_attempts_reconciled"]["status"],
                          "PASS")
+
+    def test_archived_failure_schema_accepts_formal_writer_identity(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            _write_writer_style_archived_attempt(output_root)
+            result = self._run_with_base_gate(
+                output_root,
+                status=_status(failed=True, attempt_id="attempt_002_failed"))
+        self.assertEqual(result["status"], "PASS")
+
+    def test_archived_failure_schema_rejects_writer_identity_mismatch(self):
+        scenarios = (
+            {"failure_attempt_id": "attempt_003"},
+            {"run_state_attempt_id": "attempt_003"},
+        )
+        for overrides in scenarios:
+            with self.subTest(overrides=overrides):
+                with tempfile.TemporaryDirectory() as output_root:
+                    _write_writer_style_archived_attempt(
+                        output_root, **overrides)
+                    with self.assertRaises(formal.W08ReleaseGateError):
+                        self._run_with_base_gate(
+                            output_root,
+                            status=_status(
+                                failed=True,
+                                attempt_id="attempt_002_failed"))
 
     def test_r0_archived_attempt_schema_remains_compatible(self):
         with tempfile.TemporaryDirectory() as output_root:
