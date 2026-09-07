@@ -509,6 +509,40 @@ class W08ReleaseGateTests(unittest.TestCase):
                 output_root, status=_status(failed=True))
         self.assertEqual(result["status"], "PASS")
 
+    def test_r0_legacy_and_newer_explicit_failure_reconcile_to_newer_attempt(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            _write_r0_compatible_attempt(output_root)
+            _write_archived_attempt(output_root, attempt_id="attempt_002_failed")
+            result = self._run_with_base_gate(
+                output_root,
+                status=_status(failed=True, attempt_id="attempt_002_failed"))
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["checks"]["prior_attempts_reconciled"]["status"],
+                         "PASS")
+
+    def test_malformed_unsafe_or_misidentified_r0_archive_fails_closed(self):
+        scenarios = ("missing_failure_stage", "unsafe_b_flag", "wrong_attempt_id")
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                with tempfile.TemporaryDirectory() as output_root:
+                    _write_r0_compatible_attempt(output_root)
+                    failure_path = os.path.join(
+                        output_root, "attempts", "attempt_001_failed",
+                        "failure_audit.json")
+                    with open(failure_path, "r", encoding="utf-8") as handle:
+                        failure = json.load(handle)
+                    if scenario == "missing_failure_stage":
+                        del failure["failure_stage"]
+                    elif scenario == "unsafe_b_flag":
+                        failure["B_source_opened"] = True
+                    else:
+                        failure["attempt_id"] = "attempt_999_failed"
+                    with open(failure_path, "w", encoding="utf-8") as handle:
+                        json.dump(failure, handle)
+                    with self.assertRaises(formal.W08ReleaseGateError):
+                        self._run_with_base_gate(
+                            output_root, status=_status(failed=True))
+
     def test_archived_attempt_inflight_statuses_fail_closed(self):
         for run_status in ("running", "modeling", "incomplete", "unknown"):
             with self.subTest(run_status=run_status):

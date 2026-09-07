@@ -1075,6 +1075,7 @@ def _validate_reconciled_attempts(project_root, output_root, status):
             execution.get("last_attempt_status") != "failed"):
         raise RuntimeError("prior failed attempt is not explicitly reconciled")
 
+    validated_attempts = {}
     for attempt_id in attempt_dirs:
         if not attempt_id.endswith("_failed"):
             raise RuntimeError("unreconciled prior attempt: %s" % attempt_id)
@@ -1085,19 +1086,28 @@ def _validate_reconciled_attempts(project_root, output_root, status):
             raise RuntimeError("failed attempt lacks reconciliation artifacts: %s" % attempt_id)
         failure = _read_json_path(failure_path, "failed attempt audit")
         run_state = _read_json_path(run_state_path, "failed attempt run state")
-        if failure.get("attempt_id") != attempt_id or failure.get("status") != "failed":
-            raise RuntimeError("failed attempt identity/status mismatch: %s" % attempt_id)
-        _validate_archived_failure_schema(attempt_id, failure, run_state)
+        archive_kind = _validate_archived_failure_schema(
+            attempt_id, failure, run_state)
         failure_commit = failure.get("code_commit_at_attempt")
         if not _git_commit_resolves(project_root, failure_commit):
             raise RuntimeError("failed attempt code commit does not resolve: %s" % attempt_id)
-        if last_attempt.get("attempt_id") != attempt_id or \
-                last_attempt.get("code_commit_at_attempt") != failure_commit or \
-                last_attempt.get("failure_stage") != failure.get("failure_stage"):
-            raise RuntimeError("failed attempt is not reconciled in execution_status: %s" % attempt_id)
         if any(os.path.exists(os.path.join(attempt_root, name))
                for name in W08_FINAL_OUTPUT_NAMES):
             raise RuntimeError("failed attempt contains final outputs: %s" % attempt_id)
+        validated_attempts[attempt_id] = (archive_kind, failure)
+
+    explicit_attempt_ids = [attempt_id for attempt_id in attempt_dirs
+                            if validated_attempts[attempt_id][0] == "explicit_failed"]
+    for attempt_id in attempt_dirs:
+        archive_kind, failure = validated_attempts[attempt_id]
+        if archive_kind == "explicit_failed" or not explicit_attempt_ids:
+            failure_commit = failure.get("code_commit_at_attempt")
+            if last_attempt.get("attempt_id") != attempt_id or \
+                    last_attempt.get("code_commit_at_attempt") != failure_commit or \
+                    last_attempt.get("failure_stage") != failure.get("failure_stage"):
+                raise RuntimeError(
+                    "failed attempt is not reconciled in execution_status: %s" %
+                    attempt_id)
     if not attempt_dirs and last_attempt.get("status") == "failed":
         raise RuntimeError("execution_status records a failed attempt without an archive")
     return {"attempts_checked": attempt_dirs}
