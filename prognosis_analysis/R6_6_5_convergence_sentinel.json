@@ -1,0 +1,238 @@
+{
+  "canonical_population": {
+    "P3B": {
+      "eligibility_stage": "after_provider_transform_before_any_preprocessing",
+      "minimumROISize": 10,
+      "registered_state_hashes": {
+        "combined": "3073fab85237e3a637bbfdc34244e91014d761f1ba57f947f0060d005ce66d99",
+        "train": "4981f5b2785b8f223d42a69a41567b4175d819f47b9566f92def1ac0f22f4c05",
+        "validation": "84af0be99d65e12e5aedca20b688c9c00ca06ac4de6fa13bd1f7cb44447cc8b7"
+      },
+      "source": "P3B",
+      "state_definitions": {
+        "extractable": "voxel_count >= 10",
+        "structural_absence": "voxel_count == 0",
+        "technical_small_roi": "1 <= voxel_count < 10"
+      },
+      "state_hashes_reused_from_accepted_R6_5_binding": true,
+      "training_state_counts": {
+        "extractable": 282,
+        "structural_absence": 21,
+        "technical_small_roi": 11
+      },
+      "validation_state_counts": {
+        "extractable": 67,
+        "structural_absence": 7,
+        "technical_small_roi": 5
+      }
+    },
+    "R_high_eligible_training_id_hash": "90b08549c4bd7204a8437ce5fb984af608ba019a0cc10e6d1124b9fbddaf41b1",
+    "R_high_eligible_training_n": 282,
+    "R_high_eligible_validation_id_hash": "148ac9faad72ba250b558246967b26adfe3c52f9ff09e07377e6c3bef374dd06",
+    "R_high_eligible_validation_n": 67,
+    "W07_split_hash": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+    "full_outer_training_id_hash": "7eeb6103574fd96ee4b698a00c7a5205dce6092490f3fb149c704057cd03af4b",
+    "full_outer_training_n": 314,
+    "full_outer_validation_id_hash": "941f0b0bfac12b74ec6f4115878ae994027a81b11360b061d0e12eeb8e790674",
+    "full_outer_validation_n": 79,
+    "training_censors": 216,
+    "training_events": 66,
+    "validation_censors": null,
+    "validation_events": null
+  },
+  "execution": {
+    "code_and_config_sha256": {
+      "habitat_analysis/freeze_lock.json": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
+      "prognosis_analysis/R6_4A_remediation.json": "9d49225d2e7cd7883bb3a4612aa8b8181644f519602d67feddce58dee9fb9af0",
+      "prognosis_analysis/R6_5_numerical_equivalence.json": "fd9f4d13395cf88cc00bf26472b53a40c3844a09a35b68d6d1ede8ba02629213",
+      "prognosis_analysis/R6_6_g3r_technical_preflight.json": "0f82258a61ce9ba8084da9a7b06355fd81d2275ec127102ccc416e7655c30278",
+      "prognosis_analysis/W07A_pre_W08_protocol_amendment.json": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14",
+      "prognosis_analysis/W07A_pre_W08_protocol_amendment.md": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+      "prognosis_analysis/configs/w07_outer_splits.json": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
+      "prognosis_analysis/configs/w08_nested_cv.json": "0d4cbec42fc0a26e59a31d189285e83eb134628ea949c92100325d04873637a0",
+      "prognosis_analysis/modeling_protocol.json": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+      "prognosis_analysis/scripts/w08_formal_run_a.py": "c782e63739011467c0a5c0c7cf68d0a600294d94835ec7128ec64bb8d3494a09",
+      "prognosis_analysis/scripts/w08_nested_cv.py": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce"
+    },
+    "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('prognosis_analysis/scripts/_r6_6_5_convergence_sentinel.py')",
+    "entry_point": "prognosis_analysis/scripts/_r6_6_5_convergence_sentinel.py",
+    "environment": {
+      "conda_environment": "t2_radiomics",
+      "numpy": "1.21.6",
+      "pandas": "1.3.5",
+      "pyradiomics": "v3.0.1",
+      "python": "3.7.12",
+      "scikit_learn": "1.0.2",
+      "scipy": "1.7.3",
+      "simpleitk": "2.2.1"
+    },
+    "exit_code": 0,
+    "git_head": "a83cd991c6522d42a82d35837c6ffda2fc41c340"
+  },
+  "inner_tuning": {
+    "alpha_grid": [
+      0.1,
+      0.5,
+      0.9,
+      1.0
+    ],
+    "candidate_attempts": 2000,
+    "candidate_deletion": false,
+    "candidate_failures": 0,
+    "candidate_skipping": false,
+    "inner_candidate_clipping_count": 0,
+    "inner_failure_reason_counts": {},
+    "inner_folds": 5,
+    "lambda_minimum_ratio": 0.0001,
+    "lambda_values_per_alpha": 100,
+    "metric": "mean inner-validation Uno C-index",
+    "metric_scope_is_inner_tuning_only": true,
+    "outer_validation_used": false,
+    "scope": "outer-training-only inner 5-fold CV",
+    "selected_alpha": 0.1,
+    "selected_inner_score_recorded": false,
+    "selected_lambda_index": 97,
+    "selected_lambda_ratio": 0.00012045035402587811,
+    "status": "completed"
+  },
+  "outer_training_final_refit": {
+    "coefficients_serialized": false,
+    "converged": true,
+    "convergence_reason": "objective_stagnation",
+    "failure_reason": null,
+    "final_lambda": 0.0006337852975282527,
+    "fit_status": "converged",
+    "iterations": 658,
+    "last_objective": 4.943682853465552,
+    "last_objective_improvement": 4.850400469713634e-06,
+    "line_search_backtracking_count": 215,
+    "linear_predictor_clipping": {
+      "contexts": [],
+      "count": 0
+    },
+    "outer_lambda_max": 5.2617968843170635,
+    "performance_called": false,
+    "selected_alpha": 0.1,
+    "selected_lambda_ratio": 0.00012045035402587811,
+    "stability_actions": [
+      "backtrack_objective"
+    ],
+    "status": "converged",
+    "training_censors": 216,
+    "training_events": 66,
+    "training_n": 282,
+    "validation_prediction_called": false
+  },
+  "privacy": {
+    "absolute_local_paths_in_evidence": false,
+    "patient_identifier_literals_in_evidence": false,
+    "patient_level_artifacts_written": false,
+    "patient_level_objects_serialized": false,
+    "temporary_model_state_in_memory_only": true,
+    "temporary_model_state_released": true
+  },
+  "protocol_bindings": {
+    "W04_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+    "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+    "W07_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+    "W07_split_changed": false,
+    "alpha_grid": [
+      0.1,
+      0.5,
+      0.9,
+      1.0
+    ],
+    "candidate_order_changed": false,
+    "candidate_pool_changed": false,
+    "candidate_pools": {
+      "R_high": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+      "R_low": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0"
+    },
+    "elastic_net_max_iter": 3000,
+    "lambda_minimum_ratio": 0.0001,
+    "lambda_values_per_alpha": 100,
+    "minimumROISize": 10,
+    "objective": "penalized Cox partial likelihood",
+    "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+    "population_changed": false,
+    "technical_freeze_sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
+    "tolerance": 1e-07,
+    "w07_config_sha256": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
+    "w08_config_sha256": "0d4cbec42fc0a26e59a31d189285e83eb134628ea949c92100325d04873637a0",
+    "warm_start": false,
+    "zero_start": true
+  },
+  "provider": {
+    "boundary": 2.8650061106378706,
+    "boundary_representation": "aggregate/explicit",
+    "cache_npz_count_after": 393,
+    "cache_npz_count_before": 393,
+    "centres": [
+      2.1318701285178037,
+      3.598142092757938
+    ],
+    "class": "AOnlyFoldFeatureProvider",
+    "fit_scope": "full_outer_training_only",
+    "fold_specific_habitat": true,
+    "formal_capable": true,
+    "kmeans_seed": 14346,
+    "outer_validation_transformed": true,
+    "outer_validation_used_for_boundary_fit": false,
+    "solver_seed": 15346,
+    "validation_ids_used_for_fit": false
+  },
+  "safety_boundary": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "formal_prediction_generated": false,
+    "held_out_prediction_generated": false,
+    "model_comparison_generated": false,
+    "model_freeze_lock_generated": false,
+    "outer_validation_risk_prediction": false,
+    "outer_validation_transformed_for_P3B_only": true,
+    "patient_level_outputs_written": false,
+    "performance_generated": false,
+    "risk_score_generated": false,
+    "validation_survival_prediction": false
+  },
+  "schema": "r6_6_5_convergence_sentinel",
+  "schema_version": "1.0",
+  "scope": {
+    "A_only": true,
+    "B_validation": false,
+    "W09": false,
+    "coordinate": {
+      "model_id": "M3H",
+      "outer_fold": 1,
+      "population": "R_high",
+      "repeat": 1,
+      "run": "M3H"
+    },
+    "formal_W08": false,
+    "model_freeze": false,
+    "purpose": "first-failure convergence sentinel",
+    "stage": "R6-6.5",
+    "technical_only": false
+  },
+  "status": "PASS",
+  "warnings_and_failures": {
+    "clipping_related_failure": false,
+    "inner_candidate_failures_are_protocol_audited": true,
+    "iteration_budget_exhausted": false,
+    "new_failure": false,
+    "non_fatal_warning_scope": "A-only feature-frame assembly",
+    "outer_final_numerical_failure": false,
+    "warning_categories": {
+      "PerformanceWarning": 2
+    },
+    "warning_count": 2
+  },
+  "cleanup": {
+    "temporary_runner_removed": true,
+    "temporary_bytecode_removed": true,
+    "temporary_patient_level_model_objects_released": true,
+    "temporary_patient_level_artifacts_written": false
+  }
+}
