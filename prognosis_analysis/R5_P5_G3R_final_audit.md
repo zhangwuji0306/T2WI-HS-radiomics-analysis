@@ -4,11 +4,11 @@
 
 - Stage: `G3R`
 - Status: `PASS`
-- Technical execution code commit: `fd2c06949369f218fabfe84dee043f267a5131aa`
-- Evidence binding commit: `ddef0b91fd043c790dfaf570362e335db1046051`
+- Technical execution code commit: `14c3712e17e2e338ed993bc6cbe37d232cf2ec33`
+- Evidence binding commit: `0000000000000000000000000000000000000000`
 - P5 coverage: `10` repeats × `5` frozen W07 outer folds = `50/50` fold units
 - Aggregate coverage: `17` fixed technical runs × `50` folds = `850` rows
-- Observed P5 execution duration: `168.186` seconds
+- Observed P5 execution duration: `201.0` seconds
 - Current output: `prognosis_analysis/output/p5_technical_preflight_A_G3R`
 - Predecessor output: `prognosis_analysis/output/p5_technical_preflight_A`
 
@@ -24,9 +24,9 @@ Each aggregate row is one fixed `run_id` × W07 outer repeat × W07 outer fold t
 - W07A amendment JSON SHA-256: `0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14`
 - P4 integrity audit SHA-256: `6baae4a1bf97a6e85bce3d71a6235fba7b6945a3aec71fa51c184502c6cbbb83`
 - P4R reconciliation SHA-256: `374ddc9f6ecd01c04ff957576f032fec18f0ebbb53f6651a725ad0b6aff7786d`
-- Protected code/config tree SHA-256: `26b5504165743bd01e234409352a9b395f51725a3da258f4c774be78738970f3`
+- Protected code/config tree SHA-256: `23a1581237fc2d8a82f73f0fa72da9f39d7bbbcd7af6965d5493996bd6ea1dba`
 
-The protected manifest covers 36 committed code/config files. The exact-10 compatibility binding is PyRadiomics `3.0.1`, scientific `minimumROISize=10`, effective backend minimum `null`, and precheck threshold `>=10`; compatibility code SHA-256 is `19617e84afd9ded1ef994e09875a805b8dd2310b21f0bd199963078d737208a4`, and compatibility config SHA-256 is `4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f`.
+The protected manifest covers 36 committed code/config files. The exact-10 compatibility binding is PyRadiomics `3.0.1`, scientific `minimumROISize=10`, effective backend minimum `null`, and precheck threshold `>=10`; compatibility code SHA-256 is `848c1a248a021d238474f813b1eee98fdf5ee40c2edc8c3ee3ab9a964f9e09a3`, and compatibility config SHA-256 is `4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f`.
 
 ## Technical result
 
@@ -72,4 +72,11 @@ The historical `prognosis_analysis/output/w08_formal_A/attempts/attempt_001_fail
 
 ## Aggregate evidence hashes
 
-The current P5 output manifest records the hashes of `P5_fold_feasibility.csv`, `P5_release_gate.json`, and `P5_technical_preflight_summary.json`; the final aggregate evidence additionally records the manifest hash. The final aggregate and this audit are the only allowlisted R5 evidence paths. The aggregate release binding records the exact technical execution commit and the evidence-only successor relation.
+The current P5 output manifest records the hashes of `P5_fold_feasibility.csv`, `P5_release_gate.json`, and `P5_technical_preflight_summary.json`; the final aggregate evidence additionally records the manifest hash. The final aggregate and this audit are the only allowlisted R5 evidence paths. The aggregate release binding records the current technical execution commit and the evidence-only append-only successor relation.
+
+## Independent review
+
+- Disposition: `ACCEPT`
+- Review scope: current-code P5 technical-only evidence and R5/G3R successor bookkeeping.
+- Review result: HEAD, 50/50 folds, 850 aggregate rows, artifact hashes, frozen bindings, P4R validator, B/formal W08 boundaries, and preserved local archives were accepted; no blocker or non-blocking finding was identified.
+- The all-zero `evidence_binding_commit` is temporary append-only bookkeeping and must be replaced by the actual successor commit during finalization before formal W08 release-gate validation.
