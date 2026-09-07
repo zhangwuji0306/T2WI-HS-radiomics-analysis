@@ -15,20 +15,20 @@
     }
   },
   "certificate_generation": {
-    "technical_execution_code_commit": "14c3712e17e2e338ed993bc6cbe37d232cf2ec33",
-    "generated_at_utc": "2026-09-07T06:17:45Z",
+    "technical_execution_code_commit": "b8c98e9ef2de4a1cc86811f7598f57b1627925c6",
+    "generated_at_utc": "2026-09-07T07:12:40Z",
     "generator": "prognosis_analysis/scripts/w08_technical_preflight_a.py",
     "certificate": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_release_gate.json",
     "aggregate_summary": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_technical_preflight_summary.json",
     "sha256_manifest": "prognosis_analysis/output/p5_technical_preflight_A_G3R/P5_sha256_manifest.json",
-    "observed_elapsed_seconds": 201.0
+    "observed_elapsed_seconds": 201.760
   },
   "release_binding": {
     "schema": "P5_G3R_strict_release_binding",
     "version": "2.0",
-    "technical_execution_code_commit": "14c3712e17e2e338ed993bc6cbe37d232cf2ec33",
-    "evidence_binding_commit": "354cb03a3895de3e98a68c9f40e6668bec675028",
-    "successor_mode": "evidence_only_finalization",
+    "technical_execution_code_commit": "b8c98e9ef2de4a1cc86811f7598f57b1627925c6",
+    "evidence_binding_commit": "0000000000000000000000000000000000000000",
+    "successor_mode": "evidence_only_append_only",
     "allowed_paths": [
       "prognosis_analysis/R5_P5_G3R_final_aggregate_evidence.json",
       "prognosis_analysis/R5_P5_G3R_final_audit.md"
@@ -97,7 +97,7 @@
     "aggregate_only": true,
     "compatibility_provenance": {
       "compatibility_code_path": "prognosis_analysis/scripts/w08_formal_run_a.py",
-      "compatibility_code_sha256": "848c1a248a021d238474f813b1eee98fdf5ee40c2edc8c3ee3ab9a964f9e09a3",
+      "compatibility_code_sha256": "b211fd510499cf357bb510e14f5c6446e6df24d7759ffbdd19d58a6477cc891f",
       "compatibility_config_path": "prognosis_analysis/configs/w02_habitat_radiomics.json",
       "compatibility_config_sha256": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f",
       "compatibility_reason": "PyRadiomics 3.0.1 strict <= semantics and precheck count>=10",
@@ -146,12 +146,12 @@
     }
   },
   "current_artifact_sha256": {
-    "P5_fold_feasibility.csv": "ad6942c5d09ce62cd27dd10908f06e392faa065b3e8476f72c18863389f0cf4d",
-    "P5_release_gate.json": "89139254253d9fbd600ad591f7b40b89aea71dc110c8b740857a50a21eda3ef8",
-    "P5_sha256_manifest.json": "f5772050dd56bc9283681d57c81da390d7a33b07bd0e18a8f2e6dea749409115",
-    "P5_technical_preflight_summary.json": "8c2936b1033dd025213e6edd5893b5b0750583c63a165ea82aeef97bb51e4bf8"
+    "P5_fold_feasibility.csv": "4d31eb6dcb6d2ffad987fbfec3e0e943c6a717f5872be5351259b33616a6fd89",
+    "P5_release_gate.json": "2477ca22b8242d6c389c90ce55be043d8f7264d4d0348461842b9d1f17aca948",
+    "P5_sha256_manifest.json": "a3d416e13fcd058f6c2177a4b7df941dc45fa05d9add162f5be3c8cee532e144",
+    "P5_technical_preflight_summary.json": "42ca097880802de79fcee38527203e3d2b2779b8402a7382f0f7a9a8624d20bc"
   },
-  "technical_execution_code_commit": "14c3712e17e2e338ed993bc6cbe37d232cf2ec33",
+  "technical_execution_code_commit": "b8c98e9ef2de4a1cc86811f7598f57b1627925c6",
   "protected_code_config_manifest": {
     "feature_extract/scripts/build_manifest.py": "42965d0d4d5ed96bcbbb39a75ad3d34e2684debb4f935956adf66e84d91d5d92",
     "feature_extract/scripts/compute_sigma_a.py": "a86977bd4328e597d73313d2bd8b67f07fa64bfb2cd28be4f85fc7077b84e668",
@@ -186,11 +186,11 @@
     "prognosis_analysis/scripts/w03_habitat_radiomics.py": "1c582a89a8694d7cc022c7634758f65ca8e06cabb4ee6c9cf3839caf783e7a92",
     "prognosis_analysis/scripts/w06_endpoint_qc.py": "0f6c20db236971a162f6c024778c5910cd78afe3b330bd07ab9e78fae125ed01",
     "prognosis_analysis/scripts/w07_outer_splits.py": "a74a6358d54f545b3b3226002462ea709c128b180361caa9e044cb9f8108f7d9",
-    "prognosis_analysis/scripts/w08_formal_run_a.py": "848c1a248a021d238474f813b1eee98fdf5ee40c2edc8c3ee3ab9a964f9e09a3",
+    "prognosis_analysis/scripts/w08_formal_run_a.py": "b211fd510499cf357bb510e14f5c6446e6df24d7759ffbdd19d58a6477cc891f",
     "prognosis_analysis/scripts/w08_nested_cv.py": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce",
     "prognosis_analysis/scripts/w08_technical_preflight_a.py": "72f8f616f76303ba04f87e52ffe6c210638ee18ce09c3076a86bff3990bd55ad"
   },
-  "protected_code_config_tree_sha256": "23a1581237fc2d8a82f73f0fa72da9f39d7bbbcd7af6965d5493996bd6ea1dba",
+  "protected_code_config_tree_sha256": "a1018d52365c64709ee777a6c4f9d938025b75cda13ff84d081fa4404f3f5f97",
   "binding_hashes": {
     "P4R_reconciliation": "374ddc9f6ecd01c04ff957576f032fec18f0ebbb53f6651a725ad0b6aff7786d",
     "W03_candidate_freeze": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
