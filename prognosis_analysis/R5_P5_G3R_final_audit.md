@@ -5,7 +5,7 @@
 - Stage: `G3R`
 - Status: `PASS`
 - Technical execution code commit: `14c3712e17e2e338ed993bc6cbe37d232cf2ec33`
-- Evidence binding commit: `0000000000000000000000000000000000000000`
+- Evidence binding commit: `354cb03a3895de3e98a68c9f40e6668bec675028`
 - P5 coverage: `10` repeats × `5` frozen W07 outer folds = `50/50` fold units
 - Aggregate coverage: `17` fixed technical runs × `50` folds = `850` rows
 - Observed P5 execution duration: `201.0` seconds
@@ -79,4 +79,4 @@ The current P5 output manifest records the hashes of `P5_fold_feasibility.csv`, 
 - Disposition: `ACCEPT`
 - Review scope: current-code P5 technical-only evidence and R5/G3R successor bookkeeping.
 - Review result: HEAD, 50/50 folds, 850 aggregate rows, artifact hashes, frozen bindings, P4R validator, B/formal W08 boundaries, and preserved local archives were accepted; no blocker or non-blocking finding was identified.
-- The all-zero `evidence_binding_commit` is temporary append-only bookkeeping and must be replaced by the actual successor commit during finalization before formal W08 release-gate validation.
+- The evidence binding commit is the direct successor commit for the current technical execution code; the finalization commit is limited to the two allowlisted R5 evidence paths.
