@@ -546,6 +546,46 @@ def _git_show_bytes(project_root, commit, relative_path):
             (commit, relative_path)) from exc
 
 
+def _git_commit_file_exists(project_root, commit, relative_path):
+    if not _git_commit_resolves(project_root, commit):
+        raise RuntimeError(
+            "Git execution snapshot commit does not resolve: %s" % commit)
+    try:
+        output = subprocess.check_output(
+            ["git", "-C", project_root, "ls-tree", "-z", "--full-tree",
+             commit, "--", relative_path], stderr=subprocess.STDOUT)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            "Git snapshot path listing cannot be read: %s:%s" %
+            (commit, relative_path)) from exc
+
+    try:
+        records = output.decode("utf-8").split("\0")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(
+            "Git snapshot path listing cannot be decoded: %s:%s" %
+            (commit, relative_path)) from exc
+
+    for record in records:
+        if not record:
+            continue
+        fields = record.split("\t", 1)
+        if len(fields) != 2:
+            raise RuntimeError("Git snapshot path listing is invalid")
+        metadata, path = fields
+        metadata_fields = metadata.split()
+        if len(metadata_fields) != 3:
+            raise RuntimeError("Git snapshot path listing is invalid")
+        if path != relative_path:
+            continue
+        if metadata_fields[1] != "blob":
+            raise RuntimeError(
+                "Git execution snapshot path is not a file: %s:%s" %
+                (commit, relative_path))
+        return True
+    return False
+
+
 def _git_diff_name_status(project_root, older, newer):
     try:
         output = subprocess.check_output(
@@ -606,7 +646,15 @@ def _validate_r5_successor_binding(project_root, execution_commit,
     if _git_commit_parent(project_root, evidence_commit) != execution_commit:
         raise RuntimeError("R5 evidence binding is not the direct execution successor")
 
-    expected_changes = [("A", path) for path in R5_ALLOWED_SUCCESSOR_PATHS]
+    execution_presence = [
+        _git_commit_file_exists(project_root, execution_commit, path)
+        for path in R5_ALLOWED_SUCCESSOR_PATHS]
+    if len(set(execution_presence)) != 1:
+        raise RuntimeError(
+            "R5 execution evidence paths have mixed presence")
+    expected_status = "M" if execution_presence[0] else "A"
+    expected_changes = [
+        (expected_status, path) for path in R5_ALLOWED_SUCCESSOR_PATHS]
     actual_changes = sorted(
         _git_diff_name_status(project_root, execution_commit, evidence_commit))
     if actual_changes != sorted(expected_changes):

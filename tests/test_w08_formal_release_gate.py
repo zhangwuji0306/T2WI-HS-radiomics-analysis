@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import subprocess
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -337,8 +338,10 @@ class W08ReleaseGateTests(unittest.TestCase):
                                      final_diff=None, aggregate_overrides=None,
                                      aggregate_fields=None,
                                      resolves=True, ancestor=True,
-                                     worktree_status="", frozen_bindings=None):
+                                     worktree_status="", frozen_bindings=None,
+                                     execution_evidence_paths=None):
         aggregate, snapshot = _write_r5_successor_fixture(project_root)
+        execution_evidence_paths = set(execution_evidence_paths or ())
         if aggregate_overrides:
             aggregate["release_binding"].update(aggregate_overrides)
         if aggregate_fields:
@@ -383,7 +386,7 @@ class W08ReleaseGateTests(unittest.TestCase):
 
         def parent(_root, commit):
             if commit == BINDING_COMMIT:
-                return EXECUTION_COMMIT
+                return EXECUTION_COMMIT if ancestor else OLD_COMMIT
             if commit == CURRENT_COMMIT:
                 return BINDING_COMMIT
             raise RuntimeError("current HEAD parent cannot validate evidence binding: %s" % commit)
@@ -393,14 +396,25 @@ class W08ReleaseGateTests(unittest.TestCase):
                                     return_value=worktree_status), \
                  mock.patch.object(formal, "_git_commit_parent", side_effect=parent), \
                  mock.patch.object(formal, "_git_commit_resolves",
-                                side_effect=lambda _root, commit: resolves), \
-                mock.patch.object(formal, "_git_diff_name_status",
-                                    side_effect=lambda _root, older, newer:
-                                    (diff if newer == BINDING_COMMIT and diff is not None
-                                     else final_diff if newer == CURRENT_COMMIT and
-                                     final_diff is not None else ([
-                                       ("A", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
-                                       ("A", formal.R5_AUDIT_RELATIVE)] if
+                                 side_effect=lambda _root, commit: resolves), \
+                 mock.patch.object(
+                     formal, "_git_commit_file_exists",
+                     side_effect=lambda _root, commit, path:
+                     commit == EXECUTION_COMMIT and
+                     path in execution_evidence_paths), \
+                 mock.patch.object(formal, "_git_diff_name_status",
+                                     side_effect=lambda _root, older, newer:
+                                     (diff if newer == BINDING_COMMIT and diff is not None
+                                      else final_diff if newer == CURRENT_COMMIT and
+                                      final_diff is not None else ([
+                                       ("M" if execution_evidence_paths ==
+                                        set(formal.R5_ALLOWED_SUCCESSOR_PATHS)
+                                        else "A",
+                                        formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                                       ("M" if execution_evidence_paths ==
+                                        set(formal.R5_ALLOWED_SUCCESSOR_PATHS)
+                                        else "A",
+                                        formal.R5_AUDIT_RELATIVE)] if
                                        newer == BINDING_COMMIT else [
                                        ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
                                        ("M", formal.R5_AUDIT_RELATIVE)]))), \
@@ -434,6 +448,137 @@ class W08ReleaseGateTests(unittest.TestCase):
         self.assertEqual(result["technical_execution_code_commit"], EXECUTION_COMMIT)
         self.assertEqual(result["evidence_binding_commit"], BINDING_COMMIT)
 
+    def test_snapshot_path_presence_distinguishes_absent_and_blob(self):
+        relative_path = formal.R5_AGGREGATE_EVIDENCE_RELATIVE
+        with mock.patch.object(formal, "_git_commit_resolves", return_value=True), \
+                mock.patch.object(formal.subprocess, "check_output",
+                                  return_value=b""):
+            self.assertFalse(formal._git_commit_file_exists(
+                ROOT, EXECUTION_COMMIT, relative_path))
+
+        blob_record = (
+            b"100644 blob " + b"1" * 40 + b"\t" +
+            relative_path.encode("utf-8") + b"\0")
+        with mock.patch.object(formal, "_git_commit_resolves", return_value=True), \
+                mock.patch.object(formal.subprocess, "check_output",
+                                  return_value=blob_record):
+            self.assertTrue(formal._git_commit_file_exists(
+                ROOT, EXECUTION_COMMIT, relative_path))
+
+    def test_snapshot_path_presence_rejects_invalid_commit(self):
+        with mock.patch.object(formal, "_git_commit_resolves", return_value=False), \
+                mock.patch.object(formal.subprocess, "check_output") as check_output:
+            with self.assertRaisesRegex(RuntimeError, "commit does not resolve"):
+                formal._git_commit_file_exists(
+                    ROOT, EXECUTION_COMMIT, formal.R5_AGGREGATE_EVIDENCE_RELATIVE)
+        check_output.assert_not_called()
+
+    def test_snapshot_path_presence_rejects_git_command_failure(self):
+        failure = subprocess.CalledProcessError(128, "git ls-tree")
+        with mock.patch.object(formal, "_git_commit_resolves", return_value=True), \
+                mock.patch.object(formal.subprocess, "check_output",
+                                  side_effect=failure):
+            with self.assertRaisesRegex(RuntimeError, "path listing cannot be read"):
+                formal._git_commit_file_exists(
+                    ROOT, EXECUTION_COMMIT, formal.R5_AGGREGATE_EVIDENCE_RELATIVE)
+
+    def test_snapshot_path_presence_rejects_oserror_and_decode_failure(self):
+        relative_path = formal.R5_AGGREGATE_EVIDENCE_RELATIVE
+        with mock.patch.object(formal, "_git_commit_resolves", return_value=True), \
+                mock.patch.object(formal.subprocess, "check_output",
+                                  side_effect=OSError("git unavailable")):
+            with self.assertRaisesRegex(RuntimeError, "path listing cannot be read"):
+                formal._git_commit_file_exists(ROOT, EXECUTION_COMMIT, relative_path)
+
+        with mock.patch.object(formal, "_git_commit_resolves", return_value=True), \
+                mock.patch.object(formal.subprocess, "check_output",
+                                  return_value=b"\xff"):
+            with self.assertRaisesRegex(RuntimeError, "path listing cannot be decoded"):
+                formal._git_commit_file_exists(ROOT, EXECUTION_COMMIT, relative_path)
+
+    def test_snapshot_path_presence_rejects_tree_path(self):
+        relative_path = formal.R5_AGGREGATE_EVIDENCE_RELATIVE
+        tree_record = (
+            b"040000 tree " + b"2" * 40 + b"\t" +
+            relative_path.encode("utf-8") + b"\0")
+        with mock.patch.object(formal, "_git_commit_resolves", return_value=True), \
+                mock.patch.object(formal.subprocess, "check_output",
+                                  return_value=tree_record):
+            with self.assertRaisesRegex(RuntimeError, "path is not a file"):
+                formal._git_commit_file_exists(ROOT, EXECUTION_COMMIT, relative_path)
+
+    def test_current_code_rebind_accepts_existing_final_evidence(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            result = self._validate_successor_fixture(
+                project_root,
+                execution_evidence_paths=formal.R5_ALLOWED_SUCCESSOR_PATHS)
+        self.assertEqual(result["successor_mode"], "evidence_only_finalization")
+
+    def test_successor_rejects_mixed_execution_evidence_presence(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "mixed presence"):
+                self._validate_successor_fixture(
+                    project_root,
+                    execution_evidence_paths=(
+                        formal.R5_AGGREGATE_EVIDENCE_RELATIVE,))
+
+    def test_a_successor_rejects_mixed_evidence_diff_statuses(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "non-evidence changes"):
+                self._validate_successor_fixture(
+                    project_root,
+                    diff=[
+                        ("A", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                        ("M", formal.R5_AUDIT_RELATIVE)])
+
+    def test_m_successor_rejects_mixed_evidence_diff_statuses(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "non-evidence changes"):
+                self._validate_successor_fixture(
+                    project_root,
+                    execution_evidence_paths=formal.R5_ALLOWED_SUCCESSOR_PATHS,
+                    diff=[
+                        ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                        ("A", formal.R5_AUDIT_RELATIVE)])
+
+    def test_m_successor_rejects_missing_allowlisted_file(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "non-evidence changes"):
+                self._validate_successor_fixture(
+                    project_root,
+                    execution_evidence_paths=formal.R5_ALLOWED_SUCCESSOR_PATHS,
+                    diff=[("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE)])
+
+    def test_m_successor_rejects_extra_path(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "non-evidence changes"):
+                self._validate_successor_fixture(
+                    project_root,
+                    execution_evidence_paths=formal.R5_ALLOWED_SUCCESSOR_PATHS,
+                    diff=[
+                        ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                        ("M", formal.R5_AUDIT_RELATIVE),
+                        ("A", "prognosis_analysis/R5_extra.txt")])
+
+    def test_m_successor_rejects_rename_or_delete(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "non-evidence changes"):
+                self._validate_successor_fixture(
+                    project_root,
+                    execution_evidence_paths=formal.R5_ALLOWED_SUCCESSOR_PATHS,
+                    diff=[
+                        ("D", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                        ("A", "prognosis_analysis/R5_P5_G3R_final_aggregate_evidence.json.renamed"),
+                        ("M", formal.R5_AUDIT_RELATIVE)])
+
+    def test_successor_rejects_non_direct_execution_child(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "direct execution successor"):
+                self._validate_successor_fixture(
+                    project_root,
+                    execution_evidence_paths=formal.R5_ALLOWED_SUCCESSOR_PATHS,
+                    ancestor=False)
+
     def test_successor_rejects_code_change(self):
         with tempfile.TemporaryDirectory() as project_root:
             with self.assertRaisesRegex(RuntimeError, "non-evidence changes"):
@@ -448,6 +593,7 @@ class W08ReleaseGateTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "final evidence commit"):
                 self._validate_successor_fixture(
                     project_root,
+                    execution_evidence_paths=formal.R5_ALLOWED_SUCCESSOR_PATHS,
                     final_diff=[
                         ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
                         ("M", formal.R5_AUDIT_RELATIVE),
