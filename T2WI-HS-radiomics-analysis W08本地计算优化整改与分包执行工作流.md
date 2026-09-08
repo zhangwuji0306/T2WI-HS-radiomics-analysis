@@ -185,7 +185,7 @@ L10 正式输出技术完整性复核并停止
 - `prognosis_analysis/output/w08_formal_A/attempts/`；
 - 当前未提交和未跟踪文件；
 - 现有失败attempt审计模式；
-- `T2WI-HS-radiomics-analysis n_init快速等价性验证工作流.md`。
+- `archive/protocol_history/n_init_equivalence_cancelled/`中的已停止一致性校验材料。
 
 ## L0执行动作
 
@@ -199,7 +199,7 @@ L10 正式输出技术完整性复核并停止
    - B访问四项为`false`。
 4. 更新根`run_state.json`和`execution_status.json`，不得继续显示正在运行。
 5. 保留失败现场，不覆盖既有失败attempt。
-6. 核对一致性校验没有产生结论性输出，将其工作流和必要说明归入`archive/protocol_history/`。
+6. 核对`archive/protocol_history/n_init_equivalence_cancelled/`中的一致性校验归档未被当作当前执行入口，且没有结论性输出被用于正式判断。
 7. 对当前未提交代码逐文件判断归属：
    - 与L1目标一致的草稿保留给L1；
    - 与当前流程无关但属于用户的改动保持原状；

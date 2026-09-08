@@ -15,6 +15,8 @@ archive/*
 archive/protocol_history/*
 !archive/protocol_history/README.md
 !archive/protocol_history/三十二、具体执行工作流：从 formal PASS 至 A-only model freeze.md
+!archive/protocol_history/n_init_equivalence_cancelled/
+!archive/protocol_history/n_init_equivalence_cancelled/**
 *.csv
 *.xlsx
 *.xls
