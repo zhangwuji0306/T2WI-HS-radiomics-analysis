@@ -14,7 +14,8 @@
       "OPENBLAS_NUM_THREADS": "1",
       "NUMEXPR_NUM_THREADS": "1"
     },
-    "checkpoint_schema": "w08_outer_fold_checkpoint_v1"
+    "checkpoint_schema": "w08_outer_fold_checkpoint_v1",
+    "checkpoint_write_policy": "coordinator_atomic_after_each_validated_fold"
   },
   "outer_cv": {
     "folds": 5,

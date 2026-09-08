@@ -29,6 +29,32 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
+# L5 is an execution-layer contract.  These values do not alter any frozen
+# scientific parameter; they only control how already-defined outer folds are
+# scheduled and recovered.  This must run before importing NumPy or any
+# downstream scientific stack because those libraries read the thread caps at
+# import time.
+L5_CHECKPOINT_SCHEMA = "w08_outer_fold_checkpoint_v1"
+L5_CHECKPOINT_VERSION = 1
+L5_CHECKPOINT_WRITE_POLICY = (
+    "coordinator_atomic_after_each_validated_fold")
+L5_ALLOWED_WORKERS = (1, 2, 4)
+L5_DEFAULT_OUTER_FOLD_WORKERS = 2
+L5_THREAD_ENVIRONMENT = {
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+}
+
+
+def _l5_prepare_worker_environment():
+    for key, value in L5_THREAD_ENVIRONMENT.items():
+        os.environ[key] = value
+
+
+_l5_prepare_worker_environment()
+
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
@@ -61,20 +87,6 @@ W07A_PROTOCOL_AMENDMENT_SHA256 = (
     "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70")
 W07_SPLIT_COLUMNS = ["patient_id", "repeat", "fold", "role", "seed"]
 W08_STATUS = "implementation_ready_not_run"
-
-# L5 is an execution-layer contract.  These values do not alter any frozen
-# scientific parameter; they only control how already-defined outer folds are
-# scheduled and recovered.
-L5_CHECKPOINT_SCHEMA = "w08_outer_fold_checkpoint_v1"
-L5_CHECKPOINT_VERSION = 1
-L5_ALLOWED_WORKERS = (1, 2, 4)
-L5_DEFAULT_OUTER_FOLD_WORKERS = 2
-L5_THREAD_ENVIRONMENT = {
-    "OMP_NUM_THREADS": "1",
-    "MKL_NUM_THREADS": "1",
-    "OPENBLAS_NUM_THREADS": "1",
-    "NUMEXPR_NUM_THREADS": "1",
-}
 
 # P3B is the sole fold-specific radiomics extractability contract consumed by
 # W08.  These fields are emitted by the already-frozen provider; W08 validates
@@ -569,6 +581,8 @@ def _validate_config(config):
             execution.get("outer_fold_workers") != L5_DEFAULT_OUTER_FOLD_WORKERS or \
             tuple(execution.get("allowed_outer_fold_workers", [])) != L5_ALLOWED_WORKERS or \
             execution.get("checkpoint_schema") != L5_CHECKPOINT_SCHEMA or \
+            execution.get("checkpoint_write_policy") != \
+            L5_CHECKPOINT_WRITE_POLICY or \
             execution.get("thread_environment") != L5_THREAD_ENVIRONMENT:
         raise W08ValidationError("W08 L5 execution contract is invalid")
     if config.get("lambda_grid", {}).get("values_per_alpha") != LAMBDA_COUNT:
@@ -3273,6 +3287,7 @@ def _l5_checkpoint_contract(attempt_id, code_commit, split_hash,
         "run_ids": [str(item["run_id"]) for item in selected_runs],
         "elastic_net_max_iter": int(config["elastic_net_max_iter"]),
         "elastic_net_tolerance": float(ELASTIC_NET_TOLERANCE),
+        "checkpoint_write_policy": L5_CHECKPOINT_WRITE_POLICY,
         "environment": _l5_environment_fingerprint(),
     }
 
@@ -3445,11 +3460,6 @@ def _l5_quarantine_checkpoint(path):
     return invalid
 
 
-def _l5_prepare_worker_environment():
-    for key, value in L5_THREAD_ENVIRONMENT.items():
-        os.environ[key] = value
-
-
 def _l5_worker_job(args):
     (feature_frame, outer_splits, provider, config, selected_runs,
      strict_schema, require_fixed_hash, lambda_count, solver_max_iter,
@@ -3544,6 +3554,7 @@ def _l5_merge_results(fold_results, selection_results, predictions,
         },
         "L5_execution": {
             "schema": L5_CHECKPOINT_SCHEMA,
+            "checkpoint_write_policy": L5_CHECKPOINT_WRITE_POLICY,
             "outer_fold_workers": int(worker_count),
             "resumed_checkpoints": int(resumed_count),
             "new_checkpoints": int(checkpoint_count),
@@ -3635,6 +3646,37 @@ def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
                  lambda_count, solver_max_iter, solver_tolerance, population,
                  None, worker_cache_root)
     active_results = {}
+    new_checkpoint_count = 0
+    completed_count = len(completed)
+
+    def emit_completed_progress():
+        if progress_callback is not None:
+            try:
+                progress_callback(**{
+                    "status": "running",
+                    "current_repeat": None,
+                    "current_fold": None,
+                    "current_run": None,
+                    "completed_outer_folds": int(completed_count),
+                    "total_outer_folds": int(len(folds)),
+                    "completed_runs_in_fold": int(len(selected_runs)),
+                    "total_runs_in_fold": int(len(selected_runs)),
+                })
+            except Exception:
+                pass
+
+    def accept_completed_result(fold_key, result):
+        nonlocal completed_count, new_checkpoint_count
+        if checkpoint_root is not None:
+            _l5_write_checkpoint(
+                checkpoint_root, fold_key[0], fold_key[1], result, contract)
+            new_checkpoint_count += 1
+        active_results[fold_key] = result
+        completed_count += 1
+        emit_completed_progress()
+
+    if completed_count:
+        emit_completed_progress()
 
     def submit_args(fold_key):
         args = list(base_args)
@@ -3643,13 +3685,15 @@ def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
 
     if pending and outer_fold_workers == 1:
         for fold_key in pending:
-            active_results[fold_key] = _l5_worker_job(submit_args(fold_key))
+            result = _l5_worker_job(submit_args(fold_key))
+            accept_completed_result(fold_key, result)
     elif pending:
         executor = concurrent.futures.ProcessPoolExecutor(
             max_workers=int(outer_fold_workers),
             mp_context=multiprocessing.get_context("spawn"))
         futures = {}
         pending_index = 0
+        coordinator_error = None
         try:
             while pending_index < len(pending) and len(futures) < outer_fold_workers:
                 fold_key = pending[pending_index]
@@ -3661,25 +3705,45 @@ def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
                     list(futures), return_when=concurrent.futures.FIRST_COMPLETED)
                 for future in done:
                     fold_key = futures.pop(future)
-                    active_results[fold_key] = future.result()
+                    try:
+                        accept_completed_result(fold_key, future.result())
+                    except BaseException as exc:
+                        if coordinator_error is None:
+                            coordinator_error = exc
+                if coordinator_error is not None:
+                    for future in futures:
+                        future.cancel()
+                    break
                 while pending_index < len(pending) and len(futures) < outer_fold_workers:
                     fold_key = pending[pending_index]
                     pending_index += 1
                     futures[executor.submit(_l5_worker_job,
                                              submit_args(fold_key))] = fold_key
-        except BaseException:
+        except BaseException as exc:
+            coordinator_error = exc
             for future in futures:
                 future.cancel()
+        finally:
             # On Windows, wait=False can close the process-pool queue while
             # its management thread is still polling the pipe.  Waiting for
             # already-running workers gives a clean, fail-closed shutdown;
             # no new futures are submitted after the exception.
             executor.shutdown(wait=True)
-            raise
-        else:
-            executor.shutdown(wait=True)
+        if coordinator_error is not None:
+            # A sibling may have completed while another worker failed.  Read
+            # those already-submitted futures after the clean shutdown so a
+            # validated successful fold is still recoverable.
+            for future, fold_key in list(futures.items()):
+                try:
+                    result = future.result()
+                except BaseException:
+                    continue
+                try:
+                    accept_completed_result(fold_key, result)
+                except BaseException:
+                    continue
+            raise coordinator_error
 
-    new_checkpoint_count = 0
     checkpoint_contracts = []
     fold_results = []
     selection_results = []
@@ -3687,10 +3751,6 @@ def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
     for fold_key in folds:
         if fold_key in active_results:
             result = active_results[fold_key]
-            if checkpoint_root is not None:
-                _l5_write_checkpoint(
-                    checkpoint_root, fold_key[0], fold_key[1], result, contract)
-                new_checkpoint_count += 1
         else:
             result = completed[fold_key]
         fold_results.extend(result["fold_results"].to_dict(orient="records"))
@@ -3698,21 +3758,6 @@ def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
             result["selection_results"].to_dict(orient="records"))
         predictions.extend(result["predictions"].to_dict(orient="records"))
         checkpoint_contracts.append(contract)
-        if progress_callback is not None:
-            try:
-                progress_callback(**{
-                    "status": "running",
-                    "current_repeat": None,
-                    "current_fold": None,
-                    "current_run": None,
-                    "completed_outer_folds": int(
-                        folds.index(fold_key) + 1),
-                    "total_outer_folds": int(len(folds)),
-                    "completed_runs_in_fold": int(len(selected_runs)),
-                    "total_runs_in_fold": int(len(selected_runs)),
-                })
-            except Exception:
-                pass
     if len(completed) + len(active_results) != len(folds):
         raise W08ValidationError("L5 did not cover every outer fold")
     merged = _l5_merge_results(

@@ -87,8 +87,8 @@
       "validation_used_for_boundary_fit": false
     },
     "registered_evidence_hashes": {
-      "R6_5R_coordinate_reconciliation_json": "151507a3cfe816c101ac86a6352e15ce4b05c2403bfa9f759c3e46cdd90af968",
-      "R6_5R_coordinate_reconciliation_audit_md": "2ff4e422e2cc29f83f6371fb54e250e7d2486e6c8b3ab613a2af8df2b68e6e7e",
+      "R6_5R_coordinate_reconciliation_json": "e7d40b282fff0397f12a53a79e0a404d4d1a4e9b5b49ee3429859b3949cd5ca0",
+      "R6_5R_coordinate_reconciliation_audit_md": "baaa0f22f6e19cbf5bcb6542a94a77c8618a87e5b8cf13009e32e8cfda3ae73d",
       "R6_5R_coordinate_reconciliation_review_md": "ac623aaf538b8867b7298614de1cc7090ee2c2b0afecdebff8c31164169fb5fa",
       "R6_5R_superseding_disposition_review_md": "b640238c0a028a4d877dd249fd1f8c7781f7beab25bcbcf10694f3463f0f305b",
       "R6_4A_remediation_json": "9d49225d2e7cd7883bb3a4612aa8b8181644f519602d67feddce58dee9fb9af0",
@@ -100,12 +100,12 @@
     "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
     "technical_freeze_sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
     "w07_config_sha256": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
-    "w08_config_sha256": "0d4cbec42fc0a26e59a31d189285e83eb134628ea949c92100325d04873637a0",
+    "w08_config_sha256": "c70369e216902699b2f089a36a146b7f88140b6879ad264bb7f96ae721e0a55f",
     "candidate_pools": {
       "R_low_sha256": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
       "R_high_sha256": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
     },
-    "w08_solver_source_sha256": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce",
+    "w08_solver_source_sha256": "ef0416a0fafd1d1a44e44aa72a206e0634f932ddaf195444da8303cde4ead415",
     "test_source_sha256": "cc748d8e937fc45d530aed277d860b3676d52fb72952171e9bd94efdcdf3ba01"
   },
   "solver_lock": {

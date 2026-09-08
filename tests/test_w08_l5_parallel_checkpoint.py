@@ -1,7 +1,11 @@
+import hashlib
+import inspect
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
 
@@ -124,6 +128,113 @@ class W08L5CheckpointTests(unittest.TestCase):
             self.assertFalse(any(name.endswith(".tmp")
                                  for _, _, names in os.walk(root)
                                  for name in names))
+
+    def test_successful_fold_is_checkpointed_before_later_failure(self):
+        frame = pd.DataFrame({
+            "patient_id": ["S001", "S002", "S003", "S004"]})
+        splits = pd.DataFrame({
+            "patient_id": ["S001", "S002", "S003", "S004"],
+            "repeat": [1, 1, 1, 1], "fold": [1, 1, 2, 2],
+            "role": ["train", "validation", "train", "validation"],
+            "seed": [12345, 12345, 12345, 12345],
+        })
+        progress = []
+
+        def fake_worker(args):
+            repeat, fold = args[-2]
+            if int(fold) == 2:
+                raise RuntimeError("synthetic second-fold failure")
+            return self._result(int(repeat), int(fold))
+
+        with tempfile.TemporaryDirectory() as root:
+            checkpoint_path = w08._l5_checkpoint_path(root, 1, 1)
+
+            def callback(**payload):
+                progress.append(dict(payload))
+                if payload.get("completed_outer_folds") == 1:
+                    self.assertTrue(os.path.isfile(checkpoint_path))
+
+            with mock.patch.object(w08, "_l5_worker_job",
+                                   side_effect=fake_worker):
+                with self.assertRaisesRegex(
+                        RuntimeError, "synthetic second-fold failure"):
+                    w08._l5_run_fold_coordinator(
+                        frame, splits, object(), self._config(), self._runs(),
+                        False, False, w08.LAMBDA_COUNT, 10, 1e-7, None, {},
+                        "b" * 64, 1, root, "attempt_synthetic", "a" * 40,
+                        False, progress_callback=callback)
+
+            self.assertTrue(os.path.isfile(checkpoint_path))
+            loaded = w08._l5_read_checkpoint(
+                checkpoint_path, 1, 1, self._contract(), self._runs())
+            self.assertEqual(loaded["outer_fold_key"], "repeat_1_fold_1")
+            self.assertFalse(os.path.exists(w08._l5_checkpoint_path(root, 1, 2)))
+            self.assertEqual([item["completed_outer_folds"] for item in progress], [1])
+
+    def test_import_sets_actual_threadpool_limits_before_numpy(self):
+        source = inspect.getsource(w08)
+        self.assertLess(
+            source.index("_l5_prepare_worker_environment()\n\nimport numpy"),
+            source.index("import numpy"))
+        child = textwrap.dedent(
+            """
+            import json
+            import sys
+            sys.path.insert(0, %r)
+            import w08_nested_cv
+            from threadpoolctl import threadpool_info
+            info = [item for item in threadpool_info()
+                    if item.get("num_threads") is not None]
+            print(json.dumps(info, sort_keys=True))
+            """ % SCRIPTS)
+        output = subprocess.check_output(
+            [sys.executable, "-c", child], cwd=TESTS_ROOT,
+            universal_newlines=True, stderr=subprocess.STDOUT)
+        info = json.loads(output.strip().splitlines()[-1])
+        self.assertTrue(info)
+        self.assertTrue(all(int(item["num_threads"]) == 1 for item in info))
+
+    def test_r65_and_r65r_w08_bindings_match_current_files(self):
+        project_root = os.path.abspath(os.path.join(TESTS_ROOT, ".."))
+        config_path = os.path.join(
+            project_root, "prognosis_analysis", "configs", "w08_nested_cv.json")
+        source_path = os.path.join(
+            project_root, "prognosis_analysis", "scripts", "w08_nested_cv.py")
+        r65_path = os.path.join(
+            project_root, "prognosis_analysis", "R6_5_numerical_equivalence.json")
+        r65r_path = os.path.join(
+            project_root, "prognosis_analysis", "R6_5R_coordinate_reconciliation.json")
+        audit_path = os.path.join(
+            project_root, "prognosis_analysis",
+            "R6_5R_w08_source_binding_refresh_audit.md")
+
+        def sha256(path):
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(block)
+            return digest.hexdigest()
+
+        with open(r65_path, "r", encoding="utf-8") as handle:
+            r65 = json.load(handle)
+        with open(r65r_path, "r", encoding="utf-8") as handle:
+            r65r = json.load(handle)
+        config_hash = sha256(config_path)
+        source_hash = sha256(source_path)
+        self.assertEqual(r65["protocol_bindings"]["w08_config_sha256"],
+                         config_hash)
+        self.assertEqual(r65["protocol_bindings"]["w08_solver_source_sha256"],
+                         source_hash)
+        self.assertEqual(r65r["provenance"]["file_sha256"][
+            "prognosis_analysis/configs/w08_nested_cv.json"], config_hash)
+        self.assertEqual(r65r["provenance"]["file_sha256"][
+            "prognosis_analysis/scripts/w08_nested_cv.py"], source_hash)
+        self.assertEqual(
+            r65["coordinate_binding"]["registered_evidence_hashes"][
+                "R6_5R_coordinate_reconciliation_json"], sha256(r65r_path))
+        self.assertEqual(
+            r65["coordinate_binding"]["registered_evidence_hashes"][
+                "R6_5R_coordinate_reconciliation_audit_md"], sha256(audit_path))
 
     def test_two_process_workers_match_serial_for_two_synthetic_folds(self):
         frame = convergent_synthetic_frame()
