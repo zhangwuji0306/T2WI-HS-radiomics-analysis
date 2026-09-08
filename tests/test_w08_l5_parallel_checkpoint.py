@@ -204,7 +204,10 @@ class W08L5CheckpointTests(unittest.TestCase):
             project_root, "prognosis_analysis", "R6_5_numerical_equivalence.json")
         r65r_path = os.path.join(
             project_root, "prognosis_analysis", "R6_5R_coordinate_reconciliation.json")
-        audit_path = os.path.join(
+        coordinate_audit_path = os.path.join(
+            project_root, "prognosis_analysis",
+            "R6_5R_coordinate_reconciliation_audit.md")
+        source_binding_audit_path = os.path.join(
             project_root, "prognosis_analysis",
             "R6_5R_w08_source_binding_refresh_audit.md")
 
@@ -234,7 +237,10 @@ class W08L5CheckpointTests(unittest.TestCase):
                 "R6_5R_coordinate_reconciliation_json"], sha256(r65r_path))
         self.assertEqual(
             r65["coordinate_binding"]["registered_evidence_hashes"][
-                "R6_5R_coordinate_reconciliation_audit_md"], sha256(audit_path))
+                "R6_5R_coordinate_reconciliation_audit_md"],
+            sha256(coordinate_audit_path))
+        self.assertNotEqual(
+            sha256(coordinate_audit_path), sha256(source_binding_audit_path))
 
     def test_two_process_workers_match_serial_for_two_synthetic_folds(self):
         frame = convergent_synthetic_frame()

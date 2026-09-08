@@ -27,6 +27,30 @@ OLD_SOLVER_COMMIT = "899cf71e1895985f1f2eb5daf482d1c595dad154"
 NUMERICAL_EQUIVALENCE_TOLERANCE = 1e-10
 
 
+R65_REGISTERED_EVIDENCE_PATHS = {
+    "R6_5R_coordinate_reconciliation_json":
+        "prognosis_analysis/R6_5R_coordinate_reconciliation.json",
+    "R6_5R_coordinate_reconciliation_audit_md":
+        "prognosis_analysis/R6_5R_coordinate_reconciliation_audit.md",
+    "R6_5R_coordinate_reconciliation_review_md":
+        "prognosis_analysis/R6_5R_coordinate_reconciliation_review.md",
+    "R6_5R_superseding_disposition_review_md":
+        "prognosis_analysis/R6_5R_superseding_disposition_review.md",
+    "R6_4A_remediation_json":
+        "prognosis_analysis/R6_4A_remediation.json",
+    "R6_4A_remediation_audit_md":
+        "prognosis_analysis/R6_4A_remediation_audit.md",
+}
+
+
+R65_INDEPENDENT_AUDIT_PATHS = {
+    "R6_5_numerical_equivalence_audit_md":
+        "prognosis_analysis/R6_5_numerical_equivalence_audit.md",
+    "R6_5R_w08_source_binding_refresh_audit_md":
+        "prognosis_analysis/R6_5R_w08_source_binding_refresh_audit.md",
+}
+
+
 def _load_old_solver():
     source = subprocess.check_output([
         "git", "show", "%s:prognosis_analysis/scripts/w08_nested_cv.py" %
@@ -164,6 +188,35 @@ class R65CoordinateBindingTests(unittest.TestCase):
                          "84af0be99d65e12e5aedca20b688c9c00ca06ac4de6fa13bd1f7cb44447cc8b7")
         self.assertEqual(path_b["p3b"]["state_hashes"]["combined"],
                          "3073fab85237e3a637bbfdc34244e91014d761f1ba57f947f0060d005ce66d99")
+
+    def test_r65_audit_path_hash_bindings_are_one_to_one(self):
+        evidence_path = os.path.join(
+            ROOT, "prognosis_analysis", "R6_5_numerical_equivalence.json")
+        with open(evidence_path, "r", encoding="utf-8") as handle:
+            evidence = json.load(handle)
+
+        registered = evidence["coordinate_binding"]["registered_evidence_hashes"]
+        self.assertEqual(set(registered), set(R65_REGISTERED_EVIDENCE_PATHS))
+
+        actual_hashes = {}
+        for key, relative_path in R65_REGISTERED_EVIDENCE_PATHS.items():
+            path = os.path.join(ROOT, relative_path.replace("/", os.sep))
+            self.assertTrue(os.path.isfile(path), relative_path)
+            actual_hashes[key] = _sha256(path)
+            self.assertEqual(registered[key], actual_hashes[key], key)
+
+        independent_hashes = {}
+        for key, relative_path in R65_INDEPENDENT_AUDIT_PATHS.items():
+            path = os.path.join(ROOT, relative_path.replace("/", os.sep))
+            self.assertTrue(os.path.isfile(path), relative_path)
+            independent_hashes[key] = _sha256(path)
+
+        all_hashes = dict(actual_hashes)
+        all_hashes.update(independent_hashes)
+        self.assertEqual(len(all_hashes), len(set(all_hashes.values())))
+        self.assertNotEqual(
+            registered["R6_5R_coordinate_reconciliation_audit_md"],
+            independent_hashes["R6_5R_w08_source_binding_refresh_audit_md"])
 
     def test_solver_and_protocol_bindings_remain_locked(self):
         self.assertEqual(self.config["elastic_net_max_iter"], 3000)
