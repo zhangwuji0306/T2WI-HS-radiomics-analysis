@@ -34,6 +34,8 @@ SCRIPT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_ROOT not in sys.path:
     sys.path.insert(0, SCRIPT_ROOT)
 import w07_outer_splits as w07  # noqa: E402
+from w08_kmeans_parameters import (  # noqa: E402
+    KMEANS_PARAMETERS, validate_frozen_kmeans_parameters)
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1222,7 +1224,9 @@ class FrameFoldFeatureProvider(FoldFeatureProvider):
         sample_weights = np.concatenate(weights)
         if np.unique(values).size < 2:
             raise W08ValidationError("fold-specific K=2 habitat fit needs two distinct values")
-        estimator = KMeans(n_clusters=2, random_state=int(seed), n_init=10)
+        validate_frozen_kmeans_parameters()
+        estimator = KMeans(random_state=int(seed),
+                           **KMEANS_PARAMETERS.sklearn_kwargs())
         estimator.fit(values.reshape(-1, 1), sample_weight=sample_weights)
         centers = tuple(sorted(float(value) for value in estimator.cluster_centers_.reshape(-1)))
         boundary = (centers[0] + centers[1]) / 2.0
@@ -2925,7 +2929,7 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                       models=None, runs=None, strict_schema=False, require_fixed_hash=False,
                       lambda_count=LAMBDA_COUNT, max_outer_folds=None,
                       solver_max_iter=None, solver_tolerance=None,
-                      population=None):
+                      population=None, progress_callback=None):
     """Run W08 against an already-authorized A-only frame without file I/O.
 
     ``max_outer_folds`` exists solely for synthetic/preflight tests.  It is
@@ -2985,6 +2989,23 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
     if require_fixed_hash and split_hash.lower() != W07_OUTER_SPLIT_SHA256:
         raise W08ValidationError("W08 outer splits are not the W07 fixed artifact")
     required_fold_columns = _required_fold_specific_columns(selected_models)
+    total_outer_folds = int(
+        outer_splits[["repeat", "fold"]].drop_duplicates().shape[0])
+
+    def emit_progress(**payload):
+        if progress_callback is not None:
+            try:
+                progress_callback(dict(payload))
+            except Exception:
+                # Progress is observability only; a broken observer must not
+                # change the model calculation or its return semantics.
+                pass
+
+    emit_progress(
+        status="running", current_repeat=None, current_fold=None,
+        current_run=None, completed_outer_folds=0,
+        total_outer_folds=total_outer_folds, completed_runs_in_fold=0,
+        total_runs_in_fold=len(selected_runs))
 
     id_to_row = data.set_index("patient_id", drop=False)
     population_names = list(OrderedDict(
@@ -3001,6 +3022,12 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
             outer_splits, set(data["patient_id"])):
         if max_outer_folds is not None and fold_count >= int(max_outer_folds):
             break
+        emit_progress(
+            status="running", current_repeat=int(repeat),
+            current_fold=int(fold), current_run=None,
+            completed_outer_folds=int(fold_count),
+            total_outer_folds=total_outer_folds,
+            completed_runs_in_fold=0, total_runs_in_fold=len(selected_runs))
         outer_seed = 12345 + repeat - 1
         inner_seed = 12345 + 1000 + 10 * (repeat - 1) + fold
         kmeans_seed = 12345 + 2000 + 10 * (repeat - 1) + fold
@@ -3037,6 +3064,16 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
             selected_runs, fold_populations)
         for run in selected_runs:
             run_id = run["run_id"]
+            emit_progress(
+                status="running", current_repeat=int(repeat),
+                current_fold=int(fold), current_run=run_id,
+                completed_outer_folds=int(fold_count),
+                total_outer_folds=total_outer_folds,
+                completed_runs_in_fold=int(
+                    sum(1 for item in fold_results
+                        if item["repeat"] == repeat and
+                        item["fold"] == fold)),
+                total_runs_in_fold=len(selected_runs))
             model_id = run["model_id"]
             population_name = run["population"]
             view = fold_populations[population_name]
@@ -3227,6 +3264,12 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                     "outer_validation_used_for_selection": False,
                 })
         fold_count += 1
+        emit_progress(
+            status="running", current_repeat=None, current_fold=None,
+            current_run=None, completed_outer_folds=int(fold_count),
+            total_outer_folds=total_outer_folds,
+            completed_runs_in_fold=len(selected_runs),
+            total_runs_in_fold=len(selected_runs))
 
     coverage_sources = sorted(set(
         row["coverage"].get("source") for row in fold_results
@@ -3289,7 +3332,7 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
 
 
 def run_w08(feature_frame, provider, config_path=DEFAULT_CONFIG,
-            strict_schema=True):
+            strict_schema=True, progress_callback=None):
     """Formal entry point: load only locked W06/W07 artifacts, then run in memory."""
     config = load_config(config_path)
     population = load_frozen_a_population()
@@ -3301,7 +3344,8 @@ def run_w08(feature_frame, provider, config_path=DEFAULT_CONFIG,
         strict_schema=strict_schema, require_fixed_hash=True,
         lambda_count=LAMBDA_COUNT,
         solver_max_iter=int(config["elastic_net_max_iter"]),
-        solver_tolerance=ELASTIC_NET_TOLERANCE, population=population)
+        solver_tolerance=ELASTIC_NET_TOLERANCE, population=population,
+        progress_callback=progress_callback)
 
 
 def main():

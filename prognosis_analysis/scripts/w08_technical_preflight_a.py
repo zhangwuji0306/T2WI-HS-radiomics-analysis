@@ -26,6 +26,9 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.model_selection import StratifiedKFold
 
+from w08_kmeans_parameters import (
+    KMEANS_PARAMETERS, validate_frozen_kmeans_parameters)
+
 
 SCRIPT_ROOT = os.path.dirname(os.path.abspath(__file__))
 PROGNOSIS_ROOT = os.path.dirname(SCRIPT_ROOT)
@@ -618,7 +621,9 @@ def fit_training_only_centres(supervoxels, training_ids, seed):
         raise P5ValidationError("training-only K=2 fit lacks two distinct values")
     counts = selected.groupby("patient_id")["sv_label"].transform("count")
     weights = 1.0 / counts.to_numpy(dtype=float)
-    estimator = KMeans(n_clusters=2, random_state=int(seed), n_init=10)
+    validate_frozen_kmeans_parameters()
+    estimator = KMeans(random_state=int(seed),
+                       **KMEANS_PARAMETERS.sklearn_kwargs())
     estimator.fit(values.reshape(-1, 1), sample_weight=weights)
     centres = tuple(sorted(float(value) for value in estimator.cluster_centers_.reshape(-1)))
     if not np.isfinite(np.asarray(centres)).all() or centres[0] >= centres[1]:

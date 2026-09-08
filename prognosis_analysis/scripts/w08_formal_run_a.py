@@ -47,6 +47,8 @@ import provenance_reconciliation as provenance  # noqa: E402
 import w08_technical_preflight_a as technical_preflight  # noqa: E402
 from data_split_guard import read_technical_A  # noqa: E402
 import technical_dry_run_A as technical  # noqa: E402
+from w08_kmeans_parameters import (  # noqa: E402
+    KMEANS_PARAMETERS, validate_frozen_kmeans_parameters)
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -105,6 +107,9 @@ W08_FINAL_OUTPUT_NAMES = W08_REQUIRED_OUTPUT_NAMES + (W08_OUTPUT_MANIFEST_NAME,)
 W08_RELEASE_GATE_NAME = "release_gate.json"
 W08_RUN_STATE_NAME = "run_state.json"
 W08_ATTEMPT_STATE_NAME = "attempt_state.json"
+W08_PROGRESS_NAME = "progress.json"
+W08_PROGRESS_SCHEMA = "w08_progress"
+W08_PROGRESS_SCHEMA_VERSION = "1.0"
 W08_P5_LEGACY_OUTPUT_RELATIVE = \
     "prognosis_analysis/output/p5_technical_preflight_A"
 W08_P5_CURRENT_OUTPUT_RELATIVE = \
@@ -131,6 +136,16 @@ B_ACCESS_FLAGS = (
     "B_data_read", "B_reader_invoked", "B_source_opened",
     "B_statistics_generated",
 )
+W08_PROGRESS_ALLOWED_KEYS = frozenset((
+    "schema", "schema_version", "stage", "status",
+    "current_repeat", "current_fold", "current_run",
+    "completed_outer_folds", "total_outer_folds",
+    "completed_runs_in_fold", "total_runs_in_fold",
+    "started_at_epoch", "updated_at_epoch", "elapsed_seconds",
+) + B_ACCESS_FLAGS)
+W08_PROGRESS_STATUSES = frozenset((
+    "initializing", "running", "failed", "complete",
+))
 
 PYRADIOMICS_VERSION = "3.0.1"
 COMPATIBILITY_REASON = (
@@ -1649,7 +1664,9 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         sample_weights = np.concatenate(weights)
         if np.unique(values).size < 2:
             raise w08.W08ValidationError("fold-specific K=2 habitat fit needs two distinct values")
-        estimator = KMeans(n_clusters=2, random_state=int(seed), n_init=10)
+        validate_frozen_kmeans_parameters()
+        estimator = KMeans(random_state=int(seed),
+                           **KMEANS_PARAMETERS.sklearn_kwargs())
         estimator.fit(values.reshape(-1, 1), sample_weight=sample_weights)
         centres = tuple(sorted(float(value)
                                for value in estimator.cluster_centers_.reshape(-1)))
@@ -2015,8 +2032,100 @@ def preflight_fold(output_root=OUTPUT_ROOT):
     }, ensure_ascii=False, sort_keys=True))
 
 
+def _progress_integer(value, label, allow_none=True, minimum=0):
+    if value is None and allow_none:
+        return
+    if type(value) is not int or value < minimum:
+        raise ValueError("progress %s must be an integer >= %d" %
+                         (label, minimum))
+
+
+def _validate_progress(progress):
+    """Validate the closed, aggregate-only progress schema."""
+    if not isinstance(progress, dict):
+        raise ValueError("progress must be an object")
+    unknown = sorted(set(progress) - W08_PROGRESS_ALLOWED_KEYS)
+    if unknown:
+        raise ValueError("progress contains unsupported fields: %s" % unknown)
+    if progress.get("schema") != W08_PROGRESS_SCHEMA or \
+            progress.get("schema_version") != W08_PROGRESS_SCHEMA_VERSION:
+        raise ValueError("progress schema binding is invalid")
+    if progress.get("stage") != "W08":
+        raise ValueError("progress stage must be W08")
+    if progress.get("status") not in W08_PROGRESS_STATUSES:
+        raise ValueError("progress status is invalid")
+    _progress_integer(progress.get("current_repeat"), "current_repeat",
+                      minimum=1)
+    _progress_integer(progress.get("current_fold"), "current_fold", minimum=1)
+    current_run = progress.get("current_run")
+    if current_run is not None and (not isinstance(current_run, str) or
+                                    not current_run.strip() or
+                                    "/" in current_run or "\\" in current_run):
+        raise ValueError("progress current_run must be a safe run name")
+    for key in ("completed_outer_folds", "total_outer_folds",
+                "completed_runs_in_fold", "total_runs_in_fold"):
+        _progress_integer(progress.get(key), key)
+    if (progress.get("completed_outer_folds") is not None and
+            progress.get("total_outer_folds") is not None and
+            progress["completed_outer_folds"] > progress["total_outer_folds"]):
+        raise ValueError("progress completed outer folds exceed total")
+    if (progress.get("completed_runs_in_fold") is not None and
+            progress.get("total_runs_in_fold") is not None and
+            progress["completed_runs_in_fold"] > progress["total_runs_in_fold"]):
+        raise ValueError("progress completed runs exceed total")
+    for key in ("started_at_epoch", "updated_at_epoch", "elapsed_seconds"):
+        value = progress.get(key)
+        if type(value) not in (int, float) or not np.isfinite(float(value)):
+            raise ValueError("progress %s must be a finite number" % key)
+    if progress["elapsed_seconds"] < 0:
+        raise ValueError("progress elapsed_seconds cannot be negative")
+    for key in B_ACCESS_FLAGS:
+        if progress.get(key) is not False:
+            raise ValueError("progress %s must remain false" % key)
+    return progress
+
+
+def _write_progress(output_root, started_epoch, payload=None):
+    """Atomically write only aggregate, non-identifying W08 progress."""
+    progress = {
+        "schema": W08_PROGRESS_SCHEMA,
+        "schema_version": W08_PROGRESS_SCHEMA_VERSION,
+        "stage": "W08",
+        "status": "running",
+        "current_repeat": None,
+        "current_fold": None,
+        "current_run": None,
+        "completed_outer_folds": None,
+        "total_outer_folds": None,
+        "completed_runs_in_fold": None,
+        "total_runs_in_fold": None,
+        "started_at_epoch": started_epoch,
+        "updated_at_epoch": time.time(),
+        "elapsed_seconds": round(time.time() - started_epoch, 3),
+    }
+    for key in B_ACCESS_FLAGS:
+        progress[key] = False
+    if payload is not None:
+        if not isinstance(payload, dict):
+            raise ValueError("progress payload must be an object")
+        unsupported = sorted(set(payload) - W08_PROGRESS_ALLOWED_KEYS)
+        if unsupported:
+            raise ValueError("progress payload contains unsupported fields: %s" %
+                             unsupported)
+        for key, value in payload.items():
+            if key not in B_ACCESS_FLAGS:
+                progress[key] = value
+    for key in B_ACCESS_FLAGS:
+        progress[key] = False
+    _validate_progress(progress)
+    os.makedirs(output_root, exist_ok=True)
+    _atomic_json(os.path.join(output_root, W08_PROGRESS_NAME), progress)
+    return progress
+
+
 def _write_failure_state(output_root, project_root, stage, started_epoch,
-                         formal_run_started, exception, attempt=None):
+                         formal_run_started, exception, attempt=None,
+                         progress_observability=None):
     """Persist a non-success state without ever emitting a running state."""
     output_root = os.path.abspath(os.fspath(output_root))
     project_root = os.path.abspath(project_root)
@@ -2036,6 +2145,20 @@ def _write_failure_state(output_root, project_root, stage, started_epoch,
             env_exc, project_root, output_root)}
     partial_outputs = [name for name in W08_FINAL_OUTPUT_NAMES
                        if os.path.exists(os.path.join(output_root, name))]
+    if isinstance(progress_observability, dict):
+        progress_observability["write_attempts"] += 1
+    try:
+        _write_progress(output_root, started_epoch, {
+            "status": "failed",
+            "current_repeat": None,
+            "current_fold": None,
+            "current_run": None,
+            "completed_outer_folds": None,
+            "total_outer_folds": None,
+        })
+    except Exception:
+        if isinstance(progress_observability, dict):
+            progress_observability["write_failures"] += 1
     state = {
         "stage": "W08",
         "status": "failed",
@@ -2063,6 +2186,8 @@ def _write_failure_state(output_root, project_root, stage, started_epoch,
         state["attempt_archive"] = os.path.relpath(
             attempt.get("failed_root", ""), output_root) \
             if attempt.get("failed_root") else None
+    if isinstance(progress_observability, dict):
+        state["progress_observability"] = dict(progress_observability)
     if isinstance(exception, W08ReleaseGateError):
         state["release_gate"] = exception.result
         try:
@@ -2086,6 +2211,17 @@ def formal(output_root=OUTPUT_ROOT):
     stage = "release_gate"
     formal_run_started = False
     attempt = None
+    progress_observability = {"write_attempts": 0, "write_failures": 0}
+
+    def safe_progress(payload):
+        progress_observability["write_attempts"] += 1
+        try:
+            _write_progress(output_root, started, payload)
+        except Exception:
+            progress_observability["write_failures"] += 1
+            return False
+        return True
+
     try:
         release_gate = validate_w08_release_gate(
             output_root=output_root, project_root=PROJECT_ROOT)
@@ -2104,6 +2240,14 @@ def formal(output_root=OUTPUT_ROOT):
             "code_commit": release_gate["code_commit"],
             "attempt_id": attempt["attempt_id"],
         })
+        safe_progress({
+            "status": "initializing",
+            "current_repeat": None,
+            "current_fold": None,
+            "current_run": None,
+            "completed_outer_folds": 0,
+            "total_outer_folds": None,
+        })
 
         stage = "a_input_load"
         population, frame, provider = _load_population_and_provider(
@@ -2118,9 +2262,32 @@ def formal(output_root=OUTPUT_ROOT):
             "A_population": int(len(population)), "W_columns": 1130,
             "slic_cache_cases": int(len(provider._case_cache)),
         })
+        safe_progress({
+            "status": "running",
+            "current_repeat": None,
+            "current_fold": None,
+            "current_run": None,
+            "completed_outer_folds": 0,
+            "total_outer_folds": None,
+        })
 
         stage = "nested_cv_modeling"
-        result = w08.run_w08(frame, provider)
+        def progress_callback(payload):
+            safe_progress(payload)
+
+        result = w08.run_w08(
+            frame, provider, progress_callback=progress_callback)
+        safe_progress({
+            "status": "complete",
+            "current_repeat": None,
+            "current_fold": None,
+            "current_run": None,
+            "completed_outer_folds": 50,
+            "total_outer_folds": 50,
+            "completed_runs_in_fold": 13,
+            "total_runs_in_fold": 13,
+        })
+        result["audit"]["progress_observability"] = dict(progress_observability)
         stage = "result_write"
         manifest = write_results(
             result, w08.load_config(), population, started, output_root,
@@ -2136,6 +2303,7 @@ def formal(output_root=OUTPUT_ROOT):
             "formal_output_manifest": W08_OUTPUT_MANIFEST_NAME,
             "n_fold_results": int(len(result["fold_results"])),
             "n_predictions": int(len(result["predictions"])),
+            "progress_observability": dict(progress_observability),
         })
         print(json.dumps({
             "stage": "W08", "status": "formal_complete",
@@ -2148,7 +2316,8 @@ def formal(output_root=OUTPUT_ROOT):
         }, ensure_ascii=False, sort_keys=True))
     except Exception as exc:
         _write_failure_state(output_root, PROJECT_ROOT, stage, started,
-                             formal_run_started, exc, attempt=attempt)
+                             formal_run_started, exc, attempt=attempt,
+                             progress_observability=progress_observability)
         raise
 
 
