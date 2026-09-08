@@ -2,8 +2,8 @@
 
 ## Disposition
 
-`PASS` — the R6-5R coordinate provenance register now matches the current
-W08 source files at repository `HEAD` `a35d858f5832e1e5c3d88eb9fe601b894a7d6916`.
+`PASS` — the R6-5R coordinate provenance register now matches the W08 source
+files at the code state used for this refresh, `a35d858f5832e1e5c3d88eb9fe601b894a7d6916`.
 The source binding refresh is limited to the two `provenance.file_sha256`
 entries in `prognosis_analysis/R6_5R_coordinate_reconciliation.json`.
 
