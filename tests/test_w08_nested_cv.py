@@ -619,10 +619,10 @@ class W08FormalRadiomicsBoundaryCompatibilityTests(unittest.TestCase):
         return image, mask
 
     @staticmethod
-    def provider_with(extractor):
+    def provider_with(extractors):
         provider = formal.AOnlyFoldFeatureProvider.__new__(
             formal.AOnlyFoldFeatureProvider)
-        provider._extractor = extractor
+        provider._extractors = extractors
         return provider
 
     def test_support_classification_remains_exactly_frozen(self):
@@ -648,7 +648,7 @@ class W08FormalRadiomicsBoundaryCompatibilityTests(unittest.TestCase):
                 raise AssertionError("ineligible mask reached PyRadiomics")
 
         extractor = ExplodingExtractor()
-        provider = self.provider_with(extractor)
+        provider = self.provider_with({"R_low": extractor})
         for count in (0, 1, 9):
             image, mask = self.synthetic_image_mask(count)
             with self.subTest(voxel_count=count):
@@ -663,8 +663,8 @@ class W08FormalRadiomicsBoundaryCompatibilityTests(unittest.TestCase):
         mask_before = sitk.GetArrayFromImage(mask).copy()
         image_spacing_before = image.GetSpacing()
         mask_spacing_before = mask.GetSpacing()
-        extractor = formal._build_backend_compatible_extractor()
-        provider = self.provider_with(extractor)
+        extractor = formal._build_exact_feature_extractor("R_low")
+        provider = self.provider_with({"R_low": extractor})
 
         result = provider._radiomics_for_mask(
             image, mask, "R_low", expected_voxel_count=10)
@@ -688,7 +688,7 @@ class W08FormalRadiomicsBoundaryCompatibilityTests(unittest.TestCase):
     def test_tampered_or_inconsistent_boundary_fails_closed(self):
         image, mask = self.synthetic_image_mask(10)
         extractor = mock.Mock()
-        provider = self.provider_with(extractor)
+        provider = self.provider_with({"R_low": extractor})
         with self.assertRaises(w08.W08ValidationError):
             provider._radiomics_for_mask(image, mask, "R_low", 9)
         extractor.execute.assert_not_called()
@@ -703,6 +703,111 @@ class W08FormalRadiomicsBoundaryCompatibilityTests(unittest.TestCase):
         with mock.patch.object(formal, "MINIMUM_ROI_SIZE", 11):
             with self.assertRaises(w08.W08ValidationError):
                 formal._build_backend_compatible_extractor()
+
+
+class W08L3RExactFeatureReductionTests(unittest.TestCase):
+    @staticmethod
+    def image_mask_fixture(kind):
+        shape = (7, 7, 7)
+        z, y, x = np.indices(shape)
+        image_array = (0.31 * z + 0.47 * y + 0.59 * x +
+                       0.07 * ((z * y + x) % 4)).astype(np.float32)
+        mask_array = np.zeros(shape, dtype=np.uint8)
+        if kind == "exact_10":
+            coordinates = [
+                (1, 1, 1), (1, 1, 2), (1, 2, 1), (1, 2, 2),
+                (1, 3, 1), (2, 1, 1), (2, 1, 2), (2, 2, 1),
+                (3, 1, 1), (3, 2, 2),
+            ]
+        elif kind == "near_minimum_irregular":
+            coordinates = [
+                (1, 1, 1), (1, 1, 2), (1, 2, 1), (1, 2, 2),
+                (1, 3, 1), (2, 1, 1), (2, 1, 2), (2, 2, 1),
+                (3, 1, 1), (3, 2, 2), (2, 3, 2),
+            ]
+        elif kind == "large":
+            coordinates = [(z0, y0, x0)
+                           for z0 in range(1, 5)
+                           for y0 in range(1, 5)
+                           for x0 in range(1, 5)]
+        else:
+            raise AssertionError("unknown fixture kind")
+        for coordinate in coordinates:
+            mask_array[coordinate] = 1
+        image = sitk.GetImageFromArray(image_array)
+        mask = sitk.GetImageFromArray(mask_array)
+        image.SetSpacing((1.0, 1.0, 2.0))
+        mask.CopyInformation(image)
+        return image, mask
+
+    def test_exact_settings_match_frozen_candidate_schema(self):
+        expected_classes = {
+            block: {}
+            for block in ("R_low", "R_high")
+        }
+        for block, features in w08.FROZEN_CANDIDATE_FEATURES.items():
+            for feature in features:
+                feature_class, feature_name = \
+                    formal._candidate_feature_class_and_name(feature)
+                expected_classes[block].setdefault(feature_class, []).append(
+                    feature_name)
+
+        self.assertEqual(sum(len(features)
+                             for features in w08.FROZEN_CANDIDATE_FEATURES.values()),
+                         59)
+        for block in ("R_low", "R_high"):
+            extractor = formal._build_exact_feature_extractor(block)
+            self.assertEqual(extractor.enabledImagetypes, {"Original": {}})
+            self.assertEqual(extractor.enabledFeatures, expected_classes[block])
+            self.assertNotIn("shape", extractor.enabledFeatures)
+            self.assertEqual(extractor.settings["binWidth"], 0.248808)
+            self.assertFalse(extractor.settings["normalize"])
+            self.assertIsNone(extractor.settings["resampledPixelSpacing"])
+            self.assertEqual(extractor.settings["minimumROIDimensions"], 2)
+            self.assertIsNone(extractor.settings["minimumROISize"])
+            self.assertEqual(extractor.settings["label"], 1)
+
+    def test_block_extractors_are_separate_and_cover_only_frozen_features(self):
+        extractors = formal._build_exact_feature_extractors()
+        self.assertEqual(set(extractors), {"R_low", "R_high"})
+        self.assertIsNot(extractors["R_low"], extractors["R_high"])
+        for block, extractor in extractors.items():
+            image, mask = self.image_mask_fixture("large")
+            result = extractor.execute(image, mask)
+            observed = sorted(key for key in result if key.startswith("original_"))
+            expected = sorted(w08.FROZEN_CANDIDATE_FEATURES[block])
+            self.assertEqual(observed, expected)
+
+    def test_full_and_exact_extractors_are_numerically_identical(self):
+        full = formal._build_backend_compatible_extractor()
+        for fixture in ("exact_10", "near_minimum_irregular", "large"):
+            image, mask = self.image_mask_fixture(fixture)
+            for block in ("R_low", "R_high"):
+                exact = formal._build_exact_feature_extractor(block)
+                with self.subTest(fixture=fixture, block=block):
+                    full_result = full.execute(image, mask)
+                    exact_result = exact.execute(image, mask)
+                    for feature in w08.FROZEN_CANDIDATE_FEATURES[block]:
+                        self.assertIn(feature, full_result)
+                        self.assertIn(feature, exact_result)
+                        np.testing.assert_allclose(
+                            float(full_result[feature]),
+                            float(exact_result[feature]),
+                            rtol=0.0, atol=0.0, equal_nan=True)
+
+    def test_missing_frozen_feature_fails_closed(self):
+        image, mask = self.image_mask_fixture("exact_10")
+
+        class MissingFeatureExtractor(object):
+            def execute(self, _image, _mask):
+                return {w08.FROZEN_CANDIDATE_FEATURES["R_low"][0]: 1.0}
+
+        provider = formal.AOnlyFoldFeatureProvider.__new__(
+            formal.AOnlyFoldFeatureProvider)
+        provider._extractors = {"R_low": MissingFeatureExtractor()}
+        with self.assertRaisesRegex(w08.W08ValidationError,
+                                    "omitted frozen features"):
+            provider._radiomics_for_mask(image, mask, "R_low", 10)
 
 
 if __name__ == "__main__":

@@ -1526,6 +1526,53 @@ def _build_backend_compatible_extractor(config=None):
     return w02.featureextractor.RadiomicsFeatureExtractor(settings)
 
 
+def _candidate_feature_class_and_name(feature):
+    """Split one frozen ``original_<class>_<name>`` feature identity."""
+    parts = str(feature).split("_", 2)
+    if len(parts) != 3 or parts[0] != "original" or not parts[1] or not parts[2]:
+        raise w08.W08ValidationError(
+            "invalid frozen PyRadiomics feature identity: %s" % feature)
+    if parts[1] not in w02.FEATURE_CLASSES:
+        raise w08.W08ValidationError(
+            "unsupported frozen PyRadiomics feature class: %s" % parts[1])
+    return parts[1], parts[2]
+
+
+def _exact_feature_extractor_settings(block, config=None):
+    """Build the frozen backend settings for exactly one radiomics block."""
+    if block not in w08.FROZEN_CANDIDATE_FEATURES:
+        raise w08.W08ValidationError(
+            "unknown frozen radiomics block: %s" % block)
+    if config is None:
+        config = w02.load_config()
+    settings = _backend_compatibility_settings(config)
+    selected = {}
+    for feature in w08.FROZEN_CANDIDATE_FEATURES[block]:
+        feature_class, feature_name = _candidate_feature_class_and_name(feature)
+        if feature_class in selected and feature_name in selected[feature_class]:
+            raise w08.W08ValidationError(
+                "duplicate frozen PyRadiomics feature: %s" % feature)
+        selected.setdefault(feature_class, []).append(feature_name)
+    # An omitted class is disabled by PyRadiomics.  In particular, do not use
+    # an empty list for an unused class: PyRadiomics interprets [] as enable-all.
+    settings["featureClass"] = selected
+    return settings
+
+
+def _build_exact_feature_extractor(block, config=None):
+    """Create one block-local extractor containing only frozen candidates."""
+    settings = _exact_feature_extractor_settings(block, config=config)
+    return w02.featureextractor.RadiomicsFeatureExtractor(settings)
+
+
+def _build_exact_feature_extractors(config=None):
+    """Create the two block-local extractors for one owning process."""
+    return {
+        block: _build_exact_feature_extractor(block, config=config)
+        for block in ("R_low", "R_high")
+    }
+
+
 def _mask_label_voxel_count(mask):
     """Count label-1 voxels without changing the SimpleITK mask."""
     mask_array = w02.sitk.GetArrayFromImage(mask)
@@ -1661,7 +1708,7 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         self._state_cache = {}
         self.fit_calls = []
         self.transform_calls = []
-        self._extractor = _build_backend_compatible_extractor()
+        self._extractors = _build_exact_feature_extractors()
 
     @staticmethod
     def _normalise_supervoxel_table(table):
@@ -1829,14 +1876,26 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
                 RADIOMICS_STATE_EXTRACTABLE:
             raise w08.W08ValidationError(
                 "radiomics compatibility backend received an ineligible mask")
-        result = self._extractor.execute(image, mask)
+        extractors = getattr(self, "_extractors", None)
+        extractor = extractors.get(block) if isinstance(extractors, dict) else None
+        if extractor is None:
+            raise w08.W08ValidationError(
+                "missing exact PyRadiomics extractor for block %s" % block)
+        result = extractor.execute(image, mask)
+        missing = [feature for feature in w08.FROZEN_CANDIDATE_FEATURES[block]
+                   if feature not in result]
+        if missing:
+            raise w08.W08ValidationError(
+                "exact PyRadiomics extractor omitted frozen features: %s" %
+                ", ".join(missing))
         output = {}
         for feature in w08.FROZEN_CANDIDATE_FEATURES[block]:
-            value = result.get(feature, np.nan)
             try:
-                output[w08.RADIOMICS_PREFIXES[block] + feature] = float(value)
+                output[w08.RADIOMICS_PREFIXES[block] + feature] = float(
+                    result[feature])
             except (TypeError, ValueError):
-                output[w08.RADIOMICS_PREFIXES[block] + feature] = np.nan
+                raise w08.W08ValidationError(
+                    "exact PyRadiomics feature is not numeric: %s" % feature)
         return output
 
     def _transform_one(self, identifier, state):

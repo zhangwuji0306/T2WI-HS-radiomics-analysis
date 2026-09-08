@@ -415,11 +415,11 @@ def _make_synthetic_image(temp_root):
     return image, mask, case
 
 
-def _make_provider(case, extractor, stub_radiomics=False):
+def _make_provider(case, extractors, stub_radiomics=False):
     """Use the production provider methods against a synthetic case."""
     provider = formal.AOnlyFoldFeatureProvider.__new__(
         formal.AOnlyFoldFeatureProvider)
-    provider._extractor = extractor
+    provider._extractors = extractors
     provider._case_cache = {}
     provider._state_cache = {}
     provider._prepare_case = lambda _identifier: case
@@ -478,11 +478,11 @@ def _single_iteration(temp_root, real_technical=False):
         fixture_values = np.linspace(-1.0, 1.0, 48).reshape(8, 6)
         times, events, risk = _make_survival_arrays()
         frame = _make_synthetic_frame()
-        extractor = formal._build_backend_compatible_extractor()
+        extractors = formal._build_exact_feature_extractors()
         state = w08.FoldState("synthetic-training", 2026,
                               (-0.5, 0.5), 0.0, {})
-        provider_for_g = _make_provider(case, extractor, stub_radiomics=True)
-        provider_for_r = _make_provider(case, extractor, stub_radiomics=False)
+        provider_for_g = _make_provider(case, extractors, stub_radiomics=True)
+        provider_for_r = _make_provider(case, extractors, stub_radiomics=False)
     except BaseException as exc:
         return [_failure_record("initialization", exc)]
 
