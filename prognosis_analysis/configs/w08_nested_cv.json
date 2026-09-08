@@ -5,6 +5,17 @@
   "frozen_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
   "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
   "elastic_net_max_iter": 3000,
+  "execution": {
+    "outer_fold_workers": 2,
+    "allowed_outer_fold_workers": [1, 2, 4],
+    "thread_environment": {
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1"
+    },
+    "checkpoint_schema": "w08_outer_fold_checkpoint_v1"
+  },
   "outer_cv": {
     "folds": 5,
     "repeats": 10,

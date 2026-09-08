@@ -16,12 +16,16 @@ audited action.
 from __future__ import absolute_import
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import math
+import multiprocessing
 import os
+import platform
 import re
 import sys
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
@@ -57,6 +61,20 @@ W07A_PROTOCOL_AMENDMENT_SHA256 = (
     "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70")
 W07_SPLIT_COLUMNS = ["patient_id", "repeat", "fold", "role", "seed"]
 W08_STATUS = "implementation_ready_not_run"
+
+# L5 is an execution-layer contract.  These values do not alter any frozen
+# scientific parameter; they only control how already-defined outer folds are
+# scheduled and recovered.
+L5_CHECKPOINT_SCHEMA = "w08_outer_fold_checkpoint_v1"
+L5_CHECKPOINT_VERSION = 1
+L5_ALLOWED_WORKERS = (1, 2, 4)
+L5_DEFAULT_OUTER_FOLD_WORKERS = 2
+L5_THREAD_ENVIRONMENT = {
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+}
 
 # P3B is the sole fold-specific radiomics extractability contract consumed by
 # W08.  These fields are emitted by the already-frozen provider; W08 validates
@@ -546,6 +564,13 @@ def _validate_config(config):
             config["elastic_net_max_iter"] != ELASTIC_NET_MAX_ITER:
         raise W08ValidationError(
             "W08 Elastic-Net max_iter differs from the R6-4A fixed budget")
+    execution = config.get("execution", {})
+    if not isinstance(execution, dict) or \
+            execution.get("outer_fold_workers") != L5_DEFAULT_OUTER_FOLD_WORKERS or \
+            tuple(execution.get("allowed_outer_fold_workers", [])) != L5_ALLOWED_WORKERS or \
+            execution.get("checkpoint_schema") != L5_CHECKPOINT_SCHEMA or \
+            execution.get("thread_environment") != L5_THREAD_ENVIRONMENT:
+        raise W08ValidationError("W08 L5 execution contract is invalid")
     if config.get("lambda_grid", {}).get("values_per_alpha") != LAMBDA_COUNT:
         raise W08ValidationError("W08 lambda grid must contain 100 values per alpha")
     if config.get("lambda_grid", {}).get("minimum_ratio") != LAMBDA_MIN_RATIO:
@@ -3196,17 +3221,532 @@ def _resolve_runs(models=None, runs=None):
     return [dict(item) for item in FIXED_RUN_DEFINITIONS]
 
 
+def _l5_json_safe(value):
+    """Convert fold results to deterministic JSON without exposing new IDs."""
+    if isinstance(value, dict):
+        return {str(key): _l5_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_l5_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return _l5_json_safe(value.tolist())
+    if isinstance(value, np.generic):
+        return _l5_json_safe(value.item())
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
+
+
+def _l5_environment_fingerprint():
+    """Return the locked runtime identity used by checkpoint validation."""
+    versions = {}
+    for module_name, attribute in (
+            ("numpy", "__version__"), ("pandas", "__version__"),
+            ("sklearn", "__version__"), ("radiomics", "__version__"),
+            ("SimpleITK", "Version_VersionString")):
+        try:
+            module = __import__(module_name)
+            value = getattr(module, attribute)
+            value = value() if callable(value) else value
+            versions[module_name] = str(value)
+        except Exception:
+            versions[module_name] = None
+    environment_path = os.path.join(PROJECT_ROOT, "environment.yml")
+    return {
+        "python": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "versions": versions,
+        "environment_yml_sha256": _sha256_file(environment_path)
+        if os.path.isfile(environment_path) else None,
+    }
+
+
+def _l5_checkpoint_contract(attempt_id, code_commit, split_hash,
+                            selected_runs, config):
+    return {
+        "schema": L5_CHECKPOINT_SCHEMA,
+        "schema_version": L5_CHECKPOINT_VERSION,
+        "attempt_id": str(attempt_id) if attempt_id is not None else None,
+        "code_commit": str(code_commit) if code_commit is not None else None,
+        "outer_split_hash": str(split_hash),
+        "W04_protocol_sha256": W04_PROTOCOL_SHA256,
+        "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
+        "run_ids": [str(item["run_id"]) for item in selected_runs],
+        "elastic_net_max_iter": int(config["elastic_net_max_iter"]),
+        "elastic_net_tolerance": float(ELASTIC_NET_TOLERANCE),
+        "environment": _l5_environment_fingerprint(),
+    }
+
+
+def _l5_checkpoint_path(checkpoint_root, repeat, fold):
+    return os.path.join(
+        os.path.abspath(os.fspath(checkpoint_root)),
+        "repeat_%d_fold_%d" % (int(repeat), int(fold)),
+        "fold_checkpoint.json")
+
+
+def _l5_result_payload(result):
+    return {
+        "predictions": _l5_json_safe(
+            result["predictions"].to_dict(orient="records")),
+        "fold_results": _l5_json_safe(
+            result["fold_results"].to_dict(orient="records")),
+        "selection_results": _l5_json_safe(
+            result["selection_results"].to_dict(orient="records")),
+    }
+
+
+def _l5_atomic_json(path, payload):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    temporary = path + ".tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2,
+                      sort_keys=True, allow_nan=False)
+            handle.write("\n")
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _l5_validate_fold_rows(result_payload, repeat, fold, selected_runs):
+    if not isinstance(result_payload, dict) or set(result_payload) != {
+            "predictions", "fold_results", "selection_results"}:
+        raise W08ValidationError("L5 checkpoint result keys are invalid")
+    run_ids = [str(item["run_id"]) for item in selected_runs]
+    expected = set(run_ids)
+    for name in ("fold_results", "selection_results"):
+        rows = result_payload.get(name)
+        if not isinstance(rows, list) or len(rows) != len(run_ids):
+            raise W08ValidationError(
+                "L5 checkpoint %s does not contain one row per frozen run" % name)
+        observed = []
+        for row in rows:
+            if not isinstance(row, dict) or row.get("run_id") is None:
+                raise W08ValidationError("L5 checkpoint %s row is invalid" % name)
+            try:
+                row_repeat = int(row.get("repeat", -1))
+                row_fold = int(row.get("fold", -1))
+            except (TypeError, ValueError, OverflowError):
+                raise W08ValidationError(
+                    "L5 checkpoint %s row has invalid outer-fold fields" % name)
+            if row_repeat != int(repeat) or row_fold != int(fold):
+                raise W08ValidationError(
+                    "L5 checkpoint %s row has the wrong outer fold" % name)
+            observed.append(str(row["run_id"]))
+        if set(observed) != expected or len(set(observed)) != len(observed):
+            raise W08ValidationError(
+                "L5 checkpoint %s run coverage is incomplete" % name)
+    predictions = result_payload.get("predictions")
+    if not isinstance(predictions, list):
+        raise W08ValidationError("L5 checkpoint predictions are invalid")
+    for row in predictions:
+        if not isinstance(row, dict):
+            raise W08ValidationError("L5 checkpoint prediction row is invalid")
+        try:
+            row_repeat = int(row.get("repeat", -1))
+            row_fold = int(row.get("fold", -1))
+        except (TypeError, ValueError, OverflowError):
+            raise W08ValidationError(
+                "L5 checkpoint prediction has invalid outer-fold fields")
+        if row_repeat != int(repeat) or row_fold != int(fold):
+            raise W08ValidationError(
+                "L5 checkpoint prediction has the wrong outer fold")
+    return result_payload
+
+
+def _l5_write_checkpoint(checkpoint_root, repeat, fold, result, contract):
+    result_payload = _l5_result_payload(result)
+    _l5_validate_fold_rows(
+        result_payload, repeat, fold,
+        [{"run_id": run_id} for run_id in contract["run_ids"]])
+    checkpoint = {
+        "schema": L5_CHECKPOINT_SCHEMA,
+        "schema_version": L5_CHECKPOINT_VERSION,
+        "status": "complete",
+        "attempt_id": contract["attempt_id"],
+        "code_commit": contract["code_commit"],
+        "repeat": int(repeat),
+        "fold": int(fold),
+        "outer_fold_key": "repeat_%d_fold_%d" % (int(repeat), int(fold)),
+        "contract": contract,
+        "result": result_payload,
+        "result_sha256": _sha256_text(json.dumps(
+            result_payload, ensure_ascii=True, sort_keys=True,
+            separators=(",", ":"))),
+        "result_counts": {
+            name: int(len(result_payload[name]))
+            for name in ("predictions", "fold_results", "selection_results")
+        },
+        "completed_at_epoch": time.time(),
+    }
+    path = _l5_checkpoint_path(checkpoint_root, repeat, fold)
+    _l5_atomic_json(path, checkpoint)
+    return path
+
+
+def _l5_read_checkpoint(path, repeat, fold, contract, selected_runs):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            checkpoint = json.load(handle)
+    except (IOError, OSError, ValueError, TypeError) as exc:
+        raise W08ValidationError(
+            "L5 checkpoint cannot be read: %s" % exc.__class__.__name__)
+    if not isinstance(checkpoint, dict) or \
+            checkpoint.get("schema") != L5_CHECKPOINT_SCHEMA or \
+            checkpoint.get("schema_version") != L5_CHECKPOINT_VERSION or \
+            checkpoint.get("status") != "complete":
+        raise W08ValidationError("L5 checkpoint schema/status is invalid")
+    if checkpoint.get("attempt_id") != contract["attempt_id"] or \
+            checkpoint.get("code_commit") != contract["code_commit"]:
+        raise W08ValidationError("L5 checkpoint attempt/code binding mismatch")
+    if (checkpoint.get("repeat"), checkpoint.get("fold")) != \
+            (int(repeat), int(fold)):
+        raise W08ValidationError("L5 checkpoint outer-fold binding mismatch")
+    if checkpoint.get("contract") != contract:
+        raise W08ValidationError("L5 checkpoint contract mismatch")
+    result_payload = checkpoint.get("result")
+    _l5_validate_fold_rows(result_payload, repeat, fold, selected_runs)
+    digest = _sha256_text(json.dumps(
+        result_payload, ensure_ascii=True, sort_keys=True,
+        separators=(",", ":")))
+    if checkpoint.get("result_sha256") != digest:
+        raise W08ValidationError("L5 checkpoint result digest mismatch")
+    expected_counts = {
+        name: len(result_payload[name])
+        for name in ("predictions", "fold_results", "selection_results")
+    }
+    if checkpoint.get("result_counts") != expected_counts:
+        raise W08ValidationError("L5 checkpoint result counts mismatch")
+    return checkpoint
+
+
+def _l5_result_from_checkpoint(checkpoint):
+    result_payload = checkpoint["result"]
+    return {
+        name: pd.DataFrame(result_payload[name])
+        for name in ("predictions", "fold_results", "selection_results")
+    }
+
+
+def _l5_quarantine_checkpoint(path):
+    invalid = path + ".invalid"
+    suffix = 0
+    while os.path.exists(invalid):
+        suffix += 1
+        invalid = path + ".invalid_%d" % suffix
+    os.replace(path, invalid)
+    return invalid
+
+
+def _l5_prepare_worker_environment():
+    for key, value in L5_THREAD_ENVIRONMENT.items():
+        os.environ[key] = value
+
+
+def _l5_worker_job(args):
+    (feature_frame, outer_splits, provider, config, selected_runs,
+     strict_schema, require_fixed_hash, lambda_count, solver_max_iter,
+     solver_tolerance, population, fold_key, worker_cache_root) = args
+    _l5_prepare_worker_environment()
+    if worker_cache_root and hasattr(provider, "_cache_root"):
+        provider._cache_root = os.path.join(
+            os.path.abspath(os.fspath(worker_cache_root)),
+            "worker_%d_%d" % (int(fold_key[0]), int(fold_key[1])))
+        os.makedirs(provider._cache_root, exist_ok=True)
+    return run_w08_in_memory(
+        feature_frame, outer_splits, provider, config=config,
+        runs=[item["run_id"] for item in selected_runs],
+        strict_schema=strict_schema,
+        require_fixed_hash=require_fixed_hash, lambda_count=lambda_count,
+        max_outer_folds=None, solver_max_iter=solver_max_iter,
+        solver_tolerance=solver_tolerance, population=population,
+        progress_callback=None, outer_fold_selector=tuple(fold_key),
+        outer_fold_workers=1, checkpoint_root=None, _worker_mode=True)
+
+
+def _l5_merge_results(fold_results, selection_results, predictions,
+                      selected_runs, split_summary, split_hash, config,
+                      require_fixed_hash, worker_count, resumed_count,
+                      checkpoint_count, checkpoint_contracts):
+    run_ids = [str(item["run_id"]) for item in selected_runs]
+    run_order = dict((run_id, index) for index, run_id in enumerate(run_ids))
+    fold_results = sorted(
+        fold_results,
+        key=lambda row: (int(row["repeat"]), int(row["fold"]),
+                         run_order[str(row["run_id"])]))
+    selection_results = sorted(
+        selection_results,
+        key=lambda row: (int(row["repeat"]), int(row["fold"]),
+                         run_order[str(row["run_id"])]))
+    predictions = sorted(
+        predictions,
+        key=lambda row: (int(row["repeat"]), int(row["fold"]),
+                         run_order[str(row["run_id"])],
+                         str(row.get("patient_id", ""))))
+    coverage_sources = sorted(set(
+        row["coverage"].get("source") for row in fold_results
+        if isinstance(row.get("coverage"), dict) and
+        row["coverage"].get("source") is not None))
+    audit = {
+        "stage": "W08",
+        "status": W08_STATUS,
+        "formal_run": bool(require_fixed_hash),
+        "runs_requested": list(run_ids),
+        "models_requested": sorted(set(item["model_id"] for item in selected_runs),
+                                    key=lambda item: list(MODEL_SPECS).index(item)),
+        "run_penalty_semantics": {
+            run["run_id"]: _run_penalty_definition(run)
+            for run in selected_runs
+        },
+        "fixed_sensitivity_runs": list(FIXED_SENSITIVITY_RUN_IDS),
+        "outer_split_hash": split_hash,
+        "outer_split_hash_locked": W07_OUTER_SPLIT_SHA256,
+        "W04_protocol_sha256": W04_PROTOCOL_SHA256,
+        "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
+        "outer_split_validation": split_summary,
+        "n_fold_results": int(len(fold_results)),
+        "n_predictions": int(len(predictions)),
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "patient_level_outputs_written": False,
+        "outer_validation_used_for_lambda": False,
+        "outer_validation_used_for_selection": False,
+        "outer_validation_used_for_boundary_fit": False,
+        "outer_validation_used_for_eligibility_threshold_learning": False,
+        "eligibility_source": coverage_sources[0] if len(coverage_sources) == 1
+        else coverage_sources,
+        "eligibility_before_preprocessing": True,
+        "paired_comparators": [dict(item) for item in PAIRED_COMPARATOR_DEFINITIONS
+                                if item["comparator_run"] in set(run_ids) and
+                                item["radiomics_run"] in set(run_ids)],
+        "candidate_attempts": int(sum(
+            row["candidate_attempts"] for row in fold_results)),
+        "candidate_failures": int(sum(
+            row["candidate_failures"] for row in fold_results)),
+        "stability_actions": sorted(set(
+            action for row in fold_results for action in row["stability_actions"])),
+        "linear_predictor_clipping": {
+            "folds_with_clipping": int(sum(
+                bool(row["linear_predictor_clipping"].get("count", 0))
+                for row in fold_results)),
+            "total_clipped_values": int(sum(
+                int(row["linear_predictor_clipping"].get("count", 0))
+                for row in fold_results)),
+        },
+        "L5_execution": {
+            "schema": L5_CHECKPOINT_SCHEMA,
+            "outer_fold_workers": int(worker_count),
+            "resumed_checkpoints": int(resumed_count),
+            "new_checkpoints": int(checkpoint_count),
+            "checkpoint_count": int(len(checkpoint_contracts)),
+            "checkpoint_contract_hashes": [
+                _sha256_text(json.dumps(contract, ensure_ascii=True,
+                                        sort_keys=True, separators=(",", ":")))
+                for contract in checkpoint_contracts
+            ],
+            "thread_environment": dict(L5_THREAD_ENVIRONMENT),
+            "B_data_read": False,
+        },
+    }
+    return {
+        "predictions": pd.DataFrame(predictions),
+        "fold_results": pd.DataFrame(fold_results),
+        "selection_results": pd.DataFrame(selection_results),
+        "audit": audit,
+    }
+
+
+def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
+                             selected_runs, strict_schema, require_fixed_hash,
+                             lambda_count, solver_max_iter, solver_tolerance,
+                             population, split_summary, split_hash,
+                             outer_fold_workers, checkpoint_root, attempt_id,
+                             code_commit, resume, max_outer_folds=None,
+                             progress_callback=None):
+    if type(outer_fold_workers) is not int or \
+            outer_fold_workers not in L5_ALLOWED_WORKERS:
+        raise W08ValidationError(
+            "outer_fold_workers must be one of %s" % (L5_ALLOWED_WORKERS,))
+    if require_fixed_hash and outer_fold_workers not in L5_ALLOWED_WORKERS:
+        raise W08ValidationError("formal W08 outer worker setting is invalid")
+    folds = [(repeat, fold) for repeat, fold, _, _ in _outer_fold_rows(
+        outer_splits, set(feature_frame["patient_id"]))]
+    if max_outer_folds is not None:
+        if type(max_outer_folds) is not int or max_outer_folds < 1:
+            raise W08ValidationError("L5 max_outer_folds is invalid")
+        if require_fixed_hash:
+            raise W08ValidationError("formal W08 cannot truncate the 50 outer folds")
+        folds = folds[:int(max_outer_folds)]
+    if not folds:
+        raise W08ValidationError("W08 has no eligible outer folds")
+    if checkpoint_root is None and resume:
+        raise W08ValidationError("L5 resume requires a checkpoint root")
+    if checkpoint_root is not None:
+        checkpoint_root = os.path.abspath(os.fspath(checkpoint_root))
+        os.makedirs(checkpoint_root, exist_ok=True)
+    contract = _l5_checkpoint_contract(
+        attempt_id, code_commit, split_hash, selected_runs, config)
+    completed = {}
+    resumed_count = 0
+    if checkpoint_root is not None:
+        for repeat, fold in folds:
+            path = _l5_checkpoint_path(checkpoint_root, repeat, fold)
+            if not os.path.isfile(path):
+                continue
+            if not resume:
+                raise W08ValidationError(
+                    "L5 checkpoint exists; explicit resume is required")
+            try:
+                checkpoint = _l5_read_checkpoint(
+                    path, repeat, fold, contract, selected_runs)
+            except W08ValidationError:
+                if resume:
+                    _l5_quarantine_checkpoint(path)
+                    continue
+                raise
+            completed[(repeat, fold)] = _l5_result_from_checkpoint(checkpoint)
+            resumed_count += 1
+    if resume and checkpoint_root is not None:
+        unexpected = []
+        for name in os.listdir(checkpoint_root):
+            if name.endswith(".json") and name != "fold_checkpoint.json":
+                unexpected.append(name)
+        if unexpected:
+            raise W08ValidationError(
+                "L5 checkpoint root contains unsupported JSON state")
+
+    pending = [fold for fold in folds if fold not in completed]
+    _l5_prepare_worker_environment()
+    worker_cache_root = None
+    if checkpoint_root is not None:
+        worker_cache_root = os.path.abspath(os.path.join(
+            checkpoint_root, os.pardir, "slic_cache"))
+    base_args = (feature_frame, outer_splits, provider, config,
+                 tuple(selected_runs), strict_schema, require_fixed_hash,
+                 lambda_count, solver_max_iter, solver_tolerance, population,
+                 None, worker_cache_root)
+    active_results = {}
+
+    def submit_args(fold_key):
+        args = list(base_args)
+        args[-2] = tuple(fold_key)
+        return tuple(args)
+
+    if pending and outer_fold_workers == 1:
+        for fold_key in pending:
+            active_results[fold_key] = _l5_worker_job(submit_args(fold_key))
+    elif pending:
+        executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=int(outer_fold_workers),
+            mp_context=multiprocessing.get_context("spawn"))
+        futures = {}
+        pending_index = 0
+        try:
+            while pending_index < len(pending) and len(futures) < outer_fold_workers:
+                fold_key = pending[pending_index]
+                pending_index += 1
+                futures[executor.submit(_l5_worker_job,
+                                         submit_args(fold_key))] = fold_key
+            while futures:
+                done, _ = concurrent.futures.wait(
+                    list(futures), return_when=concurrent.futures.FIRST_COMPLETED)
+                for future in done:
+                    fold_key = futures.pop(future)
+                    active_results[fold_key] = future.result()
+                while pending_index < len(pending) and len(futures) < outer_fold_workers:
+                    fold_key = pending[pending_index]
+                    pending_index += 1
+                    futures[executor.submit(_l5_worker_job,
+                                             submit_args(fold_key))] = fold_key
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            # On Windows, wait=False can close the process-pool queue while
+            # its management thread is still polling the pipe.  Waiting for
+            # already-running workers gives a clean, fail-closed shutdown;
+            # no new futures are submitted after the exception.
+            executor.shutdown(wait=True)
+            raise
+        else:
+            executor.shutdown(wait=True)
+
+    new_checkpoint_count = 0
+    checkpoint_contracts = []
+    fold_results = []
+    selection_results = []
+    predictions = []
+    for fold_key in folds:
+        if fold_key in active_results:
+            result = active_results[fold_key]
+            if checkpoint_root is not None:
+                _l5_write_checkpoint(
+                    checkpoint_root, fold_key[0], fold_key[1], result, contract)
+                new_checkpoint_count += 1
+        else:
+            result = completed[fold_key]
+        fold_results.extend(result["fold_results"].to_dict(orient="records"))
+        selection_results.extend(
+            result["selection_results"].to_dict(orient="records"))
+        predictions.extend(result["predictions"].to_dict(orient="records"))
+        checkpoint_contracts.append(contract)
+        if progress_callback is not None:
+            try:
+                progress_callback(**{
+                    "status": "running",
+                    "current_repeat": None,
+                    "current_fold": None,
+                    "current_run": None,
+                    "completed_outer_folds": int(
+                        folds.index(fold_key) + 1),
+                    "total_outer_folds": int(len(folds)),
+                    "completed_runs_in_fold": int(len(selected_runs)),
+                    "total_runs_in_fold": int(len(selected_runs)),
+                })
+            except Exception:
+                pass
+    if len(completed) + len(active_results) != len(folds):
+        raise W08ValidationError("L5 did not cover every outer fold")
+    merged = _l5_merge_results(
+        fold_results, selection_results, predictions, selected_runs,
+        split_summary, split_hash, config, require_fixed_hash,
+        outer_fold_workers, resumed_count, new_checkpoint_count,
+        checkpoint_contracts)
+    expected_rows = len(folds) * len(selected_runs)
+    if len(merged["fold_results"]) != expected_rows or \
+            len(merged["selection_results"]) != expected_rows:
+        raise W08ValidationError("L5 result row coverage is incomplete")
+    if require_fixed_hash and len(folds) != 50:
+        raise W08ValidationError("formal W08 L5 fold coverage is not 50")
+    return merged
+
+
 def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                       models=None, runs=None, strict_schema=False, require_fixed_hash=False,
                       lambda_count=LAMBDA_COUNT, max_outer_folds=None,
                       solver_max_iter=None, solver_tolerance=None,
-                      population=None, progress_callback=None):
+                      population=None, progress_callback=None,
+                      outer_fold_workers=1, checkpoint_root=None,
+                      attempt_id=None, code_commit=None, resume=False,
+                      outer_fold_selector=None, _worker_mode=False):
     """Run W08 against an already-authorized A-only frame without file I/O.
 
     ``max_outer_folds`` exists solely for synthetic/preflight tests.  It is
     rejected when ``require_fixed_hash`` is true, so a formal run cannot be
     accidentally truncated.
     """
+    if type(outer_fold_workers) is not int or \
+            outer_fold_workers not in L5_ALLOWED_WORKERS:
+        raise W08ValidationError(
+            "outer_fold_workers must be one of %s" % (L5_ALLOWED_WORKERS,))
     config = _validate_config(config or load_config())
     if solver_max_iter is None:
         solver_max_iter = int(config["elastic_net_max_iter"])
@@ -3279,6 +3819,23 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
         total_runs_in_fold=len(selected_runs))
 
     id_to_row = data.set_index("patient_id", drop=False)
+    if outer_fold_selector is not None:
+        selector = tuple(int(value) for value in outer_fold_selector)
+        if len(selector) != 2 or selector not in set(
+                (int(repeat), int(fold)) for repeat, fold, _, _ in
+                _outer_fold_rows(outer_splits, set(data["patient_id"]))):
+            raise W08ValidationError("L5 outer fold selector is invalid")
+    else:
+        selector = None
+    if not _worker_mode and (checkpoint_root is not None or resume or
+                             int(outer_fold_workers) > 1):
+        return _l5_run_fold_coordinator(
+            data, outer_splits, provider, config, selected_runs,
+            strict_schema, require_fixed_hash, lambda_count, solver_max_iter,
+            solver_tolerance, population, split_summary, split_hash,
+            int(outer_fold_workers), checkpoint_root, attempt_id, code_commit,
+            resume, max_outer_folds=max_outer_folds,
+            progress_callback=emit_progress)
     population_names = list(OrderedDict(
         (run["population"], None) for run in selected_runs))
     predictions = []
@@ -3292,6 +3849,8 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
     # the same training-derived state.
     for repeat, fold, outer_train_ids, outer_validation_ids in _outer_fold_rows(
             outer_splits, set(data["patient_id"])):
+        if selector is not None and (int(repeat), int(fold)) != selector:
+            continue
         if max_outer_folds is not None and fold_count >= int(max_outer_folds):
             break
         emit_progress(
@@ -3602,7 +4161,10 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
 
 
 def run_w08(feature_frame, provider, config_path=DEFAULT_CONFIG,
-            strict_schema=True, progress_callback=None):
+            strict_schema=True, progress_callback=None,
+            outer_fold_workers=L5_DEFAULT_OUTER_FOLD_WORKERS,
+            checkpoint_root=None, attempt_id=None, code_commit=None,
+            resume=False):
     """Formal entry point: load only locked W06/W07 artifacts, then run in memory."""
     config = load_config(config_path)
     population = load_frozen_a_population()
@@ -3615,7 +4177,10 @@ def run_w08(feature_frame, provider, config_path=DEFAULT_CONFIG,
         lambda_count=LAMBDA_COUNT,
         solver_max_iter=int(config["elastic_net_max_iter"]),
         solver_tolerance=ELASTIC_NET_TOLERANCE, population=population,
-        progress_callback=progress_callback)
+        progress_callback=progress_callback,
+        outer_fold_workers=outer_fold_workers,
+        checkpoint_root=checkpoint_root, attempt_id=attempt_id,
+        code_commit=code_commit, resume=resume)
 
 
 def main():

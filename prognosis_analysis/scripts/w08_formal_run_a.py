@@ -148,7 +148,7 @@ W08_PROGRESS_ALLOWED_KEYS = frozenset((
     "started_at_epoch", "updated_at_epoch", "elapsed_seconds",
 ) + B_ACCESS_FLAGS)
 W08_PROGRESS_STATUSES = frozenset((
-    "initializing", "running", "failed", "complete",
+    "initializing", "running", "interrupted", "failed", "complete",
 ))
 W08_PROGRESS_RUN_IDS = frozenset(w08.FIXED_RUN_IDS)
 W08_PROGRESS_MAX_REPEAT = 10
@@ -295,6 +295,46 @@ def _begin_attempt(output_root, code_commit, started_epoch):
         "code_commit": code_commit,
         "started_at_epoch": started_epoch,
         "status": "staging",
+    }
+
+
+def _resume_attempt(output_root, code_commit):
+    """Open exactly one interrupted staging attempt for explicit recovery."""
+    output_root = os.path.abspath(os.fspath(output_root))
+    canonical = _canonical_output_paths(output_root)
+    existing = [name for name, path in canonical.items()
+                if os.path.exists(path)]
+    if existing:
+        raise RuntimeError(
+            "canonical W08 outputs already exist; refusing resume: %s" %
+            ",".join(existing))
+    staging = _staging_dirs(output_root)
+    if len(staging) != 1:
+        raise RuntimeError(
+            "W08 resume requires exactly one staging attempt, found %d" %
+            len(staging))
+    staging_root = staging[0]
+    attempt_id = os.path.basename(staging_root)[:-len(".staging")]
+    attempt_state_path = os.path.join(staging_root, W08_ATTEMPT_STATE_NAME)
+    attempt_state = _read_json_path(attempt_state_path,
+                                    "W08 staging attempt state")
+    if attempt_state.get("stage") != "W08" or \
+            attempt_state.get("status") not in (
+                "staging", "running", "modeling", "writing", "interrupted"):
+        raise RuntimeError("W08 staging attempt is not resumable")
+    if attempt_state.get("attempt_id") != attempt_id or \
+            attempt_state.get("final_outputs_generated") is not False:
+        raise RuntimeError("W08 staging attempt identity/state is invalid")
+    recorded_commit = attempt_state.get("code_commit_at_attempt")
+    if recorded_commit != code_commit:
+        raise RuntimeError("W08 resume code commit does not match the attempt")
+    return {
+        "attempt_id": attempt_id,
+        "staging_root": staging_root,
+        "output_root": output_root,
+        "code_commit": code_commit,
+        "started_at_epoch": attempt_state.get("started_at_epoch"),
+        "status": "resuming",
     }
 
 
@@ -1271,7 +1311,8 @@ def _validate_archived_failure_schema(attempt_id, failure, run_state):
     return "explicit_failed"
 
 
-def _validate_reconciled_attempts(project_root, output_root, status):
+def _validate_reconciled_attempts(project_root, output_root, status,
+                                  allow_staging_attempt=False):
     final_paths = [name for name in W08_FINAL_OUTPUT_NAMES
                    if os.path.exists(os.path.join(output_root, name))]
     if final_paths:
@@ -1279,17 +1320,39 @@ def _validate_reconciled_attempts(project_root, output_root, status):
             "prior final outputs exist: %s" % ",".join(final_paths))
 
     stale_staging = _staging_dirs(output_root)
-    if stale_staging:
+    if stale_staging and not allow_staging_attempt:
         raise RuntimeError(
             "unfinalized W08 staging attempts exist: %s" %
             ",".join(os.path.basename(path) for path in stale_staging))
+    if allow_staging_attempt and len(stale_staging) > 1:
+        raise RuntimeError("multiple W08 staging attempts block resume")
+    if allow_staging_attempt and stale_staging:
+        staging_root = stale_staging[0]
+        staging_attempt = os.path.basename(staging_root)[:-len(".staging")]
+        attempt_state_path = os.path.join(staging_root, W08_ATTEMPT_STATE_NAME)
+        if not os.path.isfile(attempt_state_path):
+            raise RuntimeError("staging attempt lacks attempt state")
+        staging_state = _read_json_path(
+            attempt_state_path, "W08 staging attempt state")
+        if staging_state.get("attempt_id") != staging_attempt or \
+                staging_state.get("status") not in (
+                    "staging", "running", "modeling", "writing", "interrupted") or \
+                staging_state.get("final_outputs_generated") is not False:
+            raise RuntimeError("staging attempt is not resumable")
+        if any(os.path.exists(os.path.join(staging_root, name))
+               for name in W08_FINAL_OUTPUT_NAMES):
+            raise RuntimeError("staging attempt contains final outputs")
 
     root_run_state_path = os.path.join(output_root, W08_RUN_STATE_NAME)
     if os.path.isfile(root_run_state_path):
         root_run_state = _read_json_path(root_run_state_path, "W08 run state")
-        if root_run_state.get("status") not in ("failed",):
+        allowed_root_states = ("failed", "interrupted", "running", "modeling") \
+            if allow_staging_attempt else ("failed",)
+        if root_run_state.get("status") not in allowed_root_states:
             raise RuntimeError("prior W08 output state is incomplete or completed")
-        if not root_run_state.get("failure_stage") or \
+        requires_failure_stage = root_run_state.get("status") in (
+            "failed", "interrupted")
+        if (requires_failure_stage and not root_run_state.get("failure_stage")) or \
                 root_run_state.get("final_outputs_generated") is not False:
             raise RuntimeError("prior W08 failed state is not fail-closed")
 
@@ -1298,7 +1361,8 @@ def _validate_reconciled_attempts(project_root, output_root, status):
     if os.path.isdir(attempts_root):
         attempt_dirs = sorted(
             child for child in os.listdir(attempts_root)
-            if os.path.isdir(os.path.join(attempts_root, child)))
+            if os.path.isdir(os.path.join(attempts_root, child)) and
+            child.endswith("_failed"))
     last_attempt = status.get("last_attempt", {}) if isinstance(status, dict) else {}
     execution = status.get("execution", {}) if isinstance(status, dict) else {}
     if attempt_dirs and (
@@ -1392,7 +1456,8 @@ def _run_gate_check(checks, failures, name, callback, project_root, output_root)
     return value
 
 
-def validate_w08_release_gate(output_root=OUTPUT_ROOT, project_root=PROJECT_ROOT):
+def validate_w08_release_gate(output_root=OUTPUT_ROOT, project_root=PROJECT_ROOT,
+                              resume=False):
     """Validate every non-patient W08 release prerequisite before any A read."""
     project_root = os.path.abspath(project_root)
     output_root = os.path.abspath(os.fspath(output_root))
@@ -1432,7 +1497,9 @@ def validate_w08_release_gate(output_root=OUTPUT_ROOT, project_root=PROJECT_ROOT
         project_root, output_root)
     _run_gate_check(
         checks, failures, "prior_attempts_reconciled",
-        lambda: _validate_reconciled_attempts(project_root, output_root, execution_status),
+        lambda: _validate_reconciled_attempts(
+            project_root, output_root, execution_status,
+            allow_staging_attempt=bool(resume)),
         project_root, output_root)
     _run_gate_check(
         checks, failures, "G3_release_certificate",
@@ -2751,6 +2818,95 @@ def _write_failed_progress_direct(output_root, started_epoch):
     return progress
 
 
+def _write_interrupted_progress_direct(output_root, started_epoch):
+    """Publish an incomplete, resumable progress state without active IDs."""
+    now = time.time()
+    progress = {
+        "schema": W08_PROGRESS_SCHEMA,
+        "schema_version": W08_PROGRESS_SCHEMA_VERSION,
+        "stage": "W08",
+        "status": "interrupted",
+        "current_repeat": None,
+        "current_fold": None,
+        "current_run": None,
+        "completed_outer_folds": None,
+        "total_outer_folds": None,
+        "completed_runs_in_fold": None,
+        "total_runs_in_fold": None,
+        "started_at_epoch": started_epoch,
+        "updated_at_epoch": now,
+        "elapsed_seconds": round(now - started_epoch, 3),
+    }
+    for key in B_ACCESS_FLAGS:
+        progress[key] = False
+    _validate_progress(progress)
+    os.makedirs(output_root, exist_ok=True)
+    _atomic_json(os.path.join(output_root, W08_PROGRESS_NAME), progress)
+    return progress
+
+
+def _write_interrupted_state(output_root, project_root, stage, started_epoch,
+                             exception, attempt=None,
+                             progress_observability=None):
+    """Keep a modeling interruption resumable while publishing no outputs."""
+    output_root = os.path.abspath(os.fspath(output_root))
+    if attempt is not None and attempt.get("status") != "failed":
+        staging_root = attempt.get("staging_root")
+        if staging_root and os.path.isdir(staging_root):
+            _atomic_json(os.path.join(staging_root, W08_ATTEMPT_STATE_NAME), {
+                "stage": "W08",
+                "status": "interrupted",
+                "attempt_id": attempt.get("attempt_id"),
+                "code_commit_at_attempt": attempt.get("code_commit"),
+                "started_at_epoch": attempt.get("started_at_epoch"),
+                "final_outputs_generated": False,
+                "failure_stage": stage,
+            })
+            _atomic_json(os.path.join(staging_root, W08_RUN_STATE_NAME), {
+                "stage": "W08", "status": "interrupted", "formal_run": True,
+                "failure_stage": stage,
+                "exception_class": exception.__class__.__name__,
+                "failure_reason": _safe_exception_text(
+                    exception, project_root, output_root),
+                "attempt_id": attempt.get("attempt_id"),
+                "code_commit": attempt.get("code_commit"),
+                "final_outputs_generated": False,
+                "B_data_read": False, "B_reader_invoked": False,
+                "B_source_opened": False, "B_statistics_generated": False,
+            })
+    if isinstance(progress_observability, dict):
+        progress_observability["write_attempts"] += 1
+    try:
+        _write_interrupted_progress_direct(output_root, started_epoch)
+    except Exception:
+        if isinstance(progress_observability, dict):
+            progress_observability["write_failures"] += 1
+    state = {
+        "stage": "W08",
+        "status": "interrupted",
+        "formal_run": True,
+        "formal_run_started": True,
+        "started_at_epoch": started_epoch,
+        "ended_at_epoch": time.time(),
+        "failure_stage": stage,
+        "exception_class": exception.__class__.__name__,
+        "failure_reason": _safe_exception_text(
+            exception, project_root, output_root),
+        "code_commit": attempt.get("code_commit") if attempt else None,
+        "attempt_id": attempt.get("attempt_id") if attempt else None,
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+        "resume_required": True,
+    }
+    if isinstance(progress_observability, dict):
+        state["progress_observability"] = dict(progress_observability)
+    os.makedirs(output_root, exist_ok=True)
+    _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), state)
+
+
 def _write_failure_state(output_root, project_root, stage, started_epoch,
                          formal_run_started, exception, attempt=None,
                          progress_observability=None):
@@ -2834,7 +2990,7 @@ def _write_failure_state(output_root, project_root, stage, started_epoch,
         pass
 
 
-def formal(output_root=OUTPUT_ROOT):
+def formal(output_root=OUTPUT_ROOT, resume=False):
     output_root = os.path.abspath(os.fspath(output_root))
     started = time.time()
     stage = "release_gate"
@@ -2853,14 +3009,21 @@ def formal(output_root=OUTPUT_ROOT):
 
     try:
         release_gate = validate_w08_release_gate(
-            output_root=output_root, project_root=PROJECT_ROOT)
+            output_root=output_root, project_root=PROJECT_ROOT,
+            resume=bool(resume))
         _require_formal_release_authorization(release_gate)
         os.makedirs(output_root, exist_ok=True)
         _atomic_json(os.path.join(output_root, W08_RELEASE_GATE_NAME), release_gate)
 
         stage = "initialisation"
         formal_run_started = True
-        attempt = _begin_attempt(output_root, release_gate["code_commit"], started)
+        if resume:
+            attempt = _resume_attempt(output_root, release_gate["code_commit"])
+            if type(attempt.get("started_at_epoch")) not in (int, float):
+                raise RuntimeError("resumable W08 attempt has no valid start time")
+            started = float(attempt["started_at_epoch"])
+        else:
+            attempt = _begin_attempt(output_root, release_gate["code_commit"], started)
         _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
             "stage": "W08", "status": "running", "formal_run": True,
             "B_data_read": False, "B_reader_invoked": False,
@@ -2905,7 +3068,12 @@ def formal(output_root=OUTPUT_ROOT):
             safe_progress(payload)
 
         result = w08.run_w08(
-            frame, provider, progress_callback=progress_callback)
+            frame, provider, progress_callback=progress_callback,
+            outer_fold_workers=int(w08.L5_DEFAULT_OUTER_FOLD_WORKERS),
+            checkpoint_root=os.path.join(
+                attempt["staging_root"], "work", "checkpoints"),
+            attempt_id=attempt["attempt_id"],
+            code_commit=release_gate["code_commit"], resume=bool(resume))
         result["audit"]["progress_observability"] = dict(progress_observability)
         stage = "result_write"
         manifest = write_results(
@@ -2952,9 +3120,19 @@ def formal(output_root=OUTPUT_ROOT):
             "elapsed_seconds": round(time.time() - started, 3),
         }, ensure_ascii=False, sort_keys=True))
     except BaseException as exc:
-        _write_failure_state(output_root, PROJECT_ROOT, stage, started,
-                             formal_run_started, exc, attempt=attempt,
-                             progress_observability=progress_observability)
+        if isinstance(exc, KeyboardInterrupt) and \
+                stage == "nested_cv_modeling" and attempt is not None and \
+                attempt.get("status") != "failed" and os.path.isdir(
+                    os.path.join(attempt.get("staging_root", ""),
+                                 "work", "checkpoints")):
+            _write_interrupted_state(
+                output_root, PROJECT_ROOT, stage, started, exc,
+                attempt=attempt,
+                progress_observability=progress_observability)
+        else:
+            _write_failure_state(output_root, PROJECT_ROOT, stage, started,
+                                 formal_run_started, exc, attempt=attempt,
+                                 progress_observability=progress_observability)
         raise
 
 
@@ -2964,6 +3142,8 @@ def main():
                         help="validate one real A fold/provider transformation")
     parser.add_argument("--preflight-fold", action="store_true",
                         help="audit first-fold fold-specific mask sizes only")
+    parser.add_argument("--resume", action="store_true",
+                        help="resume the sole interrupted W08 staging attempt")
     parser.add_argument("--output-root", default=OUTPUT_ROOT,
                         help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -2972,7 +3152,7 @@ def main():
     elif args.preflight_fold:
         preflight_fold(args.output_root)
     else:
-        formal(args.output_root)
+        formal(args.output_root, resume=bool(args.resume))
 
 
 if __name__ == "__main__":
