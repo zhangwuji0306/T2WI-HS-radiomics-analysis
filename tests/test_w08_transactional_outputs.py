@@ -211,6 +211,28 @@ class W08TransactionalOutputTests(unittest.TestCase):
                 "final_outputs_generated": False,
             }
             provider = SimpleNamespace(_case_cache={})
+            original_write_progress = formal._write_progress
+            completion_observation = {}
+
+            def observe_completion_progress(root, started_epoch, payload=None):
+                if payload and payload.get("status") == "complete":
+                    with open(os.path.join(root, formal.W08_RUN_STATE_NAME),
+                              encoding="utf-8") as handle:
+                        run_state = json.load(handle)
+                    with open(os.path.join(root, formal.W08_ATTEMPT_STATE_NAME),
+                              encoding="utf-8") as handle:
+                        attempt_state = json.load(handle)
+                    completion_observation.update({
+                        "manifest": os.path.isfile(os.path.join(
+                            root, formal.W08_OUTPUT_MANIFEST_NAME)),
+                        "run_state": run_state["status"],
+                        "attempt_state": attempt_state["status"],
+                        "run_outputs": run_state["final_outputs_generated"],
+                        "attempt_outputs": attempt_state[
+                            "final_outputs_generated"],
+                    })
+                return original_write_progress(root, started_epoch, payload)
+
             with mock.patch.object(formal, "W06_POPULATION", source), \
                     mock.patch.object(formal, "validate_w08_release_gate",
                                        return_value=release_gate), \
@@ -222,7 +244,9 @@ class W08TransactionalOutputTests(unittest.TestCase):
                     mock.patch.object(formal.w08, "run_w08",
                                        return_value=_synthetic_result()), \
                     mock.patch.object(formal.w08, "load_config",
-                                       return_value={}):
+                                       return_value={}), \
+                    mock.patch.object(formal, "_write_progress",
+                                      side_effect=observe_completion_progress):
                 formal.formal(output_root)
             with open(os.path.join(output_root, formal.W08_RUN_STATE_NAME),
                       encoding="utf-8") as handle:
@@ -234,6 +258,108 @@ class W08TransactionalOutputTests(unittest.TestCase):
             self.assertTrue(state["final_outputs_generated"])
             self.assertEqual(state["attempt_id"], manifest["attempt_id"])
             self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(completion_observation, {
+                "manifest": True,
+                "run_state": "complete",
+                "attempt_state": "complete",
+                "run_outputs": True,
+                "attempt_outputs": True,
+            })
+            with open(os.path.join(output_root, formal.W08_PROGRESS_NAME),
+                      encoding="utf-8") as handle:
+                progress = json.load(handle)
+            self.assertEqual(progress["status"], "complete")
+
+    def test_external_interrupt_before_promotion_never_emits_complete_progress(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            source = self._write_synthetic_population_source(output_root)
+            release_gate = {
+                "stage": "W08_FORMAL_RELEASE",
+                "status": "PASS",
+                "formal_authorized": True,
+                "code_commit": CURRENT_COMMIT,
+                "checks": {},
+                "failure_reasons": [],
+                "B_access": dict((key, False) for key in formal.B_ACCESS_FLAGS),
+                "final_outputs_generated": False,
+            }
+            provider = SimpleNamespace(_case_cache={})
+            with mock.patch.object(formal, "W06_POPULATION", source), \
+                    mock.patch.object(formal, "validate_w08_release_gate",
+                                       return_value=release_gate), \
+                    mock.patch.object(formal, "_git_head",
+                                       return_value=CURRENT_COMMIT), \
+                    mock.patch.object(
+                        formal, "_load_population_and_provider",
+                        return_value=( ["synthetic-001"], None, provider)), \
+                    mock.patch.object(formal.w08, "run_w08",
+                                       side_effect=KeyboardInterrupt()):
+                with self.assertRaises(KeyboardInterrupt):
+                    formal.formal(output_root)
+
+            with open(os.path.join(output_root, formal.W08_PROGRESS_NAME),
+                      encoding="utf-8") as handle:
+                progress = json.load(handle)
+            with open(os.path.join(output_root, formal.W08_RUN_STATE_NAME),
+                      encoding="utf-8") as handle:
+                run_state = json.load(handle)
+            attempts = [name for name in os.listdir(
+                os.path.join(output_root, "attempts"))
+                        if name.endswith(".staging")]
+            self.assertEqual(progress["status"], "running")
+            self.assertEqual(run_state["status"], "modeling")
+            self.assertEqual(len(attempts), 1)
+            with open(os.path.join(output_root, "attempts", attempts[0],
+                                   formal.W08_ATTEMPT_STATE_NAME),
+                      encoding="utf-8") as handle:
+                attempt_state = json.load(handle)
+            self.assertEqual(attempt_state["status"], "staging")
+            self.assertFalse(os.path.exists(os.path.join(
+                output_root, formal.W08_OUTPUT_MANIFEST_NAME)))
+            self.assertNotEqual(progress["status"], "complete")
+
+    def test_progress_write_failure_is_observability_only(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            source = self._write_synthetic_population_source(output_root)
+            release_gate = {
+                "stage": "W08_FORMAL_RELEASE",
+                "status": "PASS",
+                "formal_authorized": True,
+                "code_commit": CURRENT_COMMIT,
+                "checks": {},
+                "failure_reasons": [],
+                "B_access": dict((key, False) for key in formal.B_ACCESS_FLAGS),
+                "final_outputs_generated": False,
+            }
+            provider = SimpleNamespace(_case_cache={})
+            with mock.patch.object(formal, "W06_POPULATION", source), \
+                    mock.patch.object(formal, "validate_w08_release_gate",
+                                       return_value=release_gate), \
+                    mock.patch.object(formal, "_git_head",
+                                       return_value=CURRENT_COMMIT), \
+                    mock.patch.object(
+                        formal, "_load_population_and_provider",
+                        return_value=( ["synthetic-001"], None, provider)), \
+                    mock.patch.object(formal.w08, "run_w08",
+                                       return_value=_synthetic_result()), \
+                    mock.patch.object(formal.w08, "load_config",
+                                       return_value={}), \
+                    mock.patch.object(
+                        formal, "_write_progress",
+                        side_effect=OSError("synthetic progress failure")):
+                formal.formal(output_root)
+
+            self.assertTrue(os.path.isfile(os.path.join(
+                output_root, formal.W08_OUTPUT_MANIFEST_NAME)))
+            self.assertFalse(os.path.exists(os.path.join(
+                output_root, formal.W08_PROGRESS_NAME)))
+            with open(os.path.join(output_root, formal.W08_RUN_STATE_NAME),
+                      encoding="utf-8") as handle:
+                state = json.load(handle)
+            self.assertEqual(state["status"], "complete")
+            self.assertTrue(state["final_outputs_generated"])
+            self.assertGreater(state["progress_observability"]["write_failures"],
+                               0)
 
 
 if __name__ == "__main__":

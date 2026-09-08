@@ -146,6 +146,11 @@ W08_PROGRESS_ALLOWED_KEYS = frozenset((
 W08_PROGRESS_STATUSES = frozenset((
     "initializing", "running", "failed", "complete",
 ))
+W08_PROGRESS_RUN_IDS = frozenset(w08.FIXED_RUN_IDS)
+W08_PROGRESS_MAX_REPEAT = 10
+W08_PROGRESS_MAX_FOLD = 5
+W08_PROGRESS_TOTAL_OUTER_FOLDS = 50
+W08_PROGRESS_TOTAL_RUNS_IN_FOLD = len(w08.FIXED_RUN_IDS)
 
 PYRADIOMICS_VERSION = "3.0.1"
 COMPATIBILITY_REASON = (
@@ -452,6 +457,25 @@ def _promote_staged_outputs(context):
         # The manifest is already validated and is the completion marker;
         # a cleanup failure must not turn a committed output into a failure.
         pass
+
+
+def _write_completed_attempt_state(attempt, output_root, code_commit,
+                                   started_epoch):
+    """Record the promoted attempt's terminal state outside the removed staging tree."""
+    _atomic_json(os.path.join(output_root, W08_ATTEMPT_STATE_NAME), {
+        "stage": "W08",
+        "status": "complete",
+        "attempt_id": attempt["attempt_id"],
+        "code_commit_at_attempt": code_commit,
+        "started_at_epoch": started_epoch,
+        "ended_at_epoch": time.time(),
+        "final_outputs_generated": True,
+        "formal_output_manifest": W08_OUTPUT_MANIFEST_NAME,
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+    })
 
 
 def _project_path(project_root, relative_path):
@@ -2032,18 +2056,23 @@ def preflight_fold(output_root=OUTPUT_ROOT):
     }, ensure_ascii=False, sort_keys=True))
 
 
-def _progress_integer(value, label, allow_none=True, minimum=0):
+def _progress_integer(value, label, allow_none=True, minimum=0, maximum=None):
     if value is None and allow_none:
         return
     if type(value) is not int or value < minimum:
         raise ValueError("progress %s must be an integer >= %d" %
                          (label, minimum))
+    if maximum is not None and value > maximum:
+        raise ValueError("progress %s exceeds maximum %d" % (label, maximum))
 
 
 def _validate_progress(progress):
     """Validate the closed, aggregate-only progress schema."""
     if not isinstance(progress, dict):
         raise ValueError("progress must be an object")
+    missing = sorted(W08_PROGRESS_ALLOWED_KEYS - set(progress))
+    if missing:
+        raise ValueError("progress is missing required fields: %s" % missing)
     unknown = sorted(set(progress) - W08_PROGRESS_ALLOWED_KEYS)
     if unknown:
         raise ValueError("progress contains unsupported fields: %s" % unknown)
@@ -2052,23 +2081,44 @@ def _validate_progress(progress):
         raise ValueError("progress schema binding is invalid")
     if progress.get("stage") != "W08":
         raise ValueError("progress stage must be W08")
-    if progress.get("status") not in W08_PROGRESS_STATUSES:
+    if not isinstance(progress.get("status"), str) or \
+            progress.get("status") not in W08_PROGRESS_STATUSES:
         raise ValueError("progress status is invalid")
     _progress_integer(progress.get("current_repeat"), "current_repeat",
-                      minimum=1)
-    _progress_integer(progress.get("current_fold"), "current_fold", minimum=1)
+                      minimum=1, maximum=W08_PROGRESS_MAX_REPEAT)
+    _progress_integer(progress.get("current_fold"), "current_fold", minimum=1,
+                      maximum=W08_PROGRESS_MAX_FOLD)
+    if ((progress.get("current_repeat") is None) !=
+            (progress.get("current_fold") is None)):
+        raise ValueError("progress repeat and fold must be both set or both null")
     current_run = progress.get("current_run")
-    if current_run is not None and (not isinstance(current_run, str) or
-                                    not current_run.strip() or
-                                    "/" in current_run or "\\" in current_run):
-        raise ValueError("progress current_run must be a safe run name")
+    if current_run is not None and (
+            not isinstance(current_run, str) or
+            current_run not in W08_PROGRESS_RUN_IDS):
+        raise ValueError("progress current_run is not a frozen W08 run")
+    if current_run is not None and progress.get("current_repeat") is None:
+        raise ValueError("progress current_run requires repeat and fold")
     for key in ("completed_outer_folds", "total_outer_folds",
                 "completed_runs_in_fold", "total_runs_in_fold"):
-        _progress_integer(progress.get(key), key)
+        _progress_integer(progress.get(key), key, maximum=(
+            W08_PROGRESS_TOTAL_OUTER_FOLDS
+            if "outer_folds" in key else W08_PROGRESS_TOTAL_RUNS_IN_FOLD))
+    total_outer = progress.get("total_outer_folds")
+    completed_outer = progress.get("completed_outer_folds")
+    if total_outer is not None and total_outer != W08_PROGRESS_TOTAL_OUTER_FOLDS:
+        raise ValueError("progress total_outer_folds differs from frozen W08 total")
+    if total_outer is None and completed_outer not in (None, 0):
+        raise ValueError("progress completed_outer_folds needs a total")
     if (progress.get("completed_outer_folds") is not None and
             progress.get("total_outer_folds") is not None and
             progress["completed_outer_folds"] > progress["total_outer_folds"]):
         raise ValueError("progress completed outer folds exceed total")
+    total_runs = progress.get("total_runs_in_fold")
+    completed_runs = progress.get("completed_runs_in_fold")
+    if total_runs is not None and total_runs != W08_PROGRESS_TOTAL_RUNS_IN_FOLD:
+        raise ValueError("progress total_runs_in_fold differs from frozen W08 total")
+    if total_runs is None and completed_runs not in (None, 0):
+        raise ValueError("progress completed_runs_in_fold needs a total")
     if (progress.get("completed_runs_in_fold") is not None and
             progress.get("total_runs_in_fold") is not None and
             progress["completed_runs_in_fold"] > progress["total_runs_in_fold"]):
@@ -2077,10 +2127,36 @@ def _validate_progress(progress):
         value = progress.get(key)
         if type(value) not in (int, float) or not np.isfinite(float(value)):
             raise ValueError("progress %s must be a finite number" % key)
+    if progress["started_at_epoch"] < 0 or \
+            progress["updated_at_epoch"] < progress["started_at_epoch"]:
+        raise ValueError("progress timestamps are out of range")
     if progress["elapsed_seconds"] < 0:
         raise ValueError("progress elapsed_seconds cannot be negative")
+    if progress["status"] == "initializing":
+        if any(progress.get(key) is not None for key in
+               ("current_repeat", "current_fold", "current_run",
+                "total_runs_in_fold")) or \
+                progress.get("completed_outer_folds") != 0 or \
+                progress.get("total_outer_folds") is not None:
+            raise ValueError("initializing progress has an invalid shape")
+    if progress["status"] == "complete":
+        if any(progress.get(key) is not None for key in
+               ("current_repeat", "current_fold", "current_run")) or \
+                progress.get("completed_outer_folds") != \
+                W08_PROGRESS_TOTAL_OUTER_FOLDS or \
+                progress.get("total_outer_folds") != \
+                W08_PROGRESS_TOTAL_OUTER_FOLDS or \
+                progress.get("completed_runs_in_fold") != \
+                W08_PROGRESS_TOTAL_RUNS_IN_FOLD or \
+                progress.get("total_runs_in_fold") != \
+                W08_PROGRESS_TOTAL_RUNS_IN_FOLD:
+            raise ValueError("complete progress has an invalid shape")
+    if progress["status"] == "failed" and any(
+            progress.get(key) is not None
+            for key in ("current_repeat", "current_fold", "current_run")):
+        raise ValueError("failed progress cannot identify an active run")
     for key in B_ACCESS_FLAGS:
-        if progress.get(key) is not False:
+        if type(progress.get(key)) is not bool or progress.get(key) is not False:
             raise ValueError("progress %s must remain false" % key)
     return progress
 
@@ -2277,21 +2353,13 @@ def formal(output_root=OUTPUT_ROOT):
 
         result = w08.run_w08(
             frame, provider, progress_callback=progress_callback)
-        safe_progress({
-            "status": "complete",
-            "current_repeat": None,
-            "current_fold": None,
-            "current_run": None,
-            "completed_outer_folds": 50,
-            "total_outer_folds": 50,
-            "completed_runs_in_fold": 13,
-            "total_runs_in_fold": 13,
-        })
         result["audit"]["progress_observability"] = dict(progress_observability)
         stage = "result_write"
         manifest = write_results(
             result, w08.load_config(), population, started, output_root,
             attempt=attempt, code_commit=release_gate["code_commit"])
+        _write_completed_attempt_state(
+            attempt, output_root, release_gate["code_commit"], started)
         _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
             "stage": "W08", "status": "complete", "formal_run": True,
             "B_data_read": False, "B_reader_invoked": False,
@@ -2305,6 +2373,36 @@ def formal(output_root=OUTPUT_ROOT):
             "n_predictions": int(len(result["predictions"])),
             "progress_observability": dict(progress_observability),
         })
+        final_progress_ok = safe_progress({
+            "status": "complete",
+            "current_repeat": None,
+            "current_fold": None,
+            "current_run": None,
+            "completed_outer_folds": W08_PROGRESS_TOTAL_OUTER_FOLDS,
+            "total_outer_folds": W08_PROGRESS_TOTAL_OUTER_FOLDS,
+            "completed_runs_in_fold": W08_PROGRESS_TOTAL_RUNS_IN_FOLD,
+            "total_runs_in_fold": W08_PROGRESS_TOTAL_RUNS_IN_FOLD,
+        })
+        if not final_progress_ok:
+            # Progress is observability only.  Preserve the successful model
+            # result while making a final progress-write failure visible in
+            # the terminal run audit when the status path is still writable.
+            try:
+                _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
+                    "stage": "W08", "status": "complete", "formal_run": True,
+                    "B_data_read": False, "B_reader_invoked": False,
+                    "B_source_opened": False, "B_statistics_generated": False,
+                    "final_outputs_generated": True, "started_at_epoch": started,
+                    "completed_at_epoch": time.time(),
+                    "code_commit": release_gate["code_commit"],
+                    "attempt_id": attempt["attempt_id"],
+                    "formal_output_manifest": W08_OUTPUT_MANIFEST_NAME,
+                    "n_fold_results": int(len(result["fold_results"])),
+                    "n_predictions": int(len(result["predictions"])),
+                    "progress_observability": dict(progress_observability),
+                })
+            except Exception:
+                pass
         print(json.dumps({
             "stage": "W08", "status": "formal_complete",
             "n_fold_results": int(len(result["fold_results"])),

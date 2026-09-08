@@ -105,6 +105,64 @@ class W08L1ParameterObservabilityTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 formal._write_progress(temp, 100.0, {"formal_run": True})
 
+    def test_progress_schema_accepts_only_frozen_runs_and_closed_ranges(self):
+        with tempfile.TemporaryDirectory() as temp:
+            legal_run = nested.FIXED_RUN_IDS[0]
+            progress = formal._write_progress(temp, 100.0, {
+                "status": "running",
+                "current_repeat": 1,
+                "current_fold": 1,
+                "current_run": legal_run,
+                "completed_outer_folds": 0,
+                "total_outer_folds": 50,
+                "completed_runs_in_fold": 0,
+                "total_runs_in_fold": 13,
+            })
+            self.assertEqual(progress["current_run"], legal_run)
+            self.assertEqual(formal.W08_PROGRESS_RUN_IDS,
+                             frozenset(nested.FIXED_RUN_IDS))
+
+            invalid_values = (
+                ("current_run", "PATIENT-001"),
+                ("current_run", "risk_score=0.91"),
+                ("current_run", "c_index=0.88"),
+                ("current_run", ["M0"]),
+                ("status", ["complete"]),
+                ("current_repeat", 0),
+                ("current_repeat", 11),
+                ("current_fold", 0),
+                ("current_fold", 6),
+                ("completed_outer_folds", -1),
+                ("completed_outer_folds", 51),
+                ("total_outer_folds", 49),
+                ("completed_runs_in_fold", 14),
+                ("total_runs_in_fold", 12),
+            )
+            for key, value in invalid_values:
+                with self.subTest(key=key, value=value):
+                    candidate = dict(progress)
+                    candidate[key] = value
+                    with self.assertRaises(ValueError):
+                        formal._validate_progress(candidate)
+
+            missing = dict(progress)
+            del missing["current_run"]
+            with self.assertRaises(ValueError):
+                formal._validate_progress(missing)
+
+            complete = formal._write_progress(temp, 100.0, {
+                "status": "complete",
+                "completed_outer_folds": 50,
+                "total_outer_folds": 50,
+                "completed_runs_in_fold": 13,
+                "total_runs_in_fold": 13,
+            })
+            self.assertEqual(complete["status"], "complete")
+            invalid_complete = dict(complete)
+            invalid_complete["completed_outer_folds"] = 49
+            with self.assertRaises(ValueError):
+                formal._validate_progress(invalid_complete)
+
     def test_progress_uses_atomic_replace_and_leaves_no_temp_file(self):
         with tempfile.TemporaryDirectory() as temp:
             replace = os.replace
