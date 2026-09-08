@@ -130,7 +130,13 @@ class W08LocalOptimizationProbeTests(unittest.TestCase):
                         return
                     with probe.np.load(path) as cached:
                         if not bool(cached["roi"].flat[0]):
-                            raise RuntimeError("cache validation failed")
+                            labels = cached["labels"].copy()
+                            roi = probe.np.ones((2, 2), dtype="uint8")
+                        else:
+                            labels = None
+                            roi = None
+                    if labels is not None:
+                        probe.np.savez_compressed(path, labels=labels, roi=roi)
 
             with mock.patch.object(probe, "_existing_slic_cache_root",
                                    return_value=existing), \
@@ -142,7 +148,7 @@ class W08LocalOptimizationProbeTests(unittest.TestCase):
         self.assertEqual(counters["hit_count"], 1)
         self.assertEqual(counters["miss_count"], 1)
         self.assertEqual(counters["validation_failure_count"], 1)
-        self.assertEqual(counters["recomputed_count"], 1)
+        self.assertEqual(counters["recomputed_count"], 2)
 
     def test_stale_complete_is_replaced_on_initialization_failure(self):
         with tempfile.TemporaryDirectory() as temp:

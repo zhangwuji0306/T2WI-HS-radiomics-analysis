@@ -56,6 +56,10 @@ PROJECT_ROOT = os.path.dirname(ROOT)
 OUTPUT_ROOT = os.path.join(ROOT, "output", "w08_formal_A")
 WORK_ROOT = os.path.join(OUTPUT_ROOT, "work")
 SLIC_CACHE_ROOT = os.path.join(WORK_ROOT, "slic_cache")
+REPRESENTATION_CACHE_SCHEMA = "w08_fold_representation_cache_v1"
+SLIC_CACHE_SCHEMA = "w08_slic_case_cache_v1"
+FEATURE_CACHE_SCHEMA = "w08_fold_feature_cache_v1"
+CACHE_CONTRACT_VERSION = "W08-L4-20260909"
 
 MINIMUM_ROI_SIZE = 10
 # PyRadiomics 3.0.1 treats its minimumROISize as a strict lower bound
@@ -180,6 +184,16 @@ def _sha256(path):
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _sha256_bytes(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+def _canonical_hash(value):
+    encoded = json.dumps(value, ensure_ascii=True, sort_keys=True,
+                         separators=(",", ":"))
+    return _sha256_bytes(encoded.encode("utf-8"))
 
 
 def _atomic_json(path, payload):
@@ -1702,13 +1716,123 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         self._allowed_ids = set(self._by_id.index)
         self._sv = self._normalise_supervoxel_table(supervoxel_table)
         self._habitat_config = w07._read_json(habitat_config)
+        self._habitat_config_path = os.path.abspath(os.fspath(habitat_config))
         self._cache_root = cache_root
         os.makedirs(self._cache_root, exist_ok=True)
         self._case_cache = {}
+        self._fit_cache = {}
         self._state_cache = {}
+        self._feature_cache = {}
+        self._mask_signatures = {}
+        self._cache_events = []
+        self._cache_counts = {
+            "slic_hits": 0,
+            "slic_misses": 0,
+            "slic_invalidations": 0,
+            "representation_hits": 0,
+            "representation_misses": 0,
+            "representation_invalidations": 0,
+            "feature_hits": 0,
+            "feature_misses": 0,
+            "feature_invalidations": 0,
+        }
         self.fit_calls = []
         self.transform_calls = []
         self._extractors = _build_exact_feature_extractors()
+        self._cache_contract = self._build_cache_contract()
+
+    @staticmethod
+    def _geometry_payload(image, roi_image):
+        def info(item):
+            return {
+                "size": [int(value) for value in item.GetSize()],
+                "spacing": [float(value) for value in item.GetSpacing()],
+                "origin": [float(value) for value in item.GetOrigin()],
+                "direction": [float(value) for value in item.GetDirection()],
+            }
+        return {"image": info(image), "roi": info(roi_image)}
+
+    @staticmethod
+    def _array_signature(array):
+        array = np.ascontiguousarray(array)
+        digest = hashlib.sha256()
+        digest.update(str(array.dtype).encode("ascii"))
+        digest.update(repr(tuple(array.shape)).encode("ascii"))
+        digest.update(array.tobytes(order="C"))
+        return digest.hexdigest()
+
+    def _build_cache_contract(self):
+        environment_path = os.path.join(PROJECT_ROOT, "environment.yml")
+        extractor_settings = {
+            block: _exact_feature_extractor_settings(block)
+            for block in ("R_low", "R_high")
+        }
+        return {
+            "schema": CACHE_CONTRACT_VERSION,
+            "slic_schema": SLIC_CACHE_SCHEMA,
+            "feature_schema": FEATURE_CACHE_SCHEMA,
+            "environment_yml_sha256": _sha256(environment_path),
+            "pyradiomics": PYRADIOMICS_VERSION,
+            "simpleitk": "2.2.1",
+            "habitat_config_sha256": _sha256(self._habitat_config_path),
+            "extractor_config_sha256": _canonical_hash(extractor_settings),
+            "candidate_hashes": {
+                block: w08._candidate_hash(w08.FROZEN_CANDIDATE_FEATURES[block])
+                for block in ("R_low", "R_high")
+            },
+        }
+
+    def representation_cache_identity(self):
+        return {
+            "provider_module": self.__class__.__module__,
+            "provider_class": self.__class__.__name__,
+            "cache_contract_version": CACHE_CONTRACT_VERSION,
+            "cache_contract_hash": _canonical_hash(self._cache_contract),
+            "cross_attempt_reuse": False,
+        }
+
+    def _record_cache_event(self, scope, status, reason=None, action=None):
+        event = {
+            "scope": scope,
+            "status": str(status),
+        }
+        if reason is not None:
+            event["reason"] = str(reason)
+        if action is not None:
+            event["action"] = str(action)
+        self._cache_events.append(event)
+
+    def representation_cache_audit(self):
+        unique_signatures = {
+            block: int(len(set(values)))
+            for block, values in self._mask_signatures.items()
+        }
+        return {
+            "schema": REPRESENTATION_CACHE_SCHEMA,
+            "cache_contract_version": CACHE_CONTRACT_VERSION,
+            "cache_contract_hash": _canonical_hash(self._cache_contract),
+            "slic_cache": {
+                "hits": int(self._cache_counts["slic_hits"]),
+                "misses": int(self._cache_counts["slic_misses"]),
+                "invalidations": int(self._cache_counts["slic_invalidations"]),
+            },
+            "representation_cache": {
+                "hits": int(self._cache_counts["representation_hits"]),
+                "misses": int(self._cache_counts["representation_misses"]),
+                "invalidations": int(
+                    self._cache_counts["representation_invalidations"]),
+                "states": int(len(getattr(self, "_state_cache", {}))),
+            },
+            "feature_cache": {
+                "hits": int(self._cache_counts["feature_hits"]),
+                "misses": int(self._cache_counts["feature_misses"]),
+                "invalidations": int(self._cache_counts["feature_invalidations"]),
+                "entries": int(len(self._feature_cache)),
+                "unique_mask_signatures_by_block": unique_signatures,
+            },
+            "cache_events": [dict(event) for event in self._cache_events],
+            "validation_ids_used_for_fit": False,
+        }
 
     @staticmethod
     def _normalise_supervoxel_table(table):
@@ -1741,6 +1865,13 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
     def _cache_path(self, identifier):
         return os.path.join(self._cache_root, str(identifier) + ".npz")
 
+    @staticmethod
+    def _npz_scalar(cached, name):
+        value = cached[name]
+        if value.shape != ():
+            raise ValueError("cache metadata is not scalar: %s" % name)
+        return str(value.item())
+
     def _prepare_case(self, identifier):
         identifier = str(identifier).strip()
         if identifier in self._case_cache:
@@ -1757,21 +1888,84 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         if errors:
             raise RuntimeError("A case %s failed geometry validation: %s" %
                                (identifier, ";".join(errors)))
+        geometry = self._geometry_payload(image, roi_image)
+        geometry_hash = _canonical_hash(geometry)
+        image_file_sha256 = _sha256(image_path)
+        roi_file_sha256 = _sha256(mask_path)
+        case_hash = w08.canonical_id_hash([identifier])
+        cache_scope = {"cache": "slic", "case_id_hash": case_hash}
+        cache_contract_hash = _canonical_hash(self._cache_contract)
+        labels = None
         if os.path.isfile(cache_path):
-            with np.load(cache_path) as cached:
-                labels = cached["labels"].astype(np.int32, copy=False)
-                cached_roi = cached["roi"].astype(bool, copy=False)
-            if labels.shape != roi.shape or not np.array_equal(cached_roi, roi):
-                raise RuntimeError("SLIC cache mismatch for A case %s" % identifier)
+            mismatch = None
+            try:
+                with np.load(cache_path, allow_pickle=False) as cached:
+                    required = {
+                        "labels", "roi", "cache_schema", "cache_contract_hash",
+                        "image_file_sha256", "roi_file_sha256", "geometry_hash",
+                    }
+                    missing = sorted(required - set(cached.files))
+                    if missing:
+                        mismatch = "missing_metadata:%s" % ",".join(missing)
+                    elif self._npz_scalar(cached, "cache_schema") != SLIC_CACHE_SCHEMA:
+                        mismatch = "cache_schema_mismatch"
+                    elif self._npz_scalar(cached, "cache_contract_hash") != \
+                            cache_contract_hash:
+                        mismatch = "cache_contract_mismatch"
+                    elif self._npz_scalar(cached, "image_file_sha256") != \
+                            image_file_sha256:
+                        mismatch = "image_input_changed"
+                    elif self._npz_scalar(cached, "roi_file_sha256") != \
+                            roi_file_sha256:
+                        mismatch = "roi_input_changed"
+                    elif self._npz_scalar(cached, "geometry_hash") != geometry_hash:
+                        mismatch = "geometry_changed"
+                    else:
+                        labels = cached["labels"].astype(np.int32, copy=False)
+                        cached_roi = cached["roi"].astype(bool, copy=False)
+                        if labels.shape != roi.shape:
+                            mismatch = "label_shape_mismatch"
+                        elif not np.array_equal(cached_roi, roi):
+                            mismatch = "roi_voxel_mismatch"
+            except (IOError, OSError, ValueError, KeyError, TypeError) as exc:
+                mismatch = "cache_read_error:%s" % exc.__class__.__name__
+            if mismatch is None:
+                self._cache_counts["slic_hits"] += 1
+                self._record_cache_event(cache_scope, "hit")
+            else:
+                labels = None
+                self._cache_counts["slic_invalidations"] += 1
+                self._cache_counts["slic_misses"] += 1
+                self._record_cache_event(
+                    cache_scope, "mismatch", mismatch, "recomputed")
         else:
+            self._cache_counts["slic_misses"] += 1
+            self._record_cache_event(cache_scope, "miss", "cache_absent", "computed")
+        if labels is None:
             labels = technical.slic_labels(image, self._habitat_config, True)
             if labels.shape != roi.shape:
                 raise RuntimeError("SLIC label shape mismatch for A case %s" % identifier)
             temporary = cache_path + ".tmp"
-            with open(temporary, "wb") as handle:
-                np.savez_compressed(handle, labels=labels,
-                                    roi=roi.astype(np.uint8))
-            os.replace(temporary, cache_path)
+            try:
+                with open(temporary, "wb") as handle:
+                    np.savez_compressed(
+                        handle, labels=labels, roi=roi.astype(np.uint8),
+                        cache_schema=np.asarray(SLIC_CACHE_SCHEMA),
+                        cache_contract_hash=np.asarray(cache_contract_hash),
+                        image_file_sha256=np.asarray(image_file_sha256),
+                        roi_file_sha256=np.asarray(roi_file_sha256),
+                        geometry_hash=np.asarray(geometry_hash))
+                os.replace(temporary, cache_path)
+            except Exception as exc:
+                try:
+                    if os.path.exists(temporary):
+                        os.remove(temporary)
+                except OSError:
+                    pass
+                self._record_cache_event(
+                    cache_scope, "write_failed", exc.__class__.__name__, "fail_closed")
+                raise RuntimeError(
+                    "SLIC cache write failed for A case %s" % case_hash)
 
         sv = self._sv_for_id(identifier)
         observed_values, observed_counts, observed_by_label = technical.sv_stats(
@@ -1794,6 +1988,10 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
             "mask_path": mask_path,
             "labels": labels,
             "roi": roi,
+            "geometry": geometry,
+            "geometry_hash": geometry_hash,
+            "image_file_sha256": image_file_sha256,
+            "roi_file_sha256": roi_file_sha256,
             "spacing_xyz": tuple(float(x) for x in image.GetSpacing()),
             "sv": sv,
         }
@@ -1818,6 +2016,20 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         ids = sorted(str(value).strip() for value in training_ids)
         if not ids or not set(ids).issubset(self._allowed_ids):
             raise w08.W08ValidationError("provider training IDs are not in the A frame")
+        training_hash = w08.canonical_id_hash(ids)
+        provider_cache_hash = _canonical_hash(self.representation_cache_identity())
+        fit_key = (training_hash, int(seed), provider_cache_hash)
+        cached_state = self._fit_cache.get(fit_key)
+        if cached_state is not None:
+            self._cache_counts["representation_hits"] += 1
+            self._record_cache_event(
+                {"cache": "representation", "training_id_hash": training_hash,
+                 "seed": int(seed)}, "hit")
+            return cached_state
+        self._cache_counts["representation_misses"] += 1
+        self._record_cache_event(
+            {"cache": "representation", "training_id_hash": training_hash,
+             "seed": int(seed)}, "miss", "cache_absent", "fit")
         self.fit_calls.append(tuple(ids))
         flattened = []
         weights = []
@@ -1841,7 +2053,6 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         centres = tuple(sorted(float(value)
                                for value in estimator.cluster_centers_.reshape(-1)))
         boundary = (centres[0] + centres[1]) / 2.0
-        training_hash = w08.canonical_id_hash(ids)
         state = w08.FoldState(
             training_hash, int(seed), centres, boundary,
             metadata={
@@ -1852,7 +2063,14 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
                 "feature_generation": "fold-specific habitat masks; G and R regenerated",
                 "feature_sources": self._feature_sources(training_hash),
                 "validation_ids_used_for_fit": False,
+                "provider_cache_key": {
+                    "schema": REPRESENTATION_CACHE_SCHEMA,
+                    "training_id_hash": training_hash,
+                    "seed": int(seed),
+                    "provider_cache_hash": provider_cache_hash,
+                },
             })
+        self._fit_cache[fit_key] = state
         return state
 
     @staticmethod
@@ -1865,6 +2083,115 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
             habitat[labels == int(label)] = int(float(mean) >= float(boundary))
         habitat[~roi] = -1
         return habitat
+
+    def _mask_signature(self, case, block, mask):
+        if block not in ("R_low", "R_high"):
+            raise w08.W08ValidationError("unknown fold-specific mask block: %s" % block)
+        if hasattr(mask, "GetSize"):
+            mask_array = w02.sitk.GetArrayFromImage(mask)
+        else:
+            mask_array = np.asarray(mask)
+        signature = {
+            "schema": FEATURE_CACHE_SCHEMA,
+            "block": block,
+            "mask_array_sha256": self._array_signature(mask_array),
+            "geometry_hash": case["geometry_hash"],
+            "image_file_sha256": case["image_file_sha256"],
+            "roi_file_sha256": case["roi_file_sha256"],
+            "cache_contract_hash": _canonical_hash(self._cache_contract),
+        }
+        return _canonical_hash(signature), signature
+
+    @staticmethod
+    def _feature_cache_values_valid(values, block):
+        if not isinstance(values, dict):
+            return False
+        expected = {
+            w08.RADIOMICS_PREFIXES[block] + feature
+            for feature in w08.FROZEN_CANDIDATE_FEATURES[block]
+        }
+        if set(values) != expected:
+            return False
+        for value in values.values():
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                return False
+            if not (np.isfinite(numeric) or np.isnan(numeric)):
+                return False
+        return True
+
+    def _cached_radiomics_for_mask(self, identifier, case, image, mask,
+                                   block, expected_voxel_count):
+        mask_digest, mask_payload = self._mask_signature(case, block, mask)
+        self._mask_signatures.setdefault(block, set()).add(mask_digest)
+        key = {
+            "schema": FEATURE_CACHE_SCHEMA,
+            "case_id_hash": w08.canonical_id_hash([identifier]),
+            "block": block,
+            "mask_signature": mask_digest,
+            "mask_payload": mask_payload,
+        }
+        digest = _canonical_hash(key)
+        entry = self._feature_cache.get(digest)
+        if entry is not None:
+            if entry.get("cache_key") == key and \
+                    self._feature_cache_values_valid(entry.get("values"), block):
+                self._cache_counts["feature_hits"] += 1
+                self._record_cache_event(
+                    {"cache": "feature", "case_id_hash": key["case_id_hash"],
+                     "block": block, "mask_signature": mask_digest}, "hit")
+                return dict(entry["values"])
+            self._cache_counts["feature_invalidations"] += 1
+            self._cache_counts["feature_misses"] += 1
+            self._record_cache_event(
+                {"cache": "feature", "case_id_hash": key["case_id_hash"],
+                 "block": block, "mask_signature": mask_digest},
+                "mismatch", "cached_feature_contract_mismatch", "recomputed")
+        else:
+            self._cache_counts["feature_misses"] += 1
+            self._record_cache_event(
+                {"cache": "feature", "case_id_hash": key["case_id_hash"],
+                 "block": block, "mask_signature": mask_digest},
+                "miss", "cache_absent", "computed")
+        values = self._radiomics_for_mask(
+            image, mask, block, expected_voxel_count)
+        self._feature_cache[digest] = {
+            "cache_key": key,
+            "values": dict(values),
+        }
+        return values
+
+    def _representation_cache_key(self, identifier, case, state, habitat):
+        state_key = {
+            "training_id_hash": state.training_id_hash,
+            "seed": int(state.seed),
+            "provider_cache_hash": _canonical_hash(
+                self.representation_cache_identity()),
+        }
+        return {
+            "schema": REPRESENTATION_CACHE_SCHEMA,
+            "case_id_hash": w08.canonical_id_hash([identifier]),
+            "state": state_key,
+            "boundary": float(state.boundary),
+            "habitat_mask_signature": self._array_signature(habitat),
+            "geometry_hash": case["geometry_hash"],
+            "image_file_sha256": case["image_file_sha256"],
+            "roi_file_sha256": case["roi_file_sha256"],
+            "cache_contract_hash": _canonical_hash(self._cache_contract),
+        }
+
+    @staticmethod
+    def _representation_row_valid(row):
+        if not isinstance(row, dict) or "patient_id" not in row:
+            return False
+        required = set(w08.GLOBAL_COLUMNS)
+        required.update(RADIOMICS_SUPPORT_COLUMNS)
+        for block in ("R_low", "R_high"):
+            required.update(
+                w08.RADIOMICS_PREFIXES[block] + feature
+                for feature in w08.FROZEN_CANDIDATE_FEATURES[block])
+        return required.issubset(set(row))
 
     def _radiomics_for_mask(self, image, mask, block, expected_voxel_count):
         actual_voxel_count = _mask_label_voxel_count(mask)
@@ -1900,9 +2227,43 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
 
     def _transform_one(self, identifier, state):
         case = self._prepare_case(identifier)
-        image = w02.sitk.ReadImage(w02.apath(case["image_path"]))
         roi = case["roi"]
         habitat = self._habitat_from_boundary(case, state.boundary)
+        representation_key = self._representation_cache_key(
+            identifier, case, state, habitat)
+        state_digest = _canonical_hash({
+            "schema": REPRESENTATION_CACHE_SCHEMA,
+            "state": representation_key["state"],
+            "cache_contract_hash": representation_key["cache_contract_hash"],
+        })
+        state_cache = self._state_cache.setdefault(state_digest, {})
+        cached = state_cache.get(identifier)
+        if cached is not None:
+            if cached.get("cache_key") == representation_key and \
+                    self._representation_row_valid(cached.get("row")):
+                self._cache_counts["representation_hits"] += 1
+                self._record_cache_event(
+                    {"cache": "representation",
+                     "case_id_hash": representation_key["case_id_hash"],
+                     "training_id_hash": state.training_id_hash}, "hit")
+                return dict(cached["row"])
+            self._cache_counts["representation_invalidations"] += 1
+            self._record_cache_event(
+                {"cache": "representation",
+                 "case_id_hash": representation_key["case_id_hash"],
+                 "training_id_hash": state.training_id_hash},
+                "mismatch", "cached_representation_contract_mismatch", "recomputed")
+            self._cache_counts["representation_misses"] += 1
+            state_cache.pop(identifier, None)
+        else:
+            self._cache_counts["representation_misses"] += 1
+            self._record_cache_event(
+                {"cache": "representation",
+                 "case_id_hash": representation_key["case_id_hash"],
+                 "training_id_hash": state.training_id_hash},
+                "miss", "cache_absent", "computed")
+
+        image = w02.sitk.ReadImage(w02.apath(case["image_path"]))
         low_mask = roi & (habitat == 0)
         high_mask = roi & (habitat == 1)
         low_voxel_count = int(low_mask.sum())
@@ -1946,19 +2307,28 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         if low_state == RADIOMICS_STATE_EXTRACTABLE:
             low_image_mask = w02.make_habitat_mask(
                 image, low_mask.astype(np.uint8), 1)
-            row.update(self._radiomics_for_mask(
-                image, low_image_mask, "R_low", low_voxel_count))
+            row.update(self._cached_radiomics_for_mask(
+                identifier, case, image, low_image_mask, "R_low",
+                low_voxel_count))
         else:
             row.update({w08.RADIOMICS_PREFIXES["R_low"] + feature: np.nan
                         for feature in w08.FROZEN_CANDIDATE_FEATURES["R_low"]})
         if high_state == RADIOMICS_STATE_EXTRACTABLE:
             high_image_mask = w02.make_habitat_mask(
                 image, high_mask.astype(np.uint8), 1)
-            row.update(self._radiomics_for_mask(
-                image, high_image_mask, "R_high", high_voxel_count))
+            row.update(self._cached_radiomics_for_mask(
+                identifier, case, image, high_image_mask, "R_high",
+                high_voxel_count))
         else:
             row.update({w08.RADIOMICS_PREFIXES["R_high"] + feature: np.nan
                         for feature in w08.FROZEN_CANDIDATE_FEATURES["R_high"]})
+        if not self._representation_row_valid(row):
+            raise w08.W08ValidationError(
+                "generated fold representation has an incomplete feature schema")
+        state_cache[identifier] = {
+            "cache_key": representation_key,
+            "row": dict(row),
+        }
         return row
 
     def transform(self, ids, state):
@@ -1966,12 +2336,9 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         if not set(identifiers).issubset(self._allowed_ids):
             raise w08.W08ValidationError("provider transform IDs are not in the A frame")
         self.transform_calls.append((tuple(identifiers), state.training_id_hash))
-        cache = self._state_cache.setdefault(state.training_id_hash, {})
         new_rows = []
         for identifier in identifiers:
-            if identifier not in cache:
-                cache[identifier] = self._transform_one(identifier, state)
-            new_rows.append(cache[identifier])
+            new_rows.append(self._transform_one(identifier, state))
         generated = pd.DataFrame(new_rows).set_index("patient_id")
         base = self._by_id.loc[identifiers].copy()
         for column in RADIOMICS_SUPPORT_COLUMNS:

@@ -2,21 +2,23 @@
 
 ## Disposition
 
-`PASS` — the R6-5R coordinate provenance register now matches the W08 source
-files at the code state used for this refresh, `a35d858f5832e1e5c3d88eb9fe601b894a7d6916`.
-The source binding refresh is limited to the two `provenance.file_sha256`
-entries in `prognosis_analysis/R6_5R_coordinate_reconciliation.json`.
+`PASS` — the R6-5R coordinate provenance register matches the W08 source
+files at the current L4 implementation state. The source binding refresh is
+limited to the two `provenance.file_sha256` entries in
+`prognosis_analysis/R6_5R_coordinate_reconciliation.json`; no scientific,
+population, solver, outcome, B-side, or formal-output binding was changed.
 
 ## Current source bindings
 
 | Path | SHA-256 |
 |---|---|
-| `prognosis_analysis/scripts/w08_formal_run_a.py` | `261969f49d34a2dc3bf20800fb8df679a6dd6d3290636b0d71fc3157bea42b0b` |
-| `prognosis_analysis/scripts/w08_nested_cv.py` | `c8fa83a420d02dcde9e99f1cfad7c74b675a5c3281d712be489f7f248fe77c66` |
+| `prognosis_analysis/scripts/w08_formal_run_a.py` | `7ec78f7d1c55bf4fe7f7f63097c77fb886b29dc3ce0292035561a0ae437595e5` |
+| `prognosis_analysis/scripts/w08_nested_cv.py` | `aa47023edf83a5b3f4af9658ea761f10d8fb736b45fa2f91500c0f23d7ea74be` |
 
-The recorded values were recomputed from the current files. No W08 source,
-configuration, scientific parameter, outcome, B-side, formal-output,
-model-freeze, or W09 file was changed.
+The recorded values were recomputed from the current files. The L4 source
+implementation is the intended code change; no additional W08 configuration,
+scientific parameter, outcome, B-side, formal-output, model-freeze, or W09
+file was changed.
 
 ## Environment
 
@@ -33,8 +35,8 @@ PyWavelets 1.3.0.
   70/70 passed.
 - Targeted `compileall`: passed.
 - `git diff --check`: passed.
-- Full test discovery: 290 tests, 289 passed, 1 pre-existing failure, 0
-  errors. The failure is
+- Full test discovery before L4: 290 tests, 289 passed, 1 pre-existing
+  failure, 0 errors. The failure is
   `test_execution_status_is_the_failed_w08_hold_state`, whose assertion still
   expects `minimum ROI` while the recorded summary is
   `External execution session interrupted before formal W08 result writing.`

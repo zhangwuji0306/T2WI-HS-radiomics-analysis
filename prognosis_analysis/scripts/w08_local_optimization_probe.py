@@ -280,9 +280,23 @@ def _make_real_cache_provider(context, cache_root):
     provider._sv = formal.AOnlyFoldFeatureProvider._normalise_supervoxel_table(
         context["supervoxels"])
     provider._habitat_config = formal.w07._read_json(formal.HABITAT_CONFIG)
+    provider._habitat_config_path = os.path.abspath(formal.HABITAT_CONFIG)
     provider._cache_root = cache_root
     os.makedirs(cache_root, exist_ok=True)
     provider._case_cache = {}
+    provider._fit_cache = {}
+    provider._state_cache = {}
+    provider._feature_cache = {}
+    provider._mask_signatures = {}
+    provider._cache_events = []
+    provider._cache_counts = {
+        "slic_hits": 0, "slic_misses": 0, "slic_invalidations": 0,
+        "representation_hits": 0, "representation_misses": 0,
+        "representation_invalidations": 0,
+        "feature_hits": 0, "feature_misses": 0,
+        "feature_invalidations": 0,
+    }
+    provider._cache_contract = provider._build_cache_contract()
     return provider
 
 
@@ -308,25 +322,50 @@ def _real_slic_cache_probe(context, temp_root):
         "recomputed_count": 0,
     }
 
+    def account_slic(provider, fallback_status):
+        before = len(getattr(provider, "_cache_events", []))
+        provider._prepare_case(sample[0])
+        events = getattr(provider, "_cache_events", [])[before:]
+        event = events[-1] if events else {"status": fallback_status}
+        status = event.get("status")
+        if status == "hit":
+            counters["hit_count"] += 1
+        elif status in ("miss", "mismatch"):
+            counters["miss_count"] += 1
+            if status == "mismatch":
+                counters["validation_failure_count"] += 1
+            counters["recomputed_count"] += 1
+        else:
+            raise ProbeFailure("unexpected SLIC cache status")
+
     hit_provider = _make_real_cache_provider(context, existing_root)
     for identifier in sample:
         cache_path = hit_provider._cache_path(identifier)
         if not os.path.isfile(cache_path):
             counters["miss_count"] += 1
             continue
+        before = len(getattr(hit_provider, "_cache_events", []))
         hit_provider._prepare_case(identifier)
-        counters["hit_count"] += 1
+        events = getattr(hit_provider, "_cache_events", [])[before:]
+        event = events[-1] if events else {"status": "hit"}
+        if event.get("status") == "hit":
+            counters["hit_count"] += 1
+        elif event.get("status") in ("miss", "mismatch"):
+            counters["miss_count"] += 1
+            if event.get("status") == "mismatch":
+                counters["validation_failure_count"] += 1
+            counters["recomputed_count"] += 1
+        else:
+            raise ProbeFailure("unexpected existing SLIC cache status")
 
     # Exercise the actual cold-miss branch on a real A image/ROI, but keep the
     # generated cache in the iteration's temporary directory.
     cold_root = os.path.join(temp_root, "slic_cache_cold")
     cold_provider = _make_real_cache_provider(context, cold_root)
-    cold_provider._prepare_case(sample[0])
-    counters["miss_count"] += 1
-    counters["recomputed_count"] += 1
+    account_slic(cold_provider, "miss")
 
     # Corrupt only a temporary copy of a real cache entry and verify that the
-    # production provider rejects it rather than silently recomputing it.
+    # production provider records the mismatch and recomputes that case.
     corrupt_root = os.path.join(temp_root, "slic_cache_corrupt")
     os.makedirs(corrupt_root, exist_ok=True)
     source_path = os.path.join(existing_root, sample[0] + ".npz")
@@ -339,12 +378,18 @@ def _real_slic_cache_probe(context, temp_root):
     with open(corrupt_path, "wb") as handle:
         np.savez_compressed(handle, labels=labels, roi=corrupt_roi)
     corrupt_provider = _make_real_cache_provider(context, corrupt_root)
+    before = len(getattr(corrupt_provider, "_cache_events", []))
     try:
         corrupt_provider._prepare_case(sample[0])
     except BaseException:
         counters["validation_failure_count"] += 1
+        raise
     else:
-        raise ProbeFailure("corrupt SLIC cache was accepted")
+        events = getattr(corrupt_provider, "_cache_events", [])[before:]
+        if events and events[-1].get("status") != "mismatch":
+            raise ProbeFailure("corrupt SLIC cache mismatch was not recorded")
+        counters["validation_failure_count"] += 1
+        counters["recomputed_count"] += 1
     return counters
 
 
@@ -421,8 +466,26 @@ def _make_provider(case, extractors, stub_radiomics=False):
         formal.AOnlyFoldFeatureProvider)
     provider._extractors = extractors
     provider._case_cache = {}
+    provider._fit_cache = {}
     provider._state_cache = {}
-    provider._prepare_case = lambda _identifier: case
+    provider._feature_cache = {}
+    provider._mask_signatures = {}
+    provider._cache_events = []
+    provider._cache_counts = {
+        "slic_hits": 0, "slic_misses": 0, "slic_invalidations": 0,
+        "representation_hits": 0, "representation_misses": 0,
+        "representation_invalidations": 0,
+        "feature_hits": 0, "feature_misses": 0,
+        "feature_invalidations": 0,
+    }
+    provider._cache_contract = {"schema": "synthetic-l4-probe"}
+    provider_case = dict(case)
+    provider_case.update({
+        "geometry_hash": "synthetic-geometry",
+        "image_file_sha256": "synthetic-image",
+        "roi_file_sha256": "synthetic-roi",
+    })
+    provider._prepare_case = lambda _identifier: provider_case
     if stub_radiomics:
         def synthetic_radiomics(_image, _mask, block, expected_voxel_count):
             if expected_voxel_count < formal.MINIMUM_ROI_SIZE:

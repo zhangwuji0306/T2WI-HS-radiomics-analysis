@@ -1,0 +1,87 @@
+{
+  "schema": "W08_local_L4_representation_cache_audit",
+  "status": "implementation_verified_not_run",
+  "environment": {
+    "source": "environment.yml",
+    "name": "t2_radiomics",
+    "python": "3.7.12",
+    "numpy": "1.21.6",
+    "pandas": "1.3.5",
+    "scipy": "1.7.3",
+    "scikit_learn": "1.0.2",
+    "pyradiomics": "3.0.1",
+    "simpleitk": "2.2.1",
+    "pywavelets": "1.3.0",
+    "matches_locked_spec": true,
+    "invocation": "tools/run_t2_radiomics.ps1 -PythonArguments ..."
+  },
+  "implementation": {
+    "fold_representation_cache": {
+      "schema": "w08_fold_representation_cache_v1",
+      "key_fields": [
+        "training_id_hash",
+        "seed",
+        "feature_schema_hash",
+        "provider_identity_hash"
+      ],
+      "scope": "current_process_only",
+      "identity_or_schema_mismatch": "invalidate_and_refit"
+    },
+    "slic_cache": {
+      "schema": "w08_slic_case_cache_v1",
+      "bindings": [
+        "cache_contract_hash",
+        "image_file_sha256",
+        "roi_file_sha256",
+        "geometry_hash"
+      ],
+      "mismatch": "record_recompute_affected_case_only",
+      "write_failure": "fail_closed"
+    },
+    "feature_cache": {
+      "schema": "w08_fold_feature_cache_v1",
+      "bindings": [
+        "case_id_hash",
+        "block",
+        "voxel_level_mask_signature",
+        "image_and_roi_geometry",
+        "extractor_and_environment_contract"
+      ],
+      "equal_voxel_count_reuse": false,
+      "nearby_boundary_reuse": false,
+      "mismatch": "record_recompute_affected_signature_only"
+    },
+    "validation_fit_boundary": {
+      "outer_training_only": true,
+      "validation_ids_used_for_fit": false,
+      "eligibility_threshold_learning_uses_validation": false
+    }
+  },
+  "verification": {
+    "environment_probe": "pass",
+    "l4_tests": "4/4",
+    "w08_nested_cv_tests": "30/30",
+    "formal_release_gate_tests": "40/40",
+    "compileall": "pass",
+    "git_diff_check": "pass",
+    "full_test_discovery": {
+      "tests": 294,
+      "passed": 293,
+      "failures": 1,
+      "failure_scope": "pre_existing_execution_status_wording_assertion"
+    },
+    "real_a_processing": false,
+    "formal_w08_started": false,
+    "w09_started": false,
+    "b_data_read": false,
+    "model_freeze_created": false
+  },
+  "boundary": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "formal_writer_invoked": false,
+    "patient_level_outputs_written": false
+  }
+}

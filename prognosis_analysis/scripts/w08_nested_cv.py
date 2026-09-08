@@ -1172,11 +1172,167 @@ class FoldFeatureProvider(object):
     formal_capable = False
     fold_specific_habitat = False
 
+    def representation_cache_identity(self):
+        """Return stable non-patient inputs which bind fold representations.
+
+        Providers which read external technical artifacts must override this
+        method.  The default is intentionally conservative: it prevents two
+        different provider classes from sharing an in-process representation
+        entry, but it does not claim that a generic adapter is reusable across
+        attempts.
+        """
+        return {
+            "provider_module": self.__class__.__module__,
+            "provider_class": self.__class__.__name__,
+            "provider_contract": "generic_fold_provider_v1",
+            "cross_attempt_reuse": False,
+        }
+
+    def representation_cache_audit(self):
+        """Return provider cache evidence without exposing patient IDs."""
+        return {}
+
     def fit(self, training_ids, seed):  # pragma: no cover - interface contract
         raise NotImplementedError
 
     def transform(self, ids, state):  # pragma: no cover - interface contract
         raise NotImplementedError
+
+
+def _cache_payload_hash(payload):
+    """Hash a JSON-serialisable cache contract without exposing its payload."""
+    try:
+        encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True,
+                             separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise W08ValidationError("cache contract is not JSON serialisable: %s" %
+                                 exc)
+    return _sha256_text(encoded)
+
+
+def _provider_cache_identity(provider):
+    identity = provider.representation_cache_identity()
+    if not isinstance(identity, dict) or not identity:
+        raise W08ValidationError(
+            "provider representation_cache_identity must return a non-empty dict")
+    try:
+        json.dumps(identity, ensure_ascii=True, sort_keys=True,
+                   separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise W08ValidationError(
+            "provider cache identity is not JSON serialisable: %s" % exc)
+    return dict(identity)
+
+
+class FoldRepresentationCache(object):
+    """Fold-local state cache with explicit provenance and invalidation.
+
+    The cache is deliberately in-process.  It avoids repeated boundary fits
+    during one W08 execution while requiring the complete provider identity,
+    feature schema, training membership and K-means seed to match.  A future
+    disk-backed cache must preserve this contract and may not silently reuse a
+    stale entry.
+    """
+
+    SCHEMA = "w08_fold_representation_cache_v1"
+
+    def __init__(self, provider, required_columns):
+        self.provider = provider
+        self.required_columns = tuple(str(column) for column in required_columns)
+        self.provider_identity = _provider_cache_identity(provider)
+        self._entries = {}
+        self._scope_index = {}
+        self._audit = {
+            "schema": self.SCHEMA,
+            "feature_schema": list(self.required_columns),
+            "provider_identity_hash": _cache_payload_hash(
+                self.provider_identity),
+            "entries": 0,
+            "hits": 0,
+            "misses": 0,
+            "invalidations": [],
+        }
+
+    def _key(self, training_ids, seed):
+        return {
+            "schema": self.SCHEMA,
+            "training_id_hash": canonical_id_hash(training_ids),
+            "seed": int(seed),
+            "feature_schema_hash": _cache_payload_hash(
+                list(self.required_columns)),
+            "provider_identity_hash": _cache_payload_hash(
+                self.provider_identity),
+        }
+
+    @staticmethod
+    def _state_has_key(state, key):
+        metadata = state.metadata if isinstance(state.metadata, dict) else {}
+        return metadata.get("representation_cache_key") == key
+
+    def _record_invalidation(self, scope, reason):
+        self._audit["invalidations"].append({
+            "scope": dict(scope),
+            "reason": str(reason),
+            "action": "recomputed",
+        })
+
+    def get_or_fit(self, training_ids, seed):
+        current_identity = _provider_cache_identity(self.provider)
+        if current_identity != self.provider_identity:
+            self.provider_identity = current_identity
+            self._audit["provider_identity_hash"] = _cache_payload_hash(
+                current_identity)
+        key = self._key(training_ids, seed)
+        digest = _cache_payload_hash(key)
+        scope = (key["training_id_hash"], key["seed"])
+        previous_digest = self._scope_index.get(scope)
+        if previous_digest is not None and previous_digest != digest:
+            self._entries.pop(previous_digest, None)
+            self._record_invalidation(
+                {"training_id_hash": key["training_id_hash"],
+                 "seed": key["seed"]},
+                "provider_or_feature_schema_changed")
+        self._scope_index[scope] = digest
+
+        entry = self._entries.get(digest)
+        if entry is not None:
+            state = entry.get("state")
+            if isinstance(state, FoldState) and \
+                    entry.get("key") == key and self._state_has_key(state, key):
+                self._audit["hits"] += 1
+                return state
+            self._entries.pop(digest, None)
+            self._record_invalidation(
+                {"training_id_hash": key["training_id_hash"],
+                 "seed": key["seed"]},
+                "cached_state_contract_mismatch")
+
+        self._audit["misses"] += 1
+        state = self.provider.fit(training_ids, seed)
+        if not isinstance(state, FoldState):
+            raise W08ValidationError("provider.fit must return a FoldState")
+        metadata = dict(state.metadata) if isinstance(state.metadata, dict) else {}
+        metadata.update({
+            "representation_cache_schema": self.SCHEMA,
+            "representation_cache_key": key,
+            "representation_cache_hit": False,
+        })
+        state = FoldState(
+            training_id_hash=state.training_id_hash,
+            seed=state.seed,
+            centers=state.centers,
+            boundary=state.boundary,
+            metadata=metadata)
+        self._entries[digest] = {"key": key, "state": state}
+        self._audit["entries"] = int(len(self._entries))
+        return state
+
+    def audit(self):
+        output = dict(self._audit)
+        output["invalidations"] = [dict(item) for item in
+                                    self._audit["invalidations"]]
+        output["entries"] = int(len(self._entries))
+        return output
 
 
 class FrameFoldFeatureProvider(FoldFeatureProvider):
@@ -3128,7 +3284,8 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
     predictions = []
     fold_results = []
     selection_results = []
-    representation_cache = {}
+    representation_cache = FoldRepresentationCache(
+        provider, required_fold_columns)
     fold_count = 0
     # The full outer split is traversed first.  Fold-specific eligibility is
     # intentionally derived only after both provider transforms have consumed
@@ -3147,13 +3304,7 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
         inner_seed = 12345 + 1000 + 10 * (repeat - 1) + fold
         kmeans_seed = 12345 + 2000 + 10 * (repeat - 1) + fold
         solver_seed = 12345 + 3000 + 10 * (repeat - 1) + fold
-        cache_key = tuple(outer_train_ids)
-        if cache_key not in representation_cache:
-            state = provider.fit(outer_train_ids, kmeans_seed)
-            _validate_fold_provider_state(
-                provider, state, outer_train_ids, required_fold_columns)
-            representation_cache[cache_key] = state
-        state = representation_cache[cache_key]
+        state = representation_cache.get_or_fit(outer_train_ids, kmeans_seed)
         _validate_fold_provider_state(
             provider, state, outer_train_ids, required_fold_columns)
         train_repr = _normalise_frame(provider.transform(outer_train_ids, state))
@@ -3437,7 +3588,11 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                 int(row["linear_predictor_clipping"].get("count", 0))
                 for row in fold_results)),
         },
+        "representation_cache": representation_cache.audit(),
     }
+    provider_cache_audit = getattr(provider, "representation_cache_audit", None)
+    if callable(provider_cache_audit):
+        audit["provider_cache"] = provider_cache_audit()
     return {
         "predictions": pd.DataFrame(predictions),
         "fold_results": pd.DataFrame(fold_results),
