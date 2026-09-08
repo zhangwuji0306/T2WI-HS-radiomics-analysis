@@ -1,0 +1,83 @@
+{
+  "schema": {
+    "id": "w08_local_l0_reconciliation",
+    "version": "1.0"
+  },
+  "work_unit": "L0",
+  "reconciliation_status": "complete",
+  "recorded_on": "2026-09-08",
+  "repository": {
+    "head": "12e5c040d8b1f94be458cae0f94c33530e6db902",
+    "worktree_user_changes_present": true,
+    "l1_draft_files_present": 4,
+    "l1_draft_files_staged_by_l0": 0
+  },
+  "process_check": {
+    "matching_w08_or_n_init_equivalence_process_observed": false,
+    "python_process_observed": false,
+    "power_shell_snapshot_observed": true,
+    "command_line_process_query_available": false
+  },
+  "current_attempt": {
+    "attempt_id": "attempt_1788767255363180_2b9b67ce07e0",
+    "code_commit_at_attempt": "c8e3da270d148cbead8913ed511be86c06df911f",
+    "status": "failed",
+    "failure_stage": "external_execution_interruption",
+    "final_outputs_generated": false,
+    "staging_present": false,
+    "formal_manifest_present": false,
+    "formal_predictions_present": false,
+    "promoted_results_present": false,
+    "failed_archive_preserved": true,
+    "slic_cache_preserved": true
+  },
+  "historical_failed_attempts": {
+    "count": 3,
+    "preserved": true,
+    "deleted": 0
+  },
+  "cancelled_consistency_archive": {
+    "current_execution_entry": false,
+    "conclusive_output_present": false,
+    "used_for_formal_judgment": false
+  },
+  "b_access": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false
+  },
+  "formal_state": {
+    "stage": "W08",
+    "gate": "HOLD",
+    "model_freeze_lock_present": false,
+    "formal_w08_started_historically": true,
+    "formal_w08_started_by_l0": false
+  },
+  "workspace_ownership": [
+    {
+      "path": "prognosis_analysis/scripts/w08_formal_run_a.py",
+      "owner": "user",
+      "assignment": "L1 draft",
+      "l0_action": "retained; not staged"
+    },
+    {
+      "path": "prognosis_analysis/scripts/w08_nested_cv.py",
+      "owner": "user",
+      "assignment": "L1 draft",
+      "l0_action": "retained; not staged"
+    },
+    {
+      "path": "prognosis_analysis/scripts/w08_technical_preflight_a.py",
+      "owner": "user",
+      "assignment": "L1 draft",
+      "l0_action": "retained; not staged"
+    },
+    {
+      "path": "prognosis_analysis/scripts/w08_kmeans_parameters.py",
+      "owner": "user",
+      "assignment": "L1 draft",
+      "l0_action": "retained; not staged"
+    }
+  ]
+}
