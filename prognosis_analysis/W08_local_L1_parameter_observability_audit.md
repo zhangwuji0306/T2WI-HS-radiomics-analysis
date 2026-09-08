@@ -59,14 +59,28 @@ Progress validation now requires the exact allowed key set and closed values:
   performance text, and arbitrary run labels are rejected;
 - all four B-access flags are always boolean `false`.
 
+## Remediation C: fail-closed promotion windows
+
+The formal promotion path marks the attempt as `promoting` before moving any
+formal output. Any `BaseException`, including `KeyboardInterrupt`, during
+promotion or post-promotion manifest validation leaves the exception visible
+to the caller and routes the attempt through the failed-attempt closeout.
+Already promoted root files are moved into the failed-attempt archive, and any
+remaining staging tree is moved below that archive as intermediate evidence.
+The root formal output names, complete manifest, and `.staging` directory are
+therefore absent before the failed `attempt_state.json`, `run_state.json`, and
+progress are published. A new attempt can be created after this closeout.
+
 ## Verification
 
 - L1 progress/schema and callback regression: 7/7 passed.
-- Transaction sequencing and terminal-state fault-injection regression: 12/12
+- Transaction sequencing and terminal-state fault-injection regression: 15/15
   passed, covering attempt-state, run-state, final-progress, manifest-write,
-  and external-interruption failures.
+  intermediate-promotion, manifest-promotion, and external-interruption
+  failures.
 - Direct W08 nested-CV, technical-preflight, and release-gate tests: 81/81
   passed.
+- Combined L1 and direct W08 targeted regression: 103/103 passed.
 - `compileall` passed for the three W08 production modules and two direct L1
   test modules.
 - `git diff --check` passed.

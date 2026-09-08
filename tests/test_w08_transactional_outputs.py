@@ -142,13 +142,46 @@ class W08TransactionalOutputTests(unittest.TestCase):
         states = self._terminal_states(output_root)
         self.assertEqual([state["status"] for state in states],
                          ["failed", "failed", "failed"])
-        self.assertFalse(os.path.exists(os.path.join(
-            output_root, formal.W08_OUTPUT_MANIFEST_NAME)))
-        self.assertFalse(os.path.exists(os.path.join(
-            output_root, "predictions.csv")))
+        for name in formal.W08_FINAL_OUTPUT_NAMES:
+            self.assertFalse(os.path.exists(os.path.join(output_root, name)))
         attempts_root = os.path.join(output_root, "attempts")
         self.assertFalse(any(name.endswith(".staging")
                              for name in os.listdir(attempts_root)))
+
+    def _run_formal_with_promotion_interrupt(self, output_root, filename,
+                                              interrupt_after_move=False):
+        original_replace = formal.os.replace
+        triggered = [False]
+
+        def injected_replace(source, destination):
+            is_promotion = (
+                os.path.basename(source) == filename and
+                os.path.basename(os.path.dirname(source)).endswith(".staging"))
+            if is_promotion and not triggered[0]:
+                triggered[0] = True
+                if interrupt_after_move:
+                    original_replace(source, destination)
+                raise KeyboardInterrupt("synthetic promotion interruption")
+            return original_replace(source, destination)
+
+        with mock.patch.object(formal.os, "replace",
+                               side_effect=injected_replace):
+            with self.assertRaises(KeyboardInterrupt):
+                self._run_synthetic_formal(output_root)
+        self.assertTrue(triggered[0])
+        self._assert_failed_terminal_state(output_root)
+        attempts_root = os.path.join(output_root, "attempts")
+        failed = [name for name in os.listdir(attempts_root)
+                  if name.endswith("_failed")]
+        self.assertEqual(len(failed), 1)
+        failed_root = os.path.join(attempts_root, failed[0])
+        self.assertTrue(os.path.isfile(
+            os.path.join(failed_root, "failure_audit.json")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(failed_root, formal.W08_ATTEMPT_STATE_NAME)))
+        context = formal._begin_attempt(output_root, CURRENT_COMMIT, 2.0)
+        self.assertTrue(context["staging_root"].endswith(".staging"))
+        return failed_root
 
     def test_complete_promotion_uses_manifest_commit_marker(self):
         with tempfile.TemporaryDirectory() as output_root:
@@ -366,6 +399,42 @@ class W08TransactionalOutputTests(unittest.TestCase):
                 self._run_synthetic_formal(
                     output_root, run_side_effect=KeyboardInterrupt())
             self._assert_failed_terminal_state(output_root)
+
+    def test_external_interrupt_after_predictions_before_next_promotion_is_archived(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            failed_root = self._run_formal_with_promotion_interrupt(
+                output_root, "fold_results.csv")
+            self.assertTrue(os.path.isfile(
+                os.path.join(failed_root, "staging", "fold_results.csv")))
+            self.assertTrue(os.path.isfile(
+                os.path.join(failed_root, "staging",
+                             formal.W08_OUTPUT_MANIFEST_NAME)))
+            self.assertTrue(os.path.isfile(
+                os.path.join(failed_root, "promoted_outputs",
+                             "predictions.csv")))
+
+    def test_external_interrupt_after_intermediate_promotion_is_archived(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            failed_root = self._run_formal_with_promotion_interrupt(
+                output_root, "audit.json", interrupt_after_move=True)
+            self.assertTrue(os.path.isfile(
+                os.path.join(failed_root, "promoted_outputs", "audit.json")))
+            self.assertTrue(os.path.isfile(
+                os.path.join(failed_root, "staging", "run_metadata.json")))
+            self.assertTrue(os.path.isfile(
+                os.path.join(failed_root, "staging",
+                             formal.W08_OUTPUT_MANIFEST_NAME)))
+
+    def test_external_interrupt_after_manifest_promotion_is_archived(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            failed_root = self._run_formal_with_promotion_interrupt(
+                output_root, formal.W08_OUTPUT_MANIFEST_NAME,
+                interrupt_after_move=True)
+            for name in formal.W08_FINAL_OUTPUT_NAMES:
+                self.assertTrue(os.path.isfile(os.path.join(
+                    failed_root, "promoted_outputs", name)))
+            self.assertTrue(os.path.isfile(os.path.join(
+                failed_root, "staging", formal.W08_ATTEMPT_STATE_NAME)))
 
     def test_attempt_state_write_failure_rolls_back_terminal_state(self):
         with tempfile.TemporaryDirectory() as output_root:

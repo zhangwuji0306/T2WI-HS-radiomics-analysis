@@ -361,7 +361,7 @@ def _validate_formal_output_manifest(path, expected_attempt_id=None,
 
 
 def _archive_promoted_failure(context, project_root, stage, exception):
-    """Archive promoted outputs before exposing a failed terminal state."""
+    """Archive promoted/partially promoted outputs before failing closed."""
     staging_root = context.get("staging_root")
     output_root = context["output_root"]
     failed_root = os.path.join(
@@ -371,16 +371,24 @@ def _archive_promoted_failure(context, project_root, stage, exception):
     os.makedirs(failed_root)
 
     archived_outputs = []
+    promoted_archive = os.path.join(failed_root, "promoted_outputs")
     for name in W08_FINAL_OUTPUT_NAMES:
         source = os.path.join(output_root, name)
         if os.path.isfile(source):
-            os.replace(source, os.path.join(failed_root, name))
+            if not os.path.isdir(promoted_archive):
+                os.makedirs(promoted_archive)
+            os.replace(source, os.path.join(promoted_archive, name))
             archived_outputs.append(name)
 
     complete_attempt = os.path.join(output_root, W08_ATTEMPT_STATE_NAME)
     if os.path.isfile(complete_attempt):
         os.replace(complete_attempt, os.path.join(
             failed_root, "attempt_state_complete.json"))
+
+    staging_archive = None
+    if staging_root and os.path.isdir(staging_root):
+        staging_archive = os.path.join(failed_root, "staging")
+        os.replace(staging_root, staging_archive)
 
     failure = {
         "attempt_id": context["attempt_id"],
@@ -397,6 +405,9 @@ def _archive_promoted_failure(context, project_root, stage, exception):
         "B_statistics_generated": False,
         "final_outputs_generated": False,
         "promoted_outputs_archived": archived_outputs,
+        "promoted_outputs_archive": "promoted_outputs"
+        if archived_outputs else None,
+        "staging_archive": "staging" if staging_archive else None,
     }
     failed_state = {
         "stage": "W08",
@@ -417,6 +428,9 @@ def _archive_promoted_failure(context, project_root, stage, exception):
         "B_statistics_generated": False,
         "final_outputs_generated": False,
         "promoted_outputs_archived": archived_outputs,
+        "promoted_outputs_archive": "promoted_outputs"
+        if archived_outputs else None,
+        "staging_archive": "staging" if staging_archive else None,
     }
     failed_attempt = {
         "stage": "W08",
@@ -440,7 +454,12 @@ def _write_attempt_failure(context, project_root, stage, exception):
     """Close an attempt as an explicit failed archive."""
     if not context or context.get("status") == "failed":
         return
-    if context.get("status") == "promoted":
+    output_root = context["output_root"]
+    canonical = _canonical_output_paths(output_root)
+    partially_promoted = any(os.path.exists(path)
+                             for path in canonical.values())
+    if context.get("status") in ("promoting", "promoted") or \
+            partially_promoted:
         _archive_promoted_failure(context, project_root, stage, exception)
         return
     staging_root = context.get("staging_root")
@@ -516,21 +535,18 @@ def _promote_staged_outputs(context):
         raise RuntimeError(
             "canonical W08 outputs appeared during promotion: %s" %
             ",".join(existing))
-    promoted = []
+    context["status"] = "promoting"
     try:
         for name in W08_REQUIRED_OUTPUT_NAMES + (W08_OUTPUT_MANIFEST_NAME,):
             os.replace(os.path.join(staging_root, name), canonical[name])
-            promoted.append(name)
         _validate_formal_output_manifest(
             canonical[W08_OUTPUT_MANIFEST_NAME],
             expected_attempt_id=context["attempt_id"],
             expected_code_commit=context.get("code_commit"))
-    except Exception:
-        for name in promoted:
-            try:
-                os.remove(canonical[name])
-            except OSError:
-                pass
+    except BaseException:
+        # Leave every moved byte discoverable for _write_attempt_failure.  The
+        # outer failure path archives both canonical files and the remaining
+        # staging tree before publishing failed terminal states.
         raise
     context["status"] = "promoted"
     context["manifest"] = canonical[W08_OUTPUT_MANIFEST_NAME]
