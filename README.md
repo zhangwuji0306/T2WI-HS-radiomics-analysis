@@ -112,6 +112,7 @@ python tools/build_image_id_mapping.py
 
 - [科学主协议](T2WI-HS-radiomics-analysis%20后续探索性预后分析与双阶段冻结任务书.md)
 - [当前执行 SOP](T2WI-HS-radiomics-analysis%20Pre-W08%20整改、协议补丁与后续%20A-only%20建模分包工作流.md)
+- [W08本地计算优化整改与分包执行工作流](T2WI-HS-radiomics-analysis%20W08本地计算优化整改与分包执行工作流.md)
 - [项目说明](项目说明.md)
 - [组学分析方案](组学分析方案.md)
 - [生境分析方案与工作流](生境分析方案与工作流.md)
