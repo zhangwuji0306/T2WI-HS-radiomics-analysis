@@ -1662,65 +1662,115 @@ def _penalty_audit(run_definition, preprocessor):
     }
 
 
-def _cox_components(X, time, event, beta):
-    """Return Breslow log-likelihood and score with stable risk-set sums."""
+@dataclass(frozen=True)
+class _CoxRiskSetLayout(object):
+    """Fold-local, beta-independent Breslow risk-set geometry."""
+
+    sorted_time: object
+    sorted_event: object
+    sorted_X: object
+    event_times: object
+    risk_endpoints: object
+    event_counts: object
+    event_X: object
+    event_count_total: int
+
+
+def _prepare_cox_risk_layout(X, time, event):
+    """Prepare stable time/risk-set geometry once per Cox fit."""
+    X = np.asarray(X, dtype=float)
+    time = np.asarray(time, dtype=float)
+    event = np.asarray(event, dtype=int)
     if len(X) == 0 or int(np.sum(event)) == 0:
         raise W08ValidationError("Cox fit requires at least one event")
     order = np.argsort(-time, kind="mergesort")
     sorted_time = time[order]
     sorted_event = event[order]
     sorted_X = X[order]
-    eta = np.clip(np.asarray(sorted_X.dot(beta), dtype=float), -50.0, 50.0)
+    event_times = np.unique(sorted_time[sorted_event == 1])
+    risk_endpoints = []
+    event_counts = []
+    event_X = []
+    for current in event_times:
+        event_mask = (sorted_time == current) & (sorted_event == 1)
+        risk_endpoints.append(
+            int(np.searchsorted(-sorted_time, -current, side="right")) - 1)
+        event_counts.append(int(np.sum(event_mask)))
+        event_X.append(np.sum(sorted_X[event_mask], axis=0))
+    return _CoxRiskSetLayout(
+        sorted_time=sorted_time,
+        sorted_event=sorted_event,
+        sorted_X=sorted_X,
+        event_times=event_times,
+        risk_endpoints=np.asarray(risk_endpoints, dtype=int),
+        event_counts=np.asarray(event_counts, dtype=int),
+        event_X=tuple(event_X),
+        event_count_total=int(np.sum(event)),
+    )
+
+
+def _cox_components_from_layout(layout, beta):
+    """Return Breslow log-likelihood and score from prepared geometry."""
+    eta = np.clip(np.asarray(layout.sorted_X.dot(beta), dtype=float), -50.0, 50.0)
     exp_eta = np.exp(eta)
     cumulative_risk = np.cumsum(exp_eta)
-    cumulative_xrisk = np.cumsum(sorted_X * exp_eta[:, None], axis=0)
+    cumulative_xrisk = np.cumsum(
+        layout.sorted_X * exp_eta[:, None], axis=0)
     loglik = 0.0
-    gradient = np.zeros(X.shape[1], dtype=float)
-    unique_event_times = np.unique(sorted_time[sorted_event == 1])
-    for current in unique_event_times:
-        event_mask = (sorted_time == current) & (sorted_event == 1)
-        last = int(np.searchsorted(-sorted_time, -current, side="right")) - 1
+    gradient = np.zeros(layout.sorted_X.shape[1], dtype=float)
+    for last, event_count, event_x in zip(
+            layout.risk_endpoints, layout.event_counts, layout.event_X):
         risk_sum = float(cumulative_risk[last])
         if not np.isfinite(risk_sum) or risk_sum <= 0.0:
             raise W08ValidationError("nonfinite Cox risk-set sum")
-        event_count = int(np.sum(event_mask))
-        event_x = np.sum(sorted_X[event_mask], axis=0)
         loglik += float(np.dot(event_x, beta)) - event_count * math.log(risk_sum)
         gradient += event_x - event_count * cumulative_xrisk[last] / risk_sum
     return float(loglik), gradient
 
 
-def _cox_information(X, time, event, beta):
-    """Observed Breslow information matrix for the low-dimensional Cox fit."""
-    order = np.argsort(-time, kind="mergesort")
-    sorted_time = time[order]
-    sorted_event = event[order]
-    sorted_X = X[order]
-    eta = np.clip(sorted_X.dot(beta), -50.0, 50.0)
+def _cox_components(X, time, event, beta):
+    """Return Breslow log-likelihood and score with stable risk-set sums."""
+    return _cox_components_from_layout(
+        _prepare_cox_risk_layout(X, time, event), beta)
+
+
+def _cox_information_from_layout(layout, beta):
+    """Observed Breslow information matrix from prepared geometry."""
+    eta = np.clip(layout.sorted_X.dot(beta), -50.0, 50.0)
     exp_eta = np.exp(eta)
     risk = np.cumsum(exp_eta)
-    xrisk = np.cumsum(sorted_X * exp_eta[:, None], axis=0)
+    xrisk = np.cumsum(layout.sorted_X * exp_eta[:, None], axis=0)
     xxrisk = np.cumsum(
-        (sorted_X[:, :, None] * sorted_X[:, None, :]) * exp_eta[:, None, None], axis=0)
-    information = np.zeros((X.shape[1], X.shape[1]), dtype=float)
-    for current in np.unique(sorted_time[sorted_event == 1]):
-        event_mask = (sorted_time == current) & (sorted_event == 1)
-        last = int(np.searchsorted(-sorted_time, -current, side="right")) - 1
+        (layout.sorted_X[:, :, None] * layout.sorted_X[:, None, :]) *
+        exp_eta[:, None, None], axis=0)
+    information = np.zeros((layout.sorted_X.shape[1],
+                            layout.sorted_X.shape[1]), dtype=float)
+    for last, event_count in zip(layout.risk_endpoints, layout.event_counts):
         denom = float(risk[last])
         mean = xrisk[last] / denom
         covariance = xxrisk[last] / denom - np.outer(mean, mean)
-        information += int(np.sum(event_mask)) * covariance
+        information += int(event_count) * covariance
     return information
 
 
-def _cox_negative_loglik(X, time, event, beta):
-    loglik, _ = _cox_components(X, time, event, beta)
-    return -loglik / float(np.sum(event))
+def _cox_information(X, time, event, beta):
+    """Observed Breslow information matrix for the low-dimensional Cox fit."""
+    return _cox_information_from_layout(
+        _prepare_cox_risk_layout(X, time, event), beta)
+
+
+def _cox_negative_loglik(X, time, event, beta, layout=None):
+    if layout is None:
+        layout = _prepare_cox_risk_layout(X, time, event)
+    loglik, _ = _cox_components_from_layout(layout, beta)
+    return -loglik / float(layout.event_count_total)
 
 
 def _lambda_max(X, time, event, alpha):
-    _, score = _cox_components(X, time, event, np.zeros(X.shape[1], dtype=float))
-    gradient = -score / float(np.sum(event))
+    layout = _prepare_cox_risk_layout(X, time, event)
+    _, score = _cox_components_from_layout(
+        layout, np.zeros(X.shape[1], dtype=float))
+    gradient = -score / float(layout.event_count_total)
     maximum = float(np.max(np.abs(gradient)))
     if not np.isfinite(maximum) or maximum <= 0.0:
         return 1.0
@@ -1796,6 +1846,7 @@ class CoxPHModel(object):
         self.fit_audit = {}
         if np.sum(event) < 1:
             raise W08ValidationError("unpenalized Cox fit requires an event")
+        layout = _prepare_cox_risk_layout(X, time, event)
         beta = np.zeros(X.shape[1], dtype=float)
         clipping = _new_clipping_audit()
         converged = False
@@ -1805,11 +1856,12 @@ class CoxPHModel(object):
         last_coefficient_delta = None
         for iteration in range(self.max_iter):
             _record_linear_predictor_clipping(clipping, X, beta, "fit")
-            old = _cox_negative_loglik(X, time, event, beta)
+            loglik, score = _cox_components_from_layout(layout, beta)
+            old = -loglik / float(layout.event_count_total)
             last_objective = old
-            _, score = _cox_components(X, time, event, beta)
-            gradient = -score / float(np.sum(event))
-            information = _cox_information(X, time, event, beta) / float(np.sum(event))
+            gradient = -score / float(layout.event_count_total)
+            information = _cox_information_from_layout(
+                layout, beta) / float(layout.event_count_total)
             ridge = 1e-8 * max(1.0, float(np.trace(information)))
             try:
                 step = np.linalg.solve(information + ridge * np.eye(X.shape[1]), gradient)
@@ -1823,7 +1875,9 @@ class CoxPHModel(object):
                 proposal = beta - length * step
                 _record_linear_predictor_clipping(clipping, X, proposal,
                                                   "fit_line_search")
-                new = _cox_negative_loglik(X, time, event, proposal)
+                proposal_loglik, _ = _cox_components_from_layout(
+                    layout, proposal)
+                new = -proposal_loglik / float(layout.event_count_total)
                 if np.isfinite(new) and new <= old + 1e-12:
                     beta = proposal
                     last_objective_improvement = old - new
@@ -1885,26 +1939,24 @@ class CoxPHModel(object):
             "last_objective_improvement": last_objective_improvement,
             "last_coefficient_delta": last_coefficient_delta,
         })
-        self._fit_baseline(X, time, event)
+        self._fit_baseline(X, time, event, layout=layout)
         return self
 
-    def _fit_baseline(self, X, time, event):
+    def _fit_baseline(self, X, time, event, layout=None):
         beta = self.coef_
         if self.fit_audit:
             _record_linear_predictor_clipping(
                 self.fit_audit["linear_predictor_clipping"], X, beta, "baseline")
-        order = np.argsort(-time, kind="mergesort")
-        sorted_time = time[order]
-        sorted_event = event[order]
-        eta = np.clip(X[order].dot(beta), -50.0, 50.0)
+        if layout is None:
+            layout = _prepare_cox_risk_layout(X, time, event)
+        eta = np.clip(layout.sorted_X.dot(beta), -50.0, 50.0)
         risk = np.cumsum(np.exp(eta))
         times = []
         survival = []
         cumulative = 0.0
-        for current in np.unique(sorted_time[sorted_event == 1]):
-            mask = (sorted_time == current) & (sorted_event == 1)
-            last = int(np.searchsorted(-sorted_time, -current, side="right")) - 1
-            cumulative += float(np.sum(mask)) / float(risk[last])
+        for current, last, event_count in zip(
+                layout.event_times, layout.risk_endpoints, layout.event_counts):
+            cumulative += float(event_count) / float(risk[last])
             times.append(float(current))
             survival.append(math.exp(-cumulative))
         self.baseline_times_ = np.asarray(times, dtype=float)
@@ -1952,20 +2004,29 @@ class CoxElasticNetModel(object):
         self.baseline_survival_ = None
         self.fit_audit = {}
 
-    def _smooth(self, X, time, event, beta):
-        value = _cox_negative_loglik(X, time, event, beta)
-        _, score = _cox_components(X, time, event, beta)
-        gradient = -score / float(np.sum(event))
+    def _smooth_from_layout(self, layout, beta):
+        loglik, score = _cox_components_from_layout(layout, beta)
+        value = -loglik / float(layout.event_count_total)
+        gradient = -score / float(layout.event_count_total)
         ridge = self.penalty * (1.0 - self.alpha)
         value += 0.5 * ridge * float(np.dot(beta, beta))
         gradient = gradient + ridge * beta
         return value, gradient
 
-    def _objective(self, X, time, event, beta):
-        value = _cox_negative_loglik(X, time, event, beta)
+    def _objective_from_layout(self, layout, beta):
+        loglik, _ = _cox_components_from_layout(layout, beta)
+        value = -loglik / float(layout.event_count_total)
         value += self.penalty * self.alpha * float(np.sum(np.abs(beta)))
         value += 0.5 * self.penalty * (1.0 - self.alpha) * float(np.dot(beta, beta))
         return value
+
+    def _smooth(self, X, time, event, beta):
+        return self._smooth_from_layout(
+            _prepare_cox_risk_layout(X, time, event), beta)
+
+    def _objective(self, X, time, event, beta):
+        return self._objective_from_layout(
+            _prepare_cox_risk_layout(X, time, event), beta)
 
     def fit(self, X, time, event):
         X = np.asarray(X, dtype=float)
@@ -1979,6 +2040,7 @@ class CoxElasticNetModel(object):
         self.fit_audit = {}
         if np.sum(event) < 1:
             raise W08ValidationError("Elastic-Net Cox fit requires an event")
+        layout = _prepare_cox_risk_layout(X, time, event)
         beta = np.zeros(X.shape[1], dtype=float)
         clipping = _new_clipping_audit()
         previous = beta.copy()
@@ -1992,8 +2054,18 @@ class CoxElasticNetModel(object):
         last_coefficient_delta = None
         for iteration in range(self.max_iter):
             _record_linear_predictor_clipping(clipping, X, beta, "fit")
-            previous_objective = self._objective(X, time, event, beta)
-            smooth_y, gradient_y = self._smooth(X, time, event, beta)
+            loglik_y, score_y = _cox_components_from_layout(layout, beta)
+            negative_loglik_y = -loglik_y / float(layout.event_count_total)
+            ridge = self.penalty * (1.0 - self.alpha)
+            smooth_y = negative_loglik_y
+            smooth_y += 0.5 * ridge * float(np.dot(beta, beta))
+            gradient_y = -score_y / float(layout.event_count_total)
+            gradient_y = gradient_y + ridge * beta
+            previous_objective = negative_loglik_y
+            previous_objective += self.penalty * self.alpha * float(
+                np.sum(np.abs(beta)))
+            previous_objective += 0.5 * self.penalty * (1.0 - self.alpha) * \
+                float(np.dot(beta, beta))
             accepted = False
             local_step = step
             for _ in range(60):
@@ -2008,7 +2080,12 @@ class CoxElasticNetModel(object):
                     clipping, X, proposal, "fit_line_search")
                 delta = proposal - beta
                 quadratic = smooth_y + float(np.dot(gradient_y, delta)) + float(np.dot(delta, delta)) / (2.0 * local_step)
-                actual_smooth, _ = self._smooth(X, time, event, proposal)
+                proposal_loglik, _ = _cox_components_from_layout(
+                    layout, proposal)
+                actual_negative_loglik = -proposal_loglik / float(
+                    layout.event_count_total)
+                actual_smooth = actual_negative_loglik
+                actual_smooth += 0.5 * ridge * float(np.dot(proposal, proposal))
                 if np.isfinite(actual_smooth) and actual_smooth <= quadratic + 1e-10:
                     accepted = True
                     last_coefficient_delta = float(
@@ -2040,7 +2117,11 @@ class CoxElasticNetModel(object):
                 self.fit_audit = _finalise_fit_audit(audit)
                 raise W08NumericalFailure(
                     "Elastic-Net Cox line search failed", audit=self.fit_audit)
-            objective = self._objective(X, time, event, beta)
+            objective = actual_negative_loglik
+            objective += self.penalty * self.alpha * float(
+                np.sum(np.abs(beta)))
+            objective += 0.5 * self.penalty * (1.0 - self.alpha) * \
+                float(np.dot(beta, beta))
             objective_improvement = previous_objective - objective
             last_objective = objective
             last_objective_improvement = objective_improvement
@@ -2092,15 +2173,15 @@ class CoxElasticNetModel(object):
             "last_objective_improvement": last_objective_improvement,
             "last_coefficient_delta": last_coefficient_delta,
         })
-        self._fit_baseline(X, time, event)
+        self._fit_baseline(X, time, event, layout=layout)
         return self
 
-    def _fit_baseline(self, X, time, event):
+    def _fit_baseline(self, X, time, event, layout=None):
         _record_linear_predictor_clipping(
             self.fit_audit["linear_predictor_clipping"], X, self.coef_, "baseline")
         helper = CoxPHModel()
         helper.coef_ = self.coef_
-        helper._fit_baseline(X, time, event)
+        helper._fit_baseline(X, time, event, layout=layout)
         self.baseline_times_ = helper.baseline_times_
         self.baseline_survival_ = helper.baseline_survival_
 
@@ -2178,6 +2259,15 @@ def make_inner_splits(frame, seed, folds=5):
     return output
 
 
+@dataclass(frozen=True)
+class _UnoCIndexLayout(object):
+    """Inner-fold censoring weights and comparable pairs, prepared once."""
+
+    event_indices: object
+    weights: object
+    comparable_pairs: object
+
+
 def _km_censoring_survival(train_time, train_event, query, left=True):
     """Kaplan-Meier estimate of censoring survival G(t), from training only."""
     time = np.asarray(train_time, dtype=float)
@@ -2212,21 +2302,38 @@ def harrell_c_index(time, event, risk):
     return float((concordant + 0.5 * tied) / comparable)
 
 
-def uno_c_index(train_time, train_event, validation_time, validation_event, risk):
+def _prepare_uno_c_index_layout(train_time, train_event,
+                                validation_time, validation_event):
+    """Prepare inner-fold Uno geometry without any candidate risk values."""
     train_time = np.asarray(train_time, dtype=float)
     train_event = np.asarray(train_event, dtype=int)
     time = np.asarray(validation_time, dtype=float)
     event = np.asarray(validation_event, dtype=int)
-    risk = np.asarray(risk, dtype=float)
-    concordant = tied = comparable = 0.0
+    event_indices = []
+    weights = []
+    comparable_pairs = []
     for i in range(len(time)):
         if event[i] != 1:
             continue
-        censor_survival = _km_censoring_survival(train_time, train_event, time[i], left=True)
+        censor_survival = _km_censoring_survival(
+            train_time, train_event, time[i], left=True)
         if censor_survival <= 1e-12:
             continue
-        weight = 1.0 / (censor_survival * censor_survival)
-        later = np.where(time > time[i])[0]
+        event_indices.append(int(i))
+        weights.append(float(1.0 / (censor_survival * censor_survival)))
+        comparable_pairs.append(tuple(
+            int(index) for index in np.where(time > time[i])[0]))
+    return _UnoCIndexLayout(
+        event_indices=tuple(event_indices),
+        weights=tuple(weights),
+        comparable_pairs=tuple(comparable_pairs))
+
+
+def _uno_c_index_from_layout(layout, risk):
+    risk = np.asarray(risk, dtype=float)
+    concordant = tied = comparable = 0.0
+    for i, weight, later in zip(
+            layout.event_indices, layout.weights, layout.comparable_pairs):
         for j in later:
             comparable += weight
             if risk[i] > risk[j]:
@@ -2236,6 +2343,12 @@ def uno_c_index(train_time, train_event, validation_time, validation_event, risk
     if comparable == 0.0:
         return float("nan")
     return float((concordant + 0.5 * tied) / comparable)
+
+
+def uno_c_index(train_time, train_event, validation_time, validation_event, risk):
+    layout = _prepare_uno_c_index_layout(
+        train_time, train_event, validation_time, validation_event)
+    return _uno_c_index_from_layout(layout, risk)
 
 
 def _ipcw_weights(train_time, train_event, validation_time, validation_event, horizon):
@@ -2390,6 +2503,8 @@ def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
         train_event = inner_train["DFS_event"].to_numpy(dtype=int)
         validation_time = inner_validation["DFS_time"].to_numpy(dtype=float)
         validation_event = inner_validation["DFS_event"].to_numpy(dtype=int)
+        uno_layout = _prepare_uno_c_index_layout(
+            train_time, train_event, validation_time, validation_event)
         censoring = {"train_ids_hash": canonical_id_hash(inner_train["patient_id"]),
                      "validation_ids_hash": canonical_id_hash(inner_validation["patient_id"])}
         for alpha_index, alpha in enumerate(ALPHA_GRID):
@@ -2434,8 +2549,7 @@ def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
                         raise W08NumericalFailure(
                             "candidate linear predictor is nonfinite",
                             audit=model.fit_audit)
-                    score = uno_c_index(train_time, train_event,
-                                        validation_time, validation_event, risk)
+                    score = _uno_c_index_from_layout(uno_layout, risk)
                     if not np.isfinite(score):
                         score = float("nan")
                     record["uno_c_index"] = float(score)
@@ -2564,6 +2678,8 @@ def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
         train_event = inner_train["DFS_event"].to_numpy(dtype=int)
         validation_time = inner_validation["DFS_time"].to_numpy(dtype=float)
         validation_event = inner_validation["DFS_event"].to_numpy(dtype=int)
+        uno_layout = _prepare_uno_c_index_layout(
+            train_time, train_event, validation_time, validation_event)
         reference = _ridge_lambda_reference(X_train, train_time, train_event)
         censoring = {
             "train_ids_hash": canonical_id_hash(inner_train["patient_id"]),
@@ -2612,8 +2728,7 @@ def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
                     raise W08NumericalFailure(
                         "ridge candidate linear predictor is nonfinite",
                         audit=model.fit_audit)
-                score = uno_c_index(train_time, train_event,
-                                    validation_time, validation_event, risk)
+                score = _uno_c_index_from_layout(uno_layout, risk)
                 if not np.isfinite(score):
                     score = float("nan")
                 record["uno_c_index"] = float(score)
