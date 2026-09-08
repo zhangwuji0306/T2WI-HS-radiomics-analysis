@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest import mock
 
@@ -59,6 +60,95 @@ class W08TransactionalOutputTests(unittest.TestCase):
             return formal.write_results(
                 _synthetic_result(), {}, ["synthetic-001"], 1.0,
                 output_root, code_commit=CURRENT_COMMIT)
+
+    def _formal_release_gate(self):
+        return {
+            "stage": "W08_FORMAL_RELEASE",
+            "status": "PASS",
+            "formal_authorized": True,
+            "code_commit": CURRENT_COMMIT,
+            "checks": {},
+            "failure_reasons": [],
+            "B_access": dict((key, False) for key in formal.B_ACCESS_FLAGS),
+            "final_outputs_generated": False,
+        }
+
+    def _run_synthetic_formal(self, output_root, run_side_effect=None,
+                              atomic_json_wrapper=None,
+                              write_progress_side_effect=None,
+                              completed_attempt_side_effect=None,
+                              promote_side_effect=None):
+        source = self._write_synthetic_population_source(output_root)
+        provider = SimpleNamespace(_case_cache={})
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(formal, "W06_POPULATION", source))
+            stack.enter_context(mock.patch.object(
+                formal, "validate_w08_release_gate",
+                return_value=self._formal_release_gate()))
+            stack.enter_context(mock.patch.object(
+                formal, "_git_head", return_value=CURRENT_COMMIT))
+            stack.enter_context(mock.patch.object(
+                formal, "_load_population_and_provider",
+                return_value=(["synthetic-001"], None, provider)))
+            stack.enter_context(mock.patch.object(
+                formal.w08, "run_w08",
+                side_effect=run_side_effect,
+                return_value=None if run_side_effect is not None
+                else _synthetic_result()))
+            stack.enter_context(mock.patch.object(
+                formal.w08, "load_config", return_value={}))
+            if atomic_json_wrapper is not None:
+                original_atomic_json = formal._atomic_json
+
+                def wrapped_atomic_json(path, payload):
+                    return atomic_json_wrapper(
+                        original_atomic_json, path, payload)
+
+                stack.enter_context(mock.patch.object(
+                    formal, "_atomic_json", side_effect=wrapped_atomic_json))
+            if write_progress_side_effect is not None:
+                stack.enter_context(mock.patch.object(
+                    formal, "_write_progress",
+                    side_effect=write_progress_side_effect))
+            if completed_attempt_side_effect is not None:
+                stack.enter_context(mock.patch.object(
+                    formal, "_write_completed_attempt_state",
+                    side_effect=completed_attempt_side_effect))
+            if promote_side_effect is not None:
+                stack.enter_context(mock.patch.object(
+                    formal, "_promote_staged_outputs",
+                    side_effect=promote_side_effect))
+            return formal.formal(output_root)
+
+    def _terminal_states(self, output_root):
+        with open(os.path.join(output_root, formal.W08_RUN_STATE_NAME),
+                  encoding="utf-8") as handle:
+            run_state = json.load(handle)
+        with open(os.path.join(output_root, formal.W08_PROGRESS_NAME),
+                  encoding="utf-8") as handle:
+            progress = json.load(handle)
+        attempt_path = os.path.join(output_root, formal.W08_ATTEMPT_STATE_NAME)
+        if not os.path.isfile(attempt_path):
+            attempts_root = os.path.join(output_root, "attempts")
+            candidates = sorted(os.listdir(attempts_root))
+            self.assertTrue(candidates)
+            attempt_path = os.path.join(attempts_root, candidates[0],
+                                        formal.W08_ATTEMPT_STATE_NAME)
+        with open(attempt_path, encoding="utf-8") as handle:
+            attempt_state = json.load(handle)
+        return attempt_state, run_state, progress
+
+    def _assert_failed_terminal_state(self, output_root):
+        states = self._terminal_states(output_root)
+        self.assertEqual([state["status"] for state in states],
+                         ["failed", "failed", "failed"])
+        self.assertFalse(os.path.exists(os.path.join(
+            output_root, formal.W08_OUTPUT_MANIFEST_NAME)))
+        self.assertFalse(os.path.exists(os.path.join(
+            output_root, "predictions.csv")))
+        attempts_root = os.path.join(output_root, "attempts")
+        self.assertFalse(any(name.endswith(".staging")
+                             for name in os.listdir(attempts_root)))
 
     def test_complete_promotion_uses_manifest_commit_marker(self):
         with tempfile.TemporaryDirectory() as output_root:
@@ -270,97 +360,76 @@ class W08TransactionalOutputTests(unittest.TestCase):
                 progress = json.load(handle)
             self.assertEqual(progress["status"], "complete")
 
-    def test_external_interrupt_before_promotion_never_emits_complete_progress(self):
+    def test_external_interrupt_before_promotion_closes_all_states_as_failed(self):
         with tempfile.TemporaryDirectory() as output_root:
-            source = self._write_synthetic_population_source(output_root)
-            release_gate = {
-                "stage": "W08_FORMAL_RELEASE",
-                "status": "PASS",
-                "formal_authorized": True,
-                "code_commit": CURRENT_COMMIT,
-                "checks": {},
-                "failure_reasons": [],
-                "B_access": dict((key, False) for key in formal.B_ACCESS_FLAGS),
-                "final_outputs_generated": False,
-            }
-            provider = SimpleNamespace(_case_cache={})
-            with mock.patch.object(formal, "W06_POPULATION", source), \
-                    mock.patch.object(formal, "validate_w08_release_gate",
-                                       return_value=release_gate), \
-                    mock.patch.object(formal, "_git_head",
-                                       return_value=CURRENT_COMMIT), \
-                    mock.patch.object(
-                        formal, "_load_population_and_provider",
-                        return_value=( ["synthetic-001"], None, provider)), \
-                    mock.patch.object(formal.w08, "run_w08",
-                                       side_effect=KeyboardInterrupt()):
-                with self.assertRaises(KeyboardInterrupt):
-                    formal.formal(output_root)
+            with self.assertRaises(KeyboardInterrupt):
+                self._run_synthetic_formal(
+                    output_root, run_side_effect=KeyboardInterrupt())
+            self._assert_failed_terminal_state(output_root)
 
-            with open(os.path.join(output_root, formal.W08_PROGRESS_NAME),
-                      encoding="utf-8") as handle:
-                progress = json.load(handle)
-            with open(os.path.join(output_root, formal.W08_RUN_STATE_NAME),
-                      encoding="utf-8") as handle:
-                run_state = json.load(handle)
-            attempts = [name for name in os.listdir(
-                os.path.join(output_root, "attempts"))
-                        if name.endswith(".staging")]
-            self.assertEqual(progress["status"], "running")
-            self.assertEqual(run_state["status"], "modeling")
-            self.assertEqual(len(attempts), 1)
-            with open(os.path.join(output_root, "attempts", attempts[0],
-                                   formal.W08_ATTEMPT_STATE_NAME),
-                      encoding="utf-8") as handle:
-                attempt_state = json.load(handle)
-            self.assertEqual(attempt_state["status"], "staging")
-            self.assertFalse(os.path.exists(os.path.join(
-                output_root, formal.W08_OUTPUT_MANIFEST_NAME)))
-            self.assertNotEqual(progress["status"], "complete")
-
-    def test_progress_write_failure_is_observability_only(self):
+    def test_attempt_state_write_failure_rolls_back_terminal_state(self):
         with tempfile.TemporaryDirectory() as output_root:
-            source = self._write_synthetic_population_source(output_root)
-            release_gate = {
-                "stage": "W08_FORMAL_RELEASE",
-                "status": "PASS",
-                "formal_authorized": True,
-                "code_commit": CURRENT_COMMIT,
-                "checks": {},
-                "failure_reasons": [],
-                "B_access": dict((key, False) for key in formal.B_ACCESS_FLAGS),
-                "final_outputs_generated": False,
-            }
-            provider = SimpleNamespace(_case_cache={})
-            with mock.patch.object(formal, "W06_POPULATION", source), \
-                    mock.patch.object(formal, "validate_w08_release_gate",
-                                       return_value=release_gate), \
-                    mock.patch.object(formal, "_git_head",
-                                       return_value=CURRENT_COMMIT), \
-                    mock.patch.object(
-                        formal, "_load_population_and_provider",
-                        return_value=( ["synthetic-001"], None, provider)), \
-                    mock.patch.object(formal.w08, "run_w08",
-                                       return_value=_synthetic_result()), \
-                    mock.patch.object(formal.w08, "load_config",
-                                       return_value={}), \
-                    mock.patch.object(
-                        formal, "_write_progress",
-                        side_effect=OSError("synthetic progress failure")):
-                formal.formal(output_root)
+            with self.assertRaises(OSError):
+                self._run_synthetic_formal(
+                    output_root,
+                    completed_attempt_side_effect=OSError(
+                        "synthetic attempt-state failure"))
+            self._assert_failed_terminal_state(output_root)
 
-            self.assertTrue(os.path.isfile(os.path.join(
-                output_root, formal.W08_OUTPUT_MANIFEST_NAME)))
-            self.assertFalse(os.path.exists(os.path.join(
-                output_root, formal.W08_PROGRESS_NAME)))
-            with open(os.path.join(output_root, formal.W08_RUN_STATE_NAME),
-                      encoding="utf-8") as handle:
-                state = json.load(handle)
-            self.assertEqual(state["status"], "complete")
-            self.assertTrue(state["final_outputs_generated"])
-            self.assertGreater(state["progress_observability"]["write_failures"],
-                               0)
+    def test_run_state_write_failure_rolls_back_terminal_state(self):
+        calls = [0]
 
+        def fail_complete_run_once(original, path, payload):
+            if (os.path.basename(path) == formal.W08_RUN_STATE_NAME and
+                    payload.get("status") == "complete" and calls[0] == 0):
+                calls[0] += 1
+                raise OSError("synthetic run-state failure")
+            return original(path, payload)
+
+        with tempfile.TemporaryDirectory() as output_root:
+            with self.assertRaises(OSError):
+                self._run_synthetic_formal(
+                    output_root, atomic_json_wrapper=fail_complete_run_once)
+            self._assert_failed_terminal_state(output_root)
+
+    def test_final_progress_write_failure_rolls_back_terminal_state(self):
+        original_write_progress = formal._write_progress
+
+        def fail_complete_progress(root, started_epoch, payload=None):
+            if payload and payload.get("status") == "complete":
+                raise OSError("synthetic final progress failure")
+            return original_write_progress(root, started_epoch, payload)
+
+        with tempfile.TemporaryDirectory() as output_root:
+            with self.assertRaises(formal.W08TerminalStateError):
+                self._run_synthetic_formal(
+                    output_root,
+                    write_progress_side_effect=fail_complete_progress)
+            self._assert_failed_terminal_state(output_root)
+
+    def test_manifest_write_failure_never_publishes_formal_outputs(self):
+        calls = [0]
+
+        def fail_manifest_once(original, path, payload):
+            if (os.path.basename(path) == formal.W08_OUTPUT_MANIFEST_NAME and
+                    calls[0] == 0):
+                calls[0] += 1
+                raise OSError("synthetic manifest failure")
+            return original(path, payload)
+
+        with tempfile.TemporaryDirectory() as output_root:
+            with self.assertRaises(OSError):
+                self._run_synthetic_formal(
+                    output_root, atomic_json_wrapper=fail_manifest_once)
+            self._assert_failed_terminal_state(output_root)
+
+    def test_promotion_failure_never_publishes_formal_outputs(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            with self.assertRaises(OSError):
+                self._run_synthetic_formal(
+                    output_root,
+                    promote_side_effect=OSError("synthetic promotion failure"))
+            self._assert_failed_terminal_state(output_root)
 
 if __name__ == "__main__":
     unittest.main()

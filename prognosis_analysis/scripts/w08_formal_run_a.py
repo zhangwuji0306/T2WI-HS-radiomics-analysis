@@ -170,6 +170,10 @@ class W08ReleaseGateError(RuntimeError):
         super(W08ReleaseGateError, self).__init__(message)
 
 
+class W08TerminalStateError(RuntimeError):
+    """Raised when formal W08 cannot commit one consistent terminal state."""
+
+
 def _sha256(path):
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -356,9 +360,88 @@ def _validate_formal_output_manifest(path, expected_attempt_id=None,
     return manifest
 
 
+def _archive_promoted_failure(context, project_root, stage, exception):
+    """Archive promoted outputs before exposing a failed terminal state."""
+    staging_root = context.get("staging_root")
+    output_root = context["output_root"]
+    failed_root = os.path.join(
+        os.path.dirname(staging_root), context["attempt_id"] + "_failed")
+    if os.path.exists(failed_root):
+        raise RuntimeError("failed W08 attempt archive already exists")
+    os.makedirs(failed_root)
+
+    archived_outputs = []
+    for name in W08_FINAL_OUTPUT_NAMES:
+        source = os.path.join(output_root, name)
+        if os.path.isfile(source):
+            os.replace(source, os.path.join(failed_root, name))
+            archived_outputs.append(name)
+
+    complete_attempt = os.path.join(output_root, W08_ATTEMPT_STATE_NAME)
+    if os.path.isfile(complete_attempt):
+        os.replace(complete_attempt, os.path.join(
+            failed_root, "attempt_state_complete.json"))
+
+    failure = {
+        "attempt_id": context["attempt_id"],
+        "stage": "W08",
+        "status": "failed",
+        "failure_stage": stage,
+        "exception_summary": _safe_exception_text(
+            exception, project_root, output_root),
+        "numerical_failure_audit": w08.serialise_failure_audit(exception),
+        "code_commit_at_attempt": context.get("code_commit"),
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+        "promoted_outputs_archived": archived_outputs,
+    }
+    failed_state = {
+        "stage": "W08",
+        "status": "failed",
+        "formal_run": True,
+        "failure_stage": stage,
+        "exception_class": exception.__class__.__name__,
+        "failure_reason": _safe_exception_text(
+            exception, project_root, output_root),
+        "code_commit": context.get("code_commit"),
+        "code_commit_at_attempt": context.get("code_commit"),
+        "attempt_id": context["attempt_id"],
+        "started_at_epoch": context.get("started_at_epoch"),
+        "ended_at_epoch": time.time(),
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "final_outputs_generated": False,
+        "promoted_outputs_archived": archived_outputs,
+    }
+    failed_attempt = {
+        "stage": "W08",
+        "status": "failed",
+        "attempt_id": context["attempt_id"],
+        "code_commit_at_attempt": context.get("code_commit"),
+        "failure_stage": stage,
+        "final_outputs_generated": False,
+    }
+    _atomic_json(os.path.join(failed_root, "failure_audit.json"), failure)
+    _atomic_json(os.path.join(failed_root, W08_RUN_STATE_NAME), failed_state)
+    _atomic_json(os.path.join(failed_root, W08_ATTEMPT_STATE_NAME),
+                 failed_attempt)
+    _atomic_json(os.path.join(output_root, W08_ATTEMPT_STATE_NAME),
+                 failed_attempt)
+    context["status"] = "failed"
+    context["failed_root"] = failed_root
+
+
 def _write_attempt_failure(context, project_root, stage, exception):
-    """Close a staging attempt as an explicit failed archive."""
-    if not context or context.get("status") in ("failed", "promoted"):
+    """Close an attempt as an explicit failed archive."""
+    if not context or context.get("status") == "failed":
+        return
+    if context.get("status") == "promoted":
+        _archive_promoted_failure(context, project_root, stage, exception)
         return
     staging_root = context.get("staging_root")
     if not staging_root or not os.path.isdir(staging_root):
@@ -1977,7 +2060,7 @@ def write_results(result, config, population, started_epoch, output_root,
             os.path.join(output_root, W08_OUTPUT_MANIFEST_NAME),
             expected_attempt_id=attempt["attempt_id"],
             expected_code_commit=code_commit)
-    except Exception as exc:
+    except BaseException as exc:
         try:
             _write_attempt_failure(attempt, PROJECT_ROOT, "result_write", exc)
         except Exception:
@@ -2199,17 +2282,48 @@ def _write_progress(output_root, started_epoch, payload=None):
     return progress
 
 
+def _write_failed_progress_direct(output_root, started_epoch):
+    """Write failed progress without the normal observer callback path."""
+    now = time.time()
+    progress = {
+        "schema": W08_PROGRESS_SCHEMA,
+        "schema_version": W08_PROGRESS_SCHEMA_VERSION,
+        "stage": "W08",
+        "status": "failed",
+        "current_repeat": None,
+        "current_fold": None,
+        "current_run": None,
+        "completed_outer_folds": None,
+        "total_outer_folds": None,
+        "completed_runs_in_fold": None,
+        "total_runs_in_fold": None,
+        "started_at_epoch": started_epoch,
+        "updated_at_epoch": now,
+        "elapsed_seconds": round(now - started_epoch, 3),
+    }
+    for key in B_ACCESS_FLAGS:
+        progress[key] = False
+    _validate_progress(progress)
+    os.makedirs(output_root, exist_ok=True)
+    _atomic_json(os.path.join(output_root, W08_PROGRESS_NAME), progress)
+    return progress
+
+
 def _write_failure_state(output_root, project_root, stage, started_epoch,
                          formal_run_started, exception, attempt=None,
                          progress_observability=None):
     """Persist a non-success state without ever emitting a running state."""
     output_root = os.path.abspath(os.fspath(output_root))
     project_root = os.path.abspath(project_root)
-    if attempt is not None and attempt.get("status") not in ("failed", "promoted"):
+    partial_outputs = [name for name in W08_FINAL_OUTPUT_NAMES
+                       if os.path.exists(os.path.join(output_root, name))]
+    state_write_failures = []
+    if attempt is not None and attempt.get("status") != "failed":
         try:
             _write_attempt_failure(attempt, project_root, stage, exception)
-        except Exception:
-            pass
+        except Exception as state_exc:
+            state_write_failures.append(
+                "attempt_state:%s" % state_exc.__class__.__name__)
     try:
         code_commit = _git_head(project_root)
     except Exception:
@@ -2219,20 +2333,13 @@ def _write_failure_state(output_root, project_root, stage, started_epoch,
     except Exception as env_exc:
         environment = {"fingerprint_error": _safe_exception_text(
             env_exc, project_root, output_root)}
-    partial_outputs = [name for name in W08_FINAL_OUTPUT_NAMES
-                       if os.path.exists(os.path.join(output_root, name))]
     if isinstance(progress_observability, dict):
         progress_observability["write_attempts"] += 1
     try:
-        _write_progress(output_root, started_epoch, {
-            "status": "failed",
-            "current_repeat": None,
-            "current_fold": None,
-            "current_run": None,
-            "completed_outer_folds": None,
-            "total_outer_folds": None,
-        })
-    except Exception:
+        _write_failed_progress_direct(output_root, started_epoch)
+    except Exception as state_exc:
+        state_write_failures.append(
+            "progress:%s" % state_exc.__class__.__name__)
         if isinstance(progress_observability, dict):
             progress_observability["write_failures"] += 1
     state = {
@@ -2264,6 +2371,8 @@ def _write_failure_state(output_root, project_root, stage, started_epoch,
             if attempt.get("failed_root") else None
     if isinstance(progress_observability, dict):
         state["progress_observability"] = dict(progress_observability)
+    if state_write_failures:
+        state["terminal_state_write_failures"] = state_write_failures
     if isinstance(exception, W08ReleaseGateError):
         state["release_gate"] = exception.result
         try:
@@ -2275,7 +2384,9 @@ def _write_failure_state(output_root, project_root, stage, started_epoch,
     try:
         os.makedirs(output_root, exist_ok=True)
         _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), state)
-    except Exception:
+    except Exception as state_exc:
+        state_write_failures.append(
+            "run_state:%s" % state_exc.__class__.__name__)
         # Preserve the original execution exception if the local status file
         # itself cannot be written.
         pass
@@ -2358,8 +2469,10 @@ def formal(output_root=OUTPUT_ROOT):
         manifest = write_results(
             result, w08.load_config(), population, started, output_root,
             attempt=attempt, code_commit=release_gate["code_commit"])
+        stage = "terminal_attempt_state"
         _write_completed_attempt_state(
             attempt, output_root, release_gate["code_commit"], started)
+        stage = "terminal_run_state"
         _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
             "stage": "W08", "status": "complete", "formal_run": True,
             "B_data_read": False, "B_reader_invoked": False,
@@ -2373,6 +2486,7 @@ def formal(output_root=OUTPUT_ROOT):
             "n_predictions": int(len(result["predictions"])),
             "progress_observability": dict(progress_observability),
         })
+        stage = "terminal_progress"
         final_progress_ok = safe_progress({
             "status": "complete",
             "current_repeat": None,
@@ -2384,25 +2498,8 @@ def formal(output_root=OUTPUT_ROOT):
             "total_runs_in_fold": W08_PROGRESS_TOTAL_RUNS_IN_FOLD,
         })
         if not final_progress_ok:
-            # Progress is observability only.  Preserve the successful model
-            # result while making a final progress-write failure visible in
-            # the terminal run audit when the status path is still writable.
-            try:
-                _atomic_json(os.path.join(output_root, W08_RUN_STATE_NAME), {
-                    "stage": "W08", "status": "complete", "formal_run": True,
-                    "B_data_read": False, "B_reader_invoked": False,
-                    "B_source_opened": False, "B_statistics_generated": False,
-                    "final_outputs_generated": True, "started_at_epoch": started,
-                    "completed_at_epoch": time.time(),
-                    "code_commit": release_gate["code_commit"],
-                    "attempt_id": attempt["attempt_id"],
-                    "formal_output_manifest": W08_OUTPUT_MANIFEST_NAME,
-                    "n_fold_results": int(len(result["fold_results"])),
-                    "n_predictions": int(len(result["predictions"])),
-                    "progress_observability": dict(progress_observability),
-                })
-            except Exception:
-                pass
+            raise W08TerminalStateError(
+                "formal W08 terminal progress could not be written")
         print(json.dumps({
             "stage": "W08", "status": "formal_complete",
             "n_fold_results": int(len(result["fold_results"])),
@@ -2412,7 +2509,7 @@ def formal(output_root=OUTPUT_ROOT):
             "output_root": "prognosis_analysis/output/w08_formal_A",
             "elapsed_seconds": round(time.time() - started, 3),
         }, ensure_ascii=False, sort_keys=True))
-    except Exception as exc:
+    except BaseException as exc:
         _write_failure_state(output_root, PROJECT_ROOT, stage, started,
                              formal_run_started, exc, attempt=attempt,
                              progress_observability=progress_observability)

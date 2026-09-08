@@ -36,11 +36,14 @@ following have succeeded:
 2. A terminal `attempt_state.json` records `status=complete` and
    `final_outputs_generated=true`.
 3. The terminal `run_state.json` records the same completion semantics.
+4. The terminal progress write records `status=complete`.
 
-The final progress write is the last completion-side observability action. A
-synthetic external interruption before promotion leaves an in-flight progress
-state and staging attempt, without a completion progress state or formal
-manifest. Result/state write failures do not emit `progress.status=complete`.
+Any terminal write failure or external interruption closes the relevant attempt
+and the root run/progress records with `status=failed`. If outputs had already
+been promoted, they are moved into the failed-attempt archive before the
+failure states are exposed; the root formal manifest and predictions are not
+left as a success marker. The normal progress callback remains observational
+only for the in-memory model result.
 
 ## Remediation B: closed progress schema
 
@@ -59,7 +62,9 @@ Progress validation now requires the exact allowed key set and closed values:
 ## Verification
 
 - L1 progress/schema and callback regression: 7/7 passed.
-- Transaction sequencing and progress-write bypass regression: 8/8 passed.
+- Transaction sequencing and terminal-state fault-injection regression: 12/12
+  passed, covering attempt-state, run-state, final-progress, manifest-write,
+  and external-interruption failures.
 - Direct W08 nested-CV, technical-preflight, and release-gate tests: 81/81
   passed.
 - `compileall` passed for the three W08 production modules and two direct L1
