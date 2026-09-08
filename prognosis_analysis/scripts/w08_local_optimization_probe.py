@@ -1,9 +1,10 @@
-"""Synthetic, outcome-blind W08 local timing and resource probe.
+"""Outcome-blind W08 local timing and resource probe.
 
-The probe exercises the frozen W08 implementation on deterministic synthetic
-inputs only.  It deliberately does not call the formal writer, open A/B
-clinical outcome readers, or write patient-level, prediction, or performance
-artifacts.  Only aggregate medians, ranges, and counts are retained.
+The measured probe uses the existing A-only technical reader and a small,
+aggregate-only sample of the existing SLIC cache.  The remaining numerical
+stages use deterministic synthetic inputs.  It never calls the formal writer,
+opens an outcome reader, or writes patient-level, prediction, or performance
+artifacts.  Only aggregate medians, ranges, and counters are retained.
 """
 from __future__ import absolute_import
 
@@ -47,6 +48,10 @@ OUTPUT_NAME = "w08_local_optimization_probe_summary.json"
 AUDIT_NAME = "W08_local_L2_baseline_profile_audit.md"
 REPEAT_COUNT = 3
 SYNTHETIC_SEED = 20260908
+REAL_CACHE_SAMPLE_SIZE = 3
+REAL_A_TECHNICAL_COLUMNS = (
+    "影像号", "technical_cohort", "modeling_eligible")
+REAL_A_FEATURE_COLUMNS = ("影像号", "读者", "split")
 STAGE_NAMES = (
     "a_input_load",
     "slic_cache_prepare_validate",
@@ -170,6 +175,179 @@ def resource_snapshot():
     return _proc_resource_snapshot()
 
 
+def _failure_record(stage, exception):
+    """Return failure evidence without copying a path or row identifier."""
+    return {
+        "ok": False,
+        "stage": str(stage),
+        "error_type": exception.__class__.__name__,
+    }
+
+
+def _normalise_failure_stage(stage):
+    stage = str(stage)
+    if stage in STAGE_NAMES or stage in ("initialization", "iteration"):
+        return stage
+    return "unknown"
+
+
+def _normalise_error_type(error_type):
+    error_type = str(error_type)
+    if (error_type and len(error_type) <= 80 and
+            error_type.replace("_", "").isalnum()):
+        return error_type
+    return "StageFailure"
+
+
+def _load_real_a_technical_inputs():
+    """Read only the locked A technical boundary and aggregate its coverage."""
+    # The population source also contains non-technical columns.  The
+    # explicit usecols contract prevents those columns from being materialised
+    # by the technical reader.
+    metadata = formal.read_technical_A(
+        formal.W06_POPULATION,
+        allow_full=True,
+        usecols=list(REAL_A_TECHNICAL_COLUMNS),
+        dtype={"影像号": str})
+    required = set(REAL_A_TECHNICAL_COLUMNS)
+    if not required.issubset(metadata.columns):
+        raise ProbeFailure("A technical metadata columns are incomplete")
+    metadata = metadata[list(REAL_A_TECHNICAL_COLUMNS)].copy()
+    metadata["影像号"] = metadata["影像号"].astype(str).str.strip()
+    if metadata["影像号"].eq("").any() or \
+            metadata["影像号"].duplicated().any():
+        raise ProbeFailure("A technical metadata identifiers are invalid")
+    if not metadata["technical_cohort"].astype(str).str.strip().eq("A393").all():
+        raise ProbeFailure("A technical metadata cohort is not A-only")
+    eligible = pd.to_numeric(metadata["modeling_eligible"], errors="coerce")
+    if eligible.isna().any() or not eligible.eq(1).all():
+        raise ProbeFailure("A technical metadata contains ineligible rows")
+    identifiers = set(metadata["影像号"])
+
+    feature_source = os.path.join(formal.FEATURE_ROOT, "features_original.csv")
+    feature_rows = formal.read_technical_A(
+        feature_source,
+        allowed_ids=identifiers,
+        usecols=list(REAL_A_FEATURE_COLUMNS),
+        dtype={"影像号": str})
+    feature_rows["影像号"] = feature_rows["影像号"].astype(str).str.strip()
+    feature_rows = feature_rows[
+        feature_rows["读者"].astype(str).str.strip().eq("R1")].copy()
+    if not feature_rows["split"].astype(str).str.strip().eq("A").all():
+        raise ProbeFailure("A technical feature source contains a non-A row")
+    if feature_rows["影像号"].duplicated().any() or \
+            set(feature_rows["影像号"]) != identifiers:
+        raise ProbeFailure("A technical feature source does not cover A")
+
+    supervoxels = formal.technical_preflight._read_authorized_a_supervoxels(
+        formal.SV_TABLE, identifiers, project_root=formal.PROJECT_ROOT)
+    if set(supervoxels["影像号"].astype(str).str.strip()) != identifiers:
+        raise ProbeFailure("A technical supervoxel source does not cover A")
+    return {
+        "technical_ids": identifiers,
+        "supervoxels": supervoxels,
+        "input_metrics": {
+            "sample_count": int(len(metadata)),
+            "successful_count": int(len(metadata)),
+            "failure_count": 0,
+        },
+    }
+
+
+def _existing_slic_cache_root():
+    """Find a non-empty permitted SLIC cache without inventing a new source."""
+    candidates = [formal.SLIC_CACHE_ROOT]
+    attempts_root = os.path.join(formal.OUTPUT_ROOT, "attempts")
+    if os.path.isdir(attempts_root):
+        for name in sorted(os.listdir(attempts_root)):
+            candidates.append(os.path.join(attempts_root, name, "work",
+                                           "slic_cache"))
+    for candidate in candidates:
+        if not os.path.isdir(candidate):
+            continue
+        if any(name.endswith(".npz") and
+               os.path.isfile(os.path.join(candidate, name))
+               for name in os.listdir(candidate)):
+            return candidate
+    raise ProbeFailure("no existing SLIC cache is available for L2")
+
+
+def _make_real_cache_provider(context, cache_root):
+    """Reuse the production provider's case preparation/cache validation."""
+    provider = formal.AOnlyFoldFeatureProvider.__new__(
+        formal.AOnlyFoldFeatureProvider)
+    provider._allowed_ids = set(context["technical_ids"])
+    provider._sv = formal.AOnlyFoldFeatureProvider._normalise_supervoxel_table(
+        context["supervoxels"])
+    provider._habitat_config = formal.w07._read_json(formal.HABITAT_CONFIG)
+    provider._cache_root = cache_root
+    os.makedirs(cache_root, exist_ok=True)
+    provider._case_cache = {}
+    return provider
+
+
+def _real_slic_cache_probe(context, temp_root):
+    """Measure existing hits and safe temporary miss/validation fixtures."""
+    existing_root = _existing_slic_cache_root()
+    cache_files = [name for name in os.listdir(existing_root)
+                   if name.endswith(".npz") and
+                   os.path.isfile(os.path.join(existing_root, name))]
+    cache_identifiers = {
+        os.path.splitext(name)[0] for name in cache_files}
+    sample = sorted(set(context["technical_ids"]) & cache_identifiers)
+    sample = sample[:REAL_CACHE_SAMPLE_SIZE]
+    if not sample:
+        raise ProbeFailure("existing SLIC cache has no authorized A sample")
+
+    counters = {
+        "existing_cache_file_count": int(len(cache_files)),
+        "existing_cache_sample_count": int(len(sample)),
+        "hit_count": 0,
+        "miss_count": 0,
+        "validation_failure_count": 0,
+        "recomputed_count": 0,
+    }
+
+    hit_provider = _make_real_cache_provider(context, existing_root)
+    for identifier in sample:
+        cache_path = hit_provider._cache_path(identifier)
+        if not os.path.isfile(cache_path):
+            counters["miss_count"] += 1
+            continue
+        hit_provider._prepare_case(identifier)
+        counters["hit_count"] += 1
+
+    # Exercise the actual cold-miss branch on a real A image/ROI, but keep the
+    # generated cache in the iteration's temporary directory.
+    cold_root = os.path.join(temp_root, "slic_cache_cold")
+    cold_provider = _make_real_cache_provider(context, cold_root)
+    cold_provider._prepare_case(sample[0])
+    counters["miss_count"] += 1
+    counters["recomputed_count"] += 1
+
+    # Corrupt only a temporary copy of a real cache entry and verify that the
+    # production provider rejects it rather than silently recomputing it.
+    corrupt_root = os.path.join(temp_root, "slic_cache_corrupt")
+    os.makedirs(corrupt_root, exist_ok=True)
+    source_path = os.path.join(existing_root, sample[0] + ".npz")
+    corrupt_path = os.path.join(corrupt_root, sample[0] + ".npz")
+    with np.load(source_path) as cached:
+        labels = cached["labels"].astype(np.int32, copy=False)
+        roi = cached["roi"].astype(bool, copy=False)
+    corrupt_roi = roi.copy()
+    corrupt_roi.flat[0] = not bool(corrupt_roi.flat[0])
+    with open(corrupt_path, "wb") as handle:
+        np.savez_compressed(handle, labels=labels, roi=corrupt_roi)
+    corrupt_provider = _make_real_cache_provider(context, corrupt_root)
+    try:
+        corrupt_provider._prepare_case(sample[0])
+    except BaseException:
+        counters["validation_failure_count"] += 1
+    else:
+        raise ProbeFailure("corrupt SLIC cache was accepted")
+    return counters
+
+
 def _make_survival_arrays(n=32):
     """Create deterministic software-regression arrays, never real outcomes."""
     indices = np.arange(n, dtype=float)
@@ -258,20 +436,25 @@ def _make_provider(case, extractor, stub_radiomics=False):
 
 
 def _run_stage(name, function):
-    before = resource_snapshot()
     started_wall = time.perf_counter()
     started_cpu = time.process_time()
     try:
-        function()
+        before = resource_snapshot()
     except BaseException as exc:  # record aggregate failure and fail closed
-        return {"ok": False, "stage": name,
-                "error_class": exc.__class__.__name__}
+        return _failure_record(name, exc)
+    try:
+        details = function()
+    except BaseException as exc:  # record aggregate failure and fail closed
+        return _failure_record(name, exc)
     elapsed = time.perf_counter() - started_wall
     cpu_elapsed = time.process_time() - started_cpu
-    after = resource_snapshot()
+    try:
+        after = resource_snapshot()
+    except BaseException as exc:  # sampling failures are observable failures
+        return _failure_record(name, exc)
     if not math.isfinite(elapsed) or elapsed <= 0.0:
-        return {"ok": False, "stage": name, "error_class": "InvalidTiming"}
-    return {
+        return {"ok": False, "stage": name, "error_type": "InvalidTiming"}
+    result = {
         "ok": True,
         "stage": name,
         "seconds": float(elapsed),
@@ -280,30 +463,51 @@ def _run_stage(name, function):
         "read_bytes": max(0, int(after["read_bytes"] - before["read_bytes"])),
         "write_bytes": max(0, int(after["write_bytes"] - before["write_bytes"])),
     }
+    if details is not None:
+        result["metrics"] = details
+    return result
 
 
-def _single_iteration(temp_root):
-    rng = np.random.RandomState(SYNTHETIC_SEED)
-    image, _mask, case = _make_synthetic_image(temp_root)
-    cfg = formal.w07._read_json(formal.HABITAT_CONFIG)
-    fixture_matrix = rng.normal(size=(32, 6))
-    fixture_values = np.linspace(-1.0, 1.0, 48).reshape(8, 6)
-    times, events, risk = _make_survival_arrays()
-    frame = _make_synthetic_frame()
-    extractor = formal._build_backend_compatible_extractor()
-    state = w08.FoldState("synthetic-training", 2026,
-                          (-0.5, 0.5), 0.0, {})
-    provider_for_g = _make_provider(case, extractor, stub_radiomics=True)
-    provider_for_r = _make_provider(case, extractor, stub_radiomics=False)
+def _single_iteration(temp_root, real_technical=False):
+    technical_context = None
+    try:
+        rng = np.random.RandomState(SYNTHETIC_SEED)
+        image, _mask, case = _make_synthetic_image(temp_root)
+        cfg = formal.w07._read_json(formal.HABITAT_CONFIG)
+        fixture_matrix = rng.normal(size=(32, 6))
+        fixture_values = np.linspace(-1.0, 1.0, 48).reshape(8, 6)
+        times, events, risk = _make_survival_arrays()
+        frame = _make_synthetic_frame()
+        extractor = formal._build_backend_compatible_extractor()
+        state = w08.FoldState("synthetic-training", 2026,
+                              (-0.5, 0.5), 0.0, {})
+        provider_for_g = _make_provider(case, extractor, stub_radiomics=True)
+        provider_for_r = _make_provider(case, extractor, stub_radiomics=False)
+    except BaseException as exc:
+        return [_failure_record("initialization", exc)]
 
     def input_load():
+        nonlocal technical_context
+        if real_technical:
+            technical_context = _load_real_a_technical_inputs()
+            return {"technical_input": technical_context["input_metrics"]}
         source = os.path.join(temp_root, "synthetic_input.csv")
         pd.DataFrame(fixture_matrix).to_csv(source, index=False)
         loaded = pd.read_csv(source)
         if loaded.shape != fixture_matrix.shape:
             raise ProbeFailure("synthetic input shape changed")
+        return {"technical_input": {
+            "sample_count": int(loaded.shape[0]),
+            "successful_count": int(loaded.shape[0]),
+            "failure_count": 0,
+        }}
 
     def slic_cache():
+        if real_technical:
+            if technical_context is None:
+                raise ProbeFailure("A technical input stage did not complete")
+            return {"slic_cache": _real_slic_cache_probe(
+                technical_context, temp_root)}
         labels = formal.technical.slic_labels(
             image, cfg, connected=True)
         cache_path = os.path.join(temp_root, "slic_cache.npz")
@@ -315,6 +519,14 @@ def _single_iteration(temp_root):
         if not np.array_equal(labels, cached_labels) or \
                 not np.array_equal(case["roi"], cached_roi):
             raise ProbeFailure("synthetic SLIC cache validation failed")
+        return {"slic_cache": {
+            "existing_cache_file_count": 0,
+            "existing_cache_sample_count": 0,
+            "hit_count": 0,
+            "miss_count": 1,
+            "validation_failure_count": 0,
+            "recomputed_count": 1,
+        }}
 
     def kmeans():
         validate_frozen_kmeans_parameters()
@@ -430,6 +642,28 @@ def _aggregate_stage(records):
         "disk_write_bytes": _aggregate(
             [record["write_bytes"] for record in successful], digits=0),
     }
+    metric_names = sorted({
+        str(metric_name)
+        for record in successful
+        for metrics in (record.get("metrics", {}),)
+        if isinstance(metrics, dict)
+        for metric_name in metrics
+    })
+    for namespace in metric_names:
+        values_by_key = OrderedDict()
+        for record in successful:
+            metrics = record.get("metrics", {})
+            values = metrics.get(namespace, {})
+            if not isinstance(values, dict):
+                continue
+            for key, value in values.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    values_by_key.setdefault(str(key), []).append(float(value))
+        if values_by_key:
+            result[namespace] = OrderedDict(
+                (key, dict(_aggregate(values, digits=0),
+                           total=int(sum(values))))
+                for key, values in values_by_key.items())
     return result
 
 
@@ -469,65 +703,61 @@ def _write_json_atomic(path, payload):
     os.replace(temporary, path)
 
 
-def run_probe(output_dir, repeats=REPEAT_COUNT, estimate_seconds=None):
-    """Run the three-repeat synthetic probe and write only aggregate output."""
-    if type(repeats) is not int or repeats < 3:
-        raise ValueError("L2 requires at least three repeats")
-    output_dir = os.path.abspath(os.fspath(output_dir))
-    os.makedirs(output_dir, exist_ok=True)
-    existing = [name for name in os.listdir(output_dir)
-                if name not in (OUTPUT_NAME,)]
-    forbidden = sorted(set(existing) & FORBIDDEN_OUTPUT_NAMES)
-    if forbidden:
-        raise ProbeFailure("probe output directory contains formal artifacts: %s" %
-                           forbidden)
-
-    records_by_stage = OrderedDict((name, []) for name in STAGE_NAMES)
-    for _repeat in range(repeats):
-        with tempfile.TemporaryDirectory(prefix="w08_l2_probe_") as temp_root:
-            records = _single_iteration(temp_root)
-        for record in records:
-            records_by_stage[record["stage"]].append(record)
-
-    stages = OrderedDict((name, _aggregate_stage(records))
-                         for name, records in records_by_stage.items())
-    failure_stage_counts = OrderedDict()
-    for records in records_by_stage.values():
-        for record in records:
-            if not record.get("ok"):
-                failure_stage_counts[record["stage"]] = \
-                    int(failure_stage_counts.get(record["stage"], 0) + 1)
-    completed = not failure_stage_counts and all(
-        stage["success_count"] == repeats for stage in stages.values())
-    estimate = None
-    if estimate_seconds is not None:
-        estimate_seconds = float(estimate_seconds)
-        if not math.isfinite(estimate_seconds) or estimate_seconds <= 0:
-            raise ValueError("estimate_seconds must be a positive finite number")
-        estimate = {
-            "pilot_repeat_count": 1,
-            "estimated_total_seconds": round(
-                estimate_seconds * float(repeats) * 1.15, 3),
-            "over_40_minutes": bool(estimate_seconds * repeats * 1.15 > 2400.0),
-            "basis": "one complete synthetic repeat immediately before the measured repeats; 15 percent guard",
-        }
-    else:
-        estimate = {
+def _estimation_payload(repeats, estimate_seconds):
+    if estimate_seconds is None:
+        return {
             "pilot_repeat_count": 0,
             "estimated_total_seconds": None,
             "over_40_minutes": None,
             "basis": "pilot estimate not supplied by the caller",
         }
+    estimate_seconds = float(estimate_seconds)
+    if not math.isfinite(estimate_seconds) or estimate_seconds <= 0:
+        raise ValueError("estimate_seconds must be a positive finite number")
+    estimated_total = estimate_seconds * float(repeats) * 1.15
+    return {
+        "pilot_repeat_count": 1,
+        "estimated_total_seconds": round(estimated_total, 3),
+        "over_40_minutes": bool(estimated_total > 2400.0),
+        "basis": "one complete A-technical plus synthetic repeat immediately before the measured repeats; 15 percent guard",
+    }
 
+
+def _safe_estimate_seconds(value):
+    if value is None:
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def _safety_payload():
+    return {
+        "outcome_columns_read": False,
+        "formal_writer_invoked": False,
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+    }
+
+
+def _build_payload(status, repeats, stages, failure_stage_counts,
+                   estimate_seconds=None, failed_stage=None,
+                   error_type=None, aggregate_message=None,
+                   technical_inputs=True):
     payload = {
         "schema": "w08_local_optimization_probe",
-        "schema_version": "1.0",
-        "status": "complete" if completed else "failed",
-        "scope": "synthetic technical timing only",
+        "schema_version": "1.1",
+        "status": str(status),
+        "scope": ("A-only technical and synthetic technical timing"
+                   if technical_inputs else "synthetic technical timing only"),
         "repeat_count": int(repeats),
         "stages": stages,
-        "failure_stage_counts": failure_stage_counts,
-        "estimation": estimate,
+        "failure_stage_counts": OrderedDict(failure_stage_counts),
+        "estimation": _estimation_payload(repeats, estimate_seconds),
         "runtime": {
             "python": "%d.%d.%d" % sys.version_info[:3],
             "platform": "%s-%s" % (platform.system(), platform.release()),
@@ -543,36 +773,186 @@ def run_probe(output_dir, repeats=REPEAT_COUNT, estimate_seconds=None):
             "elastic_net_tolerance": float(w08.ELASTIC_NET_TOLERANCE),
             "minimum_roi_size": int(formal.MINIMUM_ROI_SIZE),
         },
-        "safety": {
-            "outcome_columns_read": False,
-            "formal_writer_invoked": False,
-            "B_data_read": False,
-            "B_reader_invoked": False,
-            "B_source_opened": False,
-            "B_statistics_generated": False,
-        },
+        "safety": _safety_payload(),
         "generated_at_utc": datetime.datetime.utcnow().replace(
             microsecond=0).isoformat() + "Z",
     }
-    _validate_aggregate_safety(payload)
-    _write_json_atomic(os.path.join(output_dir, OUTPUT_NAME), payload)
-    if not completed:
-        raise ProbeFailure("synthetic W08 L2 probe failed at aggregate stages")
+    if technical_inputs:
+        payload["real_a_technical_input"] = stages.get(
+            "a_input_load", {}).get("technical_input", {})
+        payload["slic_cache_evidence"] = stages.get(
+            "slic_cache_prepare_validate", {}).get("slic_cache", {})
+    if failed_stage is not None:
+        payload["failed_stage"] = str(failed_stage)
+    if error_type is not None:
+        payload["error_type"] = str(error_type)
+    if aggregate_message is not None:
+        payload["aggregate_error_message"] = str(aggregate_message)
     return payload
+
+
+def _empty_stages():
+    return OrderedDict((name, _aggregate_stage([])) for name in STAGE_NAMES)
+
+
+def _failure_summary(stages, failure_stage_counts, repeats,
+                     estimate_seconds, technical_inputs, failed_stage,
+                     error_type, message):
+    payload = _build_payload(
+        "failed", repeats, stages, failure_stage_counts,
+        estimate_seconds=estimate_seconds, failed_stage=failed_stage,
+        error_type=error_type, aggregate_message=message,
+        technical_inputs=technical_inputs)
+    _validate_aggregate_safety(payload)
+    return payload
+
+
+def _invoke_single_iteration(temp_root, technical_inputs):
+    if technical_inputs:
+        return _single_iteration(temp_root, real_technical=True)
+    return _single_iteration(temp_root)
+
+
+def run_probe(output_dir, repeats=REPEAT_COUNT, estimate_seconds=None,
+              technical_inputs=True):
+    """Run the three-repeat probe with fail-closed aggregate state handling."""
+    output_dir = os.path.abspath(os.fspath(output_dir))
+    os.makedirs(output_dir, exist_ok=True)
+    state_estimate_seconds = _safe_estimate_seconds(estimate_seconds)
+    baseline_stages = _empty_stages()
+    baseline = _build_payload(
+        "initializing", repeats if type(repeats) is int else 0,
+        baseline_stages, OrderedDict(),
+        estimate_seconds=state_estimate_seconds,
+        technical_inputs=bool(technical_inputs))
+    _validate_aggregate_safety(baseline)
+    _write_json_atomic(os.path.join(output_dir, OUTPUT_NAME), baseline)
+
+    try:
+        if type(repeats) is not int or repeats < 3:
+            raise ValueError("L2 requires at least three repeats")
+        # Validate the caller's estimate after the non-complete baseline is
+        # durable, so invalid input cannot leave a stale successful summary.
+        _estimation_payload(repeats, estimate_seconds)
+        # The baseline above replaces any prior complete result before any
+        # source, cache, stage, or sampling work begins.
+        running = _build_payload(
+            "running", repeats, baseline_stages, OrderedDict(),
+            estimate_seconds=state_estimate_seconds,
+            technical_inputs=bool(technical_inputs))
+        _validate_aggregate_safety(running)
+        _write_json_atomic(os.path.join(output_dir, OUTPUT_NAME), running)
+
+        existing = [name for name in os.listdir(output_dir)
+                    if name not in (OUTPUT_NAME,)]
+        forbidden = sorted(set(existing) & FORBIDDEN_OUTPUT_NAMES)
+        if forbidden:
+            raise ProbeFailure("probe output directory contains formal artifacts")
+
+        records_by_stage = OrderedDict((name, []) for name in STAGE_NAMES)
+        unknown_failures = []
+        for _repeat in range(repeats):
+            try:
+                with tempfile.TemporaryDirectory(prefix="w08_l2_probe_") as temp_root:
+                    records = _invoke_single_iteration(temp_root,
+                                                       bool(technical_inputs))
+                if not isinstance(records, (list, tuple)):
+                    raise ProbeFailure("iteration did not return stage records")
+                for record in records:
+                    if not isinstance(record, dict) or \
+                            record.get("stage") not in records_by_stage:
+                        unknown_failures.append(record)
+                        continue
+                    records_by_stage[record["stage"]].append(record)
+            except BaseException as exc:
+                unknown_failures.append(_failure_record("iteration", exc))
+
+        stages = OrderedDict((name, _aggregate_stage(records))
+                             for name, records in records_by_stage.items())
+        failure_stage_counts = OrderedDict()
+        failure_details = []
+        for records in records_by_stage.values():
+            for record in records:
+                if not record.get("ok"):
+                    stage = _normalise_failure_stage(
+                        record.get("stage", "unknown"))
+                    failure_stage_counts[stage] = \
+                        int(failure_stage_counts.get(stage, 0) + 1)
+                    failure_details.append(record)
+        for record in unknown_failures:
+            stage = _normalise_failure_stage(record.get("stage", "iteration")) \
+                if isinstance(record, dict) else "iteration"
+            failure_stage_counts[stage] = \
+                int(failure_stage_counts.get(stage, 0) + 1)
+            if isinstance(record, dict):
+                failure_details.append(record)
+        completed = not failure_stage_counts and all(
+            stage["success_count"] == repeats for stage in stages.values())
+        if not completed:
+            first_failure = failure_details[0] if failure_details else {}
+            failed_stage = _normalise_failure_stage(
+                first_failure.get("stage", "iteration"))
+            error_type = _normalise_error_type(
+                first_failure.get("error_type", "StageFailure"))
+            payload = _failure_summary(
+                stages, failure_stage_counts, repeats, state_estimate_seconds,
+                bool(technical_inputs), failed_stage, error_type,
+                "L2 probe failed closed during %s." % failed_stage)
+            _write_json_atomic(os.path.join(output_dir, OUTPUT_NAME), payload)
+            raise ProbeFailure("L2 probe failed closed at %s" % failed_stage)
+
+        payload = _build_payload(
+            "complete", repeats, stages, failure_stage_counts,
+            estimate_seconds=state_estimate_seconds,
+            technical_inputs=bool(technical_inputs))
+        _validate_aggregate_safety(payload)
+        _write_json_atomic(os.path.join(output_dir, OUTPUT_NAME), payload)
+        return payload
+    except BaseException as exc:
+        # This catches initialization, iteration, aggregation, and validation
+        # exceptions that occur before the normal failed payload is emitted.
+        try:
+            with open(os.path.join(output_dir, OUTPUT_NAME),
+                      "r", encoding="utf-8") as handle:
+                current = json.load(handle)
+        except BaseException:
+            current = {}
+        if current.get("status") == "failed":
+            raise
+        stage = _normalise_failure_stage(
+            current.get("failed_stage", "iteration"))
+        error_type = _normalise_error_type(exc.__class__.__name__)
+        failed_counts = OrderedDict(current.get("failure_stage_counts", {}))
+        failed_counts[stage] = int(failed_counts.get(stage, 0) + 1)
+        stages = current.get("stages", _empty_stages())
+        payload = _failure_summary(
+            stages, failed_counts,
+            repeats if type(repeats) is int else 0,
+            state_estimate_seconds, bool(technical_inputs), stage, error_type,
+            "L2 probe failed closed during %s." % stage)
+        _write_json_atomic(os.path.join(output_dir, OUTPUT_NAME), payload)
+        if isinstance(exc, ProbeFailure):
+            raise
+        raise ProbeFailure("L2 probe failed closed during %s" % stage)
 
 
 def write_audit_report(summary, path, estimate_seconds=None):
     """Write a concise, de-identified Markdown audit from aggregate JSON."""
     if summary.get("status") != "complete":
         raise ProbeFailure("cannot write a successful L2 audit from failed probe")
+    technical_scope = summary.get("scope") == \
+        "A-only technical and synthetic technical timing"
     lines = [
         "# W08 local L2 baseline profile audit",
         "",
         "## Scope",
         "",
-        "This audit contains synthetic, outcome-blind technical timing only. "
-        "It contains no patient identifier, absolute path, clinical outcome, "
-        "outer-validation prediction, or model performance result.",
+        ("This audit contains outcome-blind A-only technical input/cache timing "
+         "and deterministic synthetic numerical timing. "
+         if technical_scope else
+         "This audit contains synthetic, outcome-blind technical timing only. ")
+        + "It contains no patient identifier, absolute path, clinical outcome, "
+          "outer-validation prediction, or model performance result.",
         "",
         "## Execution contract",
         "",
@@ -585,8 +965,80 @@ def write_audit_report(summary, path, estimate_seconds=None):
         % (summary["bindings"]["alpha_grid_count"],
            summary["bindings"]["elastic_net_max_iter"],
            summary["bindings"]["elastic_net_tolerance"]),
-        "- Synthetic technical fixture only; B access flags are all false.",
+        ("- The A input stage calls the existing `read_technical_A` boundary "
+         "with technical columns only; B access flags are all false."
+         if technical_scope else
+         "- Synthetic technical fixture only; B access flags are all false."),
         "",
+    ]
+    if technical_scope:
+        input_metrics = summary.get("real_a_technical_input", {})
+        cache_metrics = summary.get("slic_cache_evidence", {})
+
+        def count_text(metrics, key):
+            value = metrics.get(key)
+            if not isinstance(value, dict):
+                return "n/a"
+            return "%d [%.0f, %.0f]" % (
+                int(value.get("total", 0)), value.get("range", [0, 0])[0],
+                value.get("range", [0, 0])[1])
+
+        lines.extend([
+            "## A-only technical input evidence",
+            "",
+            "The measured input stage used the existing outcome-blind A-only "
+            "technical reader for frozen A metadata, a frozen A technical "
+            "feature source, and the frozen A supervoxel summary. No outcome "
+            "reader was invoked.",
+            "",
+            "| Counter | Total across repeats | Median [range] per repeat |",
+            "|---|---:|---:|",
+            "| Technical rows sampled | %s | %s |" % (
+                count_text(input_metrics, "sample_count"),
+                "n/a" if "sample_count" not in input_metrics else
+                "%.0f [%.0f, %.0f]" % (
+                    input_metrics["sample_count"]["median"],
+                    input_metrics["sample_count"]["range"][0],
+                    input_metrics["sample_count"]["range"][1])),
+            "| Successful technical rows | %s | %s |" % (
+                count_text(input_metrics, "successful_count"),
+                "n/a" if "successful_count" not in input_metrics else
+                "%.0f [%.0f, %.0f]" % (
+                    input_metrics["successful_count"]["median"],
+                    input_metrics["successful_count"]["range"][0],
+                    input_metrics["successful_count"]["range"][1])),
+            "| Failed technical rows | %s | %s |" % (
+                count_text(input_metrics, "failure_count"),
+                "n/a" if "failure_count" not in input_metrics else
+                "%.0f [%.0f, %.0f]" % (
+                    input_metrics["failure_count"]["median"],
+                    input_metrics["failure_count"]["range"][0],
+                    input_metrics["failure_count"]["range"][1])),
+            "",
+            "## Existing SLIC cache evidence",
+            "",
+            "The SLIC stage exercised the production A-only case preparation "
+            "and cache validation logic. Existing cache entries were checked "
+            "read-only; cold-miss and invalid-cache checks used temporary "
+            "copies that were removed after each repeat.",
+            "",
+            "| Counter | Total across repeats | Median [range] per repeat |",
+            "|---|---:|---:|",
+        ])
+        for key, label in (
+                ("existing_cache_file_count", "Existing cache files"),
+                ("existing_cache_sample_count", "Existing cache sample"),
+                ("hit_count", "Cache hits"),
+                ("miss_count", "Cache misses"),
+                ("validation_failure_count", "Validation failures"),
+                ("recomputed_count", "Recomputed entries")):
+            value = cache_metrics.get(key)
+            per_repeat = "n/a" if not isinstance(value, dict) else \
+                "%.0f [%.0f, %.0f]" % (
+                    value["median"], value["range"][0], value["range"][1])
+            lines.append("| %s | %s | %s |" % (
+                label, count_text(cache_metrics, key), per_repeat))
+    lines.extend([
         "## Aggregate timing and resource profile",
         "",
         "All values below retain only the median, inclusive range, and counts "
@@ -594,7 +1046,7 @@ def write_audit_report(summary, path, estimate_seconds=None):
         "",
         "| Stage | Success / repeats | Failures | Median seconds | Range seconds |",
         "|---|---:|---:|---:|---:|",
-    ]
+    ])
     for name in STAGE_NAMES:
         stage = summary["stages"][name]
         timing = stage["duration_seconds"]
@@ -649,13 +1101,13 @@ def write_audit_report(summary, path, estimate_seconds=None):
         "",
         "The stage medians distinguish PyRadiomics (R-low/R-high), synthetic "
         "Elastic-Net fitting (single candidate and 100-lambda alpha path), "
-        "and synthetic input/cache I/O. These are software timing observations "
-        "only and are not model performance measurements.",
+        "and A technical/synthetic input and cache I/O. These are software "
+        "timing observations only and are not model performance measurements.",
         "",
         "## Runtime estimate",
         "",
-        "- Basis: one complete synthetic repeat immediately before the measured "
-        "repeats, with a 15% guard.",
+        "- Basis: one complete A-technical plus synthetic repeat immediately "
+        "before the measured repeats, with a 15% guard.",
         "- Estimated total: %s seconds."
         % ("not supplied" if estimate_seconds is None else
            "%.3f" % summary["estimation"]["estimated_total_seconds"]),
@@ -685,9 +1137,12 @@ def main(argv=None):
         AUDIT_NAME))
     parser.add_argument("--repeats", type=int, default=REPEAT_COUNT)
     parser.add_argument("--estimate-seconds", type=float, default=None)
+    parser.add_argument("--synthetic-only", action="store_true",
+                        help="run the legacy synthetic-only probe")
     args = parser.parse_args(argv)
     summary = run_probe(args.output, repeats=args.repeats,
-                        estimate_seconds=args.estimate_seconds)
+                        estimate_seconds=args.estimate_seconds,
+                        technical_inputs=not args.synthetic_only)
     write_audit_report(summary, args.audit,
                        estimate_seconds=args.estimate_seconds)
     print(json.dumps({
