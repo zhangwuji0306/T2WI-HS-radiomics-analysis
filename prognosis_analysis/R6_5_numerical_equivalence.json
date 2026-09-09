@@ -87,7 +87,7 @@
       "validation_used_for_boundary_fit": false
     },
     "registered_evidence_hashes": {
-      "R6_5R_coordinate_reconciliation_json": "2a72a972f79306b41932c30ad5bd388d8bef827a31232817295ab309f18f0f50",
+      "R6_5R_coordinate_reconciliation_json": "a5eb8f4e2f209611e91563919d0f1589022aeb6cfa8ebd60f201982397c91532",
       "R6_5R_coordinate_reconciliation_audit_md": "a741f0664c5cd180a8c34bb7f3633e7962978dc0d91572ced979d323105b85a6",
       "R6_5R_coordinate_reconciliation_review_md": "ac623aaf538b8867b7298614de1cc7090ee2c2b0afecdebff8c31164169fb5fa",
       "R6_5R_superseding_disposition_review_md": "b640238c0a028a4d877dd249fd1f8c7781f7beab25bcbcf10694f3463f0f305b",
@@ -105,7 +105,7 @@
       "R_low_sha256": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
       "R_high_sha256": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
     },
-    "w08_solver_source_sha256": "85644f4ec772ae22bccade96a3f0b5041fe021a72cefb04210bd725c7245329d",
+    "w08_solver_source_sha256": "5f310a174a158b8f0101140d60b892e0f0d29124ff72fc912d315bda249399a3",
     "test_source_sha256": "8062579da145a66010b306aeefbb47262df643cfde0389d69f3d4d348d141750"
   },
   "solver_lock": {

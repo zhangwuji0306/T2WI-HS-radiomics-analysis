@@ -715,8 +715,17 @@ def build_audit(real_a, performance, correctness):
         ("source_binding", {
             "source_commit": _git_head(),
             "source_commit_scope": (
-                "current checked-out code/config/evidence commit before the "
-                "audit artifacts are written"),
+                "code/config/provenance commit used to generate evidence; "
+                "audit artifacts are committed separately"),
+            # The audit artifact is itself part of the audit-only commit, so a
+            # literal commit id here would require an impossible fixed point.
+            # ``HEAD`` is resolved after the audit-only commit with
+            # ``git rev-parse --verify HEAD``; a controlled caller may provide
+            # the resolved id through W08_L6_AUDIT_COMMIT.
+            "audit_commit": os.environ.get("W08_L6_AUDIT_COMMIT", "HEAD"),
+            "audit_commit_scope": (
+                "final audit-only artifact commit; resolve the symbolic HEAD "
+                "value after commit"),
             "runner": "prognosis_analysis/scripts/w08_local_l6_probe.py",
             "runner_sha256": _sha256_file(script_path),
             "source_file_sha256": OrderedDict((
@@ -893,6 +902,7 @@ def write_markdown(path, payload):
             payload["environment"]["pandas"], payload["environment"]["scikit_learn"],
             payload["environment"]["pyradiomics"], payload["environment"]["simpleitk"]),
         "- 所有 Python、测试、compile 和 probe 均通过 `tools/run_t2_radiomics.ps1 -PythonArguments` 调用。",
+        "- `source_binding.source_commit` 绑定证据生成所用的 code/config/provenance commit；审计文件另行提交。`source_binding.audit_commit` 绑定最终 audit-only commit，提交后以 `git rev-parse --verify HEAD` 解析。",
         "- K-means：K=2、k-means++、`n_init=100`、`max_iter=300`、`tol=1e-4`；50 个外层 fold、5 个 inner fold；4 个 alpha、每个 alpha 100 个 lambda；Elastic-Net `max_iter=3000`、`tolerance=1e-7`；`minimumROISize=10`。",
         "",
         "## 正确性矩阵", "", "| 检查项 | 结果 | 证据来源 | 证据类型 |", "|---|---:|---|---|",

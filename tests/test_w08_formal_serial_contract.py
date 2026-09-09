@@ -2,7 +2,9 @@ import json
 import inspect
 import os
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
@@ -29,10 +31,30 @@ class W08FormalSerialContractTests(unittest.TestCase):
         self.assertEqual(w08._validate_config(config), config)
 
     def test_formal_in_memory_rejects_non_effective_worker_setting(self):
-        with self.assertRaises(w08.W08ValidationError):
-            w08.run_w08_in_memory(
-                None, None, None, require_fixed_hash=True,
-                outer_fold_workers=2)
+        for workers in (2, 4):
+            with self.subTest(workers=workers):
+                with self.assertRaises(w08.W08ValidationError):
+                    w08.run_w08_in_memory(
+                        None, None, None, require_fixed_hash=True,
+                        outer_fold_workers=workers)
+
+    def test_formal_worker_does_not_initialise_worker_cache_root(self):
+        cache_root = os.path.join(tempfile.gettempdir(),
+                                   "w08-formal-worker-cache-must-not-exist")
+        if os.path.exists(cache_root):
+            self.fail("test cache root already exists: %s" % cache_root)
+        provider = mock.Mock()
+        provider._cache_root = cache_root
+        provider._complex_cache_enabled = True
+        with mock.patch.object(w08, "run_w08_in_memory",
+                               return_value="worker-result") as runner:
+            result = w08._l5_worker_job((
+                None, None, provider, None, (), False, True,
+                w08.LAMBDA_COUNT, 1, 1e-7, None, (1, 1), cache_root))
+        self.assertEqual(result, "worker-result")
+        self.assertFalse(os.path.exists(cache_root))
+        runner.assert_called_once()
+        self.assertFalse(runner.call_args[1]["complex_layer_enabled"])
 
     def test_formal_entry_uses_serial_contract_and_disables_complex_layer(self):
         self.assertEqual(w08.FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS, 1)

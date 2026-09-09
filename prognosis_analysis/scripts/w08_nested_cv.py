@@ -3478,7 +3478,12 @@ def _l5_worker_job(args):
      strict_schema, require_fixed_hash, lambda_count, solver_max_iter,
      solver_tolerance, population, fold_key, worker_cache_root) = args
     _l5_prepare_worker_environment()
-    if worker_cache_root and hasattr(provider, "_cache_root"):
+    # Formal execution keeps the L4/L5 cache layer disabled.  The coordinator
+    # normally passes ``None`` in that mode, but retain this guard here as a
+    # second fail-closed boundary for direct worker calls and future callers.
+    if (worker_cache_root and not require_fixed_hash and
+            getattr(provider, "_complex_cache_enabled", True) and
+            hasattr(provider, "_cache_root")):
         provider._cache_root = os.path.join(
             os.path.abspath(os.fspath(worker_cache_root)),
             "worker_%d_%d" % (int(fold_key[0]), int(fold_key[1])))
@@ -3658,7 +3663,7 @@ def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
     pending = [fold for fold in folds if fold not in completed]
     _l5_prepare_worker_environment()
     worker_cache_root = None
-    if checkpoint_root is not None:
+    if checkpoint_root is not None and complex_layer_enabled:
         worker_cache_root = os.path.abspath(os.path.join(
             checkpoint_root, os.pardir, "slic_cache"))
     base_args = (feature_frame, outer_splits, provider, config,
