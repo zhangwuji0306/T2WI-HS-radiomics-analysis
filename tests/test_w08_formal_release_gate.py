@@ -185,14 +185,15 @@ def _write_r0_compatible_attempt(output_root):
 
 
 def _write_r5_successor_fixture(project_root, execution_commit=EXECUTION_COMMIT,
-                                 binding_commit=BINDING_COMMIT):
+                                 binding_commit=BINDING_COMMIT,
+                                 current_output_relative=None):
     aggregate_path = os.path.join(
         project_root, *formal.R5_AGGREGATE_EVIDENCE_RELATIVE.split("/"))
     audit_path = os.path.join(
         project_root, *formal.R5_AUDIT_RELATIVE.split("/"))
-    current_root = os.path.join(
-        project_root, "prognosis_analysis", "output",
-        "p5_technical_preflight_A_G3R")
+    current_output_relative = current_output_relative or (
+        "prognosis_analysis/output/p5_technical_preflight_A_G3R")
+    current_root = os.path.join(project_root, *current_output_relative.split("/"))
     legacy_root = os.path.join(
         project_root, "prognosis_analysis", "output",
         "p5_technical_preflight_A")
@@ -218,7 +219,7 @@ def _write_r5_successor_fixture(project_root, execution_commit=EXECUTION_COMMIT,
         "protected_code_config_manifest": {"code.py": "1" * 64},
         "protected_code_config_tree_sha256": "3" * 64,
         "successor": {
-            "current_output": "prognosis_analysis/output/p5_technical_preflight_A_G3R",
+            "current_output": current_output_relative,
             "successor_of": "prognosis_analysis/output/p5_technical_preflight_A",
             "legacy_output_preserved": True,
             "legacy_artifact_sha256": {"P5_release_gate.json": legacy_sha},
@@ -343,8 +344,10 @@ class W08ReleaseGateTests(unittest.TestCase):
                                      worktree_status="", frozen_bindings=None,
                                      execution_evidence_paths=None,
                                      finalization_commits=(),
-                                     finalization_diffs=None):
-        aggregate, snapshot = _write_r5_successor_fixture(project_root)
+                                     finalization_diffs=None,
+                                     current_output_relative=None):
+        aggregate, snapshot = _write_r5_successor_fixture(
+            project_root, current_output_relative=current_output_relative)
         execution_evidence_paths = set(execution_evidence_paths or ())
         finalization_diffs = dict(finalization_diffs or {})
         if aggregate_overrides:
@@ -525,6 +528,44 @@ class W08ReleaseGateTests(unittest.TestCase):
                 project_root,
                 execution_evidence_paths=formal.R5_ALLOWED_SUCCESSOR_PATHS)
         self.assertEqual(result["successor_mode"], "evidence_only_finalization")
+
+    def test_successor_accepts_append_only_current_output_path(self):
+        current_output = "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60"
+        with tempfile.TemporaryDirectory() as project_root:
+            result = self._validate_successor_fixture(
+                project_root, current_output_relative=current_output)
+        self.assertEqual(result["successor_mode"], "evidence_only_finalization")
+
+    def test_p5_certificate_root_uses_append_only_current_output(self):
+        current_output = "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60"
+        with tempfile.TemporaryDirectory() as project_root:
+            current_root = os.path.join(project_root, *current_output.split("/"))
+            os.makedirs(current_root)
+            for name in ("P5_release_gate.json",
+                         "P5_technical_preflight_summary.json"):
+                with open(os.path.join(current_root, name), "w",
+                          encoding="utf-8") as handle:
+                    json.dump({}, handle)
+            aggregate_path = os.path.join(
+                project_root, *formal.R5_AGGREGATE_EVIDENCE_RELATIVE.split("/"))
+            os.makedirs(os.path.dirname(aggregate_path), exist_ok=True)
+            with open(aggregate_path, "w", encoding="utf-8") as handle:
+                json.dump({"successor": {"current_output": current_output}},
+                          handle)
+            self.assertEqual(
+                formal._p5_certificate_root(project_root), current_root)
+
+    def test_p5_certificate_root_rejects_unsafe_append_only_output_path(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            aggregate_path = os.path.join(
+                project_root, *formal.R5_AGGREGATE_EVIDENCE_RELATIVE.split("/"))
+            os.makedirs(os.path.dirname(aggregate_path))
+            with open(aggregate_path, "w", encoding="utf-8") as handle:
+                json.dump({"successor": {
+                    "current_output": "prognosis_analysis/output/../secret"
+                }}, handle)
+            with self.assertRaisesRegex(RuntimeError, "valid current P5 output"):
+                formal._p5_certificate_root(project_root)
 
     def test_successor_accepts_multiple_contiguous_evidence_finalizations(self):
         with tempfile.TemporaryDirectory() as project_root:
@@ -740,6 +781,14 @@ class W08ReleaseGateTests(unittest.TestCase):
             result = self._run_with_base_gate(
                 output_root,
                 status=_status(failed=True, attempt_id="attempt_002_failed"))
+        self.assertEqual(result["status"], "PASS")
+
+    def test_archived_failure_reconciles_raw_execution_status_attempt_identity(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            _write_writer_style_archived_attempt(output_root)
+            result = self._run_with_base_gate(
+                output_root,
+                status=_status(failed=True, attempt_id="attempt_002"))
         self.assertEqual(result["status"], "PASS")
 
     def test_archived_failure_schema_rejects_writer_identity_mismatch(self):

@@ -961,13 +961,15 @@ def _validate_r5_successor_binding(project_root, execution_commit,
 
     successor = aggregate.get("successor", {})
     if not isinstance(successor, dict) or \
-            successor.get("current_output") != W08_P5_CURRENT_OUTPUT_RELATIVE or \
             successor.get("successor_of") != W08_P5_LEGACY_OUTPUT_RELATIVE or \
             successor.get("legacy_output_preserved") is not True:
         raise RuntimeError("R5 predecessor/successor output relation is invalid")
+    current_output_relative = _validate_p5_output_relative(
+        project_root, successor.get("current_output"),
+        "R5 successor current_output")
     hash_sets = (
         (successor.get("legacy_artifact_sha256"), W08_P5_LEGACY_OUTPUT_RELATIVE),
-        (aggregate.get("current_artifact_sha256"), W08_P5_CURRENT_OUTPUT_RELATIVE),
+        (aggregate.get("current_artifact_sha256"), current_output_relative),
     )
     for hashes, relative_root in hash_sets:
         if not isinstance(hashes, dict):
@@ -1133,8 +1135,43 @@ def _extract_certificate_code_commit(certificate):
     return value.lower()
 
 
+def _validate_p5_output_relative(project_root, relative_path, label,
+                                 require_files=False):
+    """Validate and resolve an append-only P5 output path."""
+    if not isinstance(relative_path, str) or not relative_path or \
+            relative_path.startswith(("/", "\\")) or \
+            "\\" in relative_path or ":" in relative_path:
+        raise RuntimeError("%s is not a safe relative path" % label)
+    parts = relative_path.split("/")
+    if any(part in ("", ".", "..") for part in parts) or \
+            not relative_path.startswith(
+                "prognosis_analysis/output/p5_technical_preflight_A_") or \
+            relative_path == W08_P5_LEGACY_OUTPUT_RELATIVE:
+        raise RuntimeError("%s is not a valid current P5 output" % label)
+    root = _project_path(project_root, relative_path)
+    if require_files and not all(os.path.isfile(os.path.join(root, name))
+                                 for name in (
+                                     "P5_release_gate.json",
+                                     "P5_technical_preflight_summary.json")):
+        raise RuntimeError("%s is missing required P5 evidence" % label)
+    return relative_path
+
+
 def _p5_certificate_root(project_root):
-    """Prefer the append-only current-code successor over the legacy P5 set."""
+    """Resolve the current P5 output recorded by append-only evidence."""
+    aggregate_path = _project_path(
+        project_root, R5_AGGREGATE_EVIDENCE_RELATIVE)
+    if os.path.isfile(aggregate_path):
+        aggregate = _read_json_path(
+            aggregate_path, "R5 final aggregate evidence")
+        successor = aggregate.get("successor")
+        if not isinstance(successor, dict):
+            raise RuntimeError("R5 final aggregate successor is missing")
+        relative = _validate_p5_output_relative(
+            project_root, successor.get("current_output"),
+            "R5 successor current_output", require_files=True)
+        return _project_path(project_root, relative)
+
     candidates = (W08_P5_CURRENT_OUTPUT_RELATIVE,
                   W08_P5_LEGACY_OUTPUT_RELATIVE)
     for relative in candidates:
@@ -1412,7 +1449,9 @@ def _validate_reconciled_attempts(project_root, output_root, status,
     if explicit_attempt_ids:
         latest_attempt_id = explicit_attempt_ids[-1]
         _archive_kind, latest_failure = validated_attempts[latest_attempt_id]
-        if last_attempt.get("attempt_id") != latest_attempt_id or \
+        expected_attempt_ids = (
+            _raw_archived_attempt_id(latest_attempt_id), latest_attempt_id)
+        if last_attempt.get("attempt_id") not in expected_attempt_ids or \
                 last_attempt.get("code_commit_at_attempt") != \
                 latest_failure.get("code_commit_at_attempt") or \
                 last_attempt.get("failure_stage") != \
