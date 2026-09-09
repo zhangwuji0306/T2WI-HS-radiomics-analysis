@@ -4,7 +4,7 @@
   "status": "completed",
   "validation": "PASS",
   "execution": {
-    "git_head": "79a6d9a9d3a064fedb2db2741e37ea4ffb610451",
+    "git_head": "fb9eced7ce120b0bb8fd573d9d63130df555b97c",
     "environment": {
       "python": "3.7.12",
       "numpy": "1.21.6",
@@ -87,7 +87,7 @@
       "validation_used_for_boundary_fit": false
     },
     "registered_evidence_hashes": {
-      "R6_5R_coordinate_reconciliation_json": "220829324b1306ff2b971869843c43744d2f4ecc79498238e6c10ce79f24b9a0",
+      "R6_5R_coordinate_reconciliation_json": "2a72a972f79306b41932c30ad5bd388d8bef827a31232817295ab309f18f0f50",
       "R6_5R_coordinate_reconciliation_audit_md": "2ff4e422e2cc29f83f6371fb54e250e7d2486e6c8b3ab613a2af8df2b68e6e7e",
       "R6_5R_coordinate_reconciliation_review_md": "ac623aaf538b8867b7298614de1cc7090ee2c2b0afecdebff8c31164169fb5fa",
       "R6_5R_superseding_disposition_review_md": "b640238c0a028a4d877dd249fd1f8c7781f7beab25bcbcf10694f3463f0f305b",
@@ -100,12 +100,12 @@
     "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
     "technical_freeze_sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
     "w07_config_sha256": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
-    "w08_config_sha256": "c70369e216902699b2f089a36a146b7f88140b6879ad264bb7f96ae721e0a55f",
+    "w08_config_sha256": "3e218f98b1397ef0e2615ca0556e605f91c730b5a7a30e263ada31bf34c89ef4",
     "candidate_pools": {
       "R_low_sha256": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
       "R_high_sha256": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
     },
-    "w08_solver_source_sha256": "ef0416a0fafd1d1a44e44aa72a206e0634f932ddaf195444da8303cde4ead415",
+    "w08_solver_source_sha256": "85644f4ec772ae22bccade96a3f0b5041fe021a72cefb04210bd725c7245329d",
     "test_source_sha256": "8062579da145a66010b306aeefbb47262df643cfde0389d69f3d4d348d141750"
   },
   "solver_lock": {
@@ -141,7 +141,7 @@
       "source_git_blob_sha1": "075fe9624d8b8130f31016cd488d926feff3486c"
     },
     "new_solver": {
-      "source_commit": "79a6d9a9d3a064fedb2db2741e37ea4ffb610451",
+      "source_commit": "fb9eced7ce120b0bb8fd573d9d63130df555b97c",
       "source_path": "prognosis_analysis/scripts/w08_nested_cv.py",
       "source_sha256": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce"
     },
@@ -185,7 +185,7 @@
         "selection_output": {"alpha": 0.1, "alpha_index": 0, "lambda_index": 37, "lambda_ratio": 0.031992671377973826}
       },
       "new": {
-        "source_commit": "79a6d9a9d3a064fedb2db2741e37ea4ffb610451",
+        "source_commit": "fb9eced7ce120b0bb8fd573d9d63130df555b97c",
         "selection_output": {"alpha": 0.1, "alpha_index": 0, "lambda_index": 37, "lambda_ratio": 0.031992671377973826}
       },
       "reducer_execution": "old and new _select_candidate source bodies executed in memory after replacing the historical score-field token with selection_score; no model fit or metric function was called",

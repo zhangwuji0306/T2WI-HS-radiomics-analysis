@@ -12,9 +12,9 @@ model-freeze, or W09 binding was changed.
 
 | Path | SHA-256 |
 |---|---|
-| `prognosis_analysis/configs/w08_nested_cv.json` | `c70369e216902699b2f089a36a146b7f88140b6879ad264bb7f96ae721e0a55f` |
-| `prognosis_analysis/scripts/w08_formal_run_a.py` | `8dc5d25fea2eef396a83cab041f0e9711ab446d1f829176a401319021d99674b` |
-| `prognosis_analysis/scripts/w08_nested_cv.py` | `ef0416a0fafd1d1a44e44aa72a206e0634f932ddaf195444da8303cde4ead415` |
+| `prognosis_analysis/configs/w08_nested_cv.json` | `3e218f98b1397ef0e2615ca0556e605f91c730b5a7a30e263ada31bf34c89ef4` |
+| `prognosis_analysis/scripts/w08_formal_run_a.py` | `44d6f4ec4b8253a6d86860c3678e43a5e10931413c50b0a8b05ebf795a333074` |
+| `prognosis_analysis/scripts/w08_nested_cv.py` | `85644f4ec772ae22bccade96a3f0b5041fe021a72cefb04210bd725c7245329d` |
 
 The registered values were recomputed from the current files. The W08 config
 now explicitly binds the coordinator policy that each successfully validated

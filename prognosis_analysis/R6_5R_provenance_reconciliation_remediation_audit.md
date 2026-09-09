@@ -14,7 +14,7 @@ W09, or model-freeze state was changed.
 |---|---|---|
 | R6-5 register JSON | `prognosis_analysis/R6_5_numerical_equivalence.json` | `51ce1a52870c64e2b692eb4217d3633f9f39e742d5914a7c99072660de107775` |
 | R6-5 numerical audit | `prognosis_analysis/R6_5_numerical_equivalence_audit.md` | `28c4dcae1602ca278b7a038f8647faffcb58b9629809342cf92a71147375ea1a` |
-| R6-5R coordinate register | `prognosis_analysis/R6_5R_coordinate_reconciliation.json` | `220829324b1306ff2b971869843c43744d2f4ecc79498238e6c10ce79f24b9a0` |
+| R6-5R coordinate register | `prognosis_analysis/R6_5R_coordinate_reconciliation.json` | `2a72a972f79306b41932c30ad5bd388d8bef827a31232817295ab309f18f0f50` |
 | R6-5R coordinate audit | `prognosis_analysis/R6_5R_coordinate_reconciliation_audit.md` | `2ff4e422e2cc29f83f6371fb54e250e7d2486e6c8b3ab613a2af8df2b68e6e7e` |
 | R6-5R coordinate review | `prognosis_analysis/R6_5R_coordinate_reconciliation_review.md` | `ac623aaf538b8867b7298614de1cc7090ee2c2b0afecdebff8c31164169fb5fa` |
 | R6-5R superseding disposition review | `prognosis_analysis/R6_5R_superseding_disposition_review.md` | `b640238c0a028a4d877dd249fd1f8c7781f7beab25bcbcf10694f3463f0f305b` |

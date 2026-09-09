@@ -217,7 +217,7 @@
     "status": "completed"
   },
   "provenance": {
-    "current_git_head": "96daac40a7814add7c35d4a94e9e0d4201b6aea4",
+    "current_git_head": "fb9eced7ce120b0bb8fd573d9d63130df555b97c",
     "file_sha256": {
       "habitat_analysis/configs/main_cross_case_kmeans_k2_4mm.json": "fc2f856b3bc3fcd3d358f4476fd87a8117568712b3fc382c5e24e315e976bb3f",
       "habitat_analysis/freeze_lock.json": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
@@ -226,14 +226,14 @@
       "prognosis_analysis/W07A_pre_W08_protocol_amendment.json": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14",
       "prognosis_analysis/W07A_pre_W08_protocol_amendment.md": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
       "prognosis_analysis/configs/w07_outer_splits.json": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
-      "prognosis_analysis/configs/w08_nested_cv.json": "c70369e216902699b2f089a36a146b7f88140b6879ad264bb7f96ae721e0a55f",
+      "prognosis_analysis/configs/w08_nested_cv.json": "3e218f98b1397ef0e2615ca0556e605f91c730b5a7a30e263ada31bf34c89ef4",
       "prognosis_analysis/modeling_protocol.json": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
       "prognosis_analysis/output/A_modeling/A_modeling_population.csv": "5c93441f535ba86d965c3da14b4b33fe52f73d4337cd15a670b3ca2b8a2c23e4",
       "prognosis_analysis/output/outer_splits_A.csv": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
       "prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
       "prognosis_analysis/scripts/w07_outer_splits.py": "a74a6358d54f545b3b3226002462ea709c128b180361caa9e044cb9f8108f7d9",
-      "prognosis_analysis/scripts/w08_formal_run_a.py": "8dc5d25fea2eef396a83cab041f0e9711ab446d1f829176a401319021d99674b",
-      "prognosis_analysis/scripts/w08_nested_cv.py": "ef0416a0fafd1d1a44e44aa72a206e0634f932ddaf195444da8303cde4ead415"
+      "prognosis_analysis/scripts/w08_formal_run_a.py": "44d6f4ec4b8253a6d86860c3678e43a5e10931413c50b0a8b05ebf795a333074",
+      "prognosis_analysis/scripts/w08_nested_cv.py": "85644f4ec772ae22bccade96a3f0b5041fe021a72cefb04210bd725c7245329d"
     },
     "historical_R6_2_aggregate_output": {
       "path": "prognosis_analysis/output/r6_2_diagnostic_replay/r6_2_diagnostic_replay.json",

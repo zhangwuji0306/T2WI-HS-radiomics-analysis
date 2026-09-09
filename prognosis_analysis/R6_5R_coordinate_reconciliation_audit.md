@@ -54,7 +54,7 @@ Recorded R6-2 evidence (not a new reconstruction): `M2_R_high` at the same nomin
 
 ## Provenance and execution
 
-- Current code commit: `96daac40a7814add7c35d4a94e9e0d4201b6aea4`.
+- Current code commit: `fb9eced7ce120b0bb8fd573d9d63130df555b97c`.
 - Script/config/input SHA-256 values are recorded in the machine-readable companion JSON under `provenance.file_sha256`.
 - Command: `tools\run_t2_radiomics.ps1 -PythonArguments @('local_private/r6_5r_coordinate_reconciliation_tmp.py')` (exit code `0`).
 - Environment probe: `3.7.12` Python; NumPy `1.21.6`; pandas `1.3.5`; SciPy `1.7.3`; scikit-learn `1.0.2`; PyRadiomics `v3.0.1`; SimpleITK `2.2.1`.
