@@ -51,9 +51,9 @@ bounded synthetic technical probe 的三次同机重复中，集成总 probe 中
 
 | 指标 | baseline 中位数 | integrated 中位数 |
 |---|---:|---:|
-| representation seconds | 0.159050 | 0.161027 |
-| single-fold model seconds | 0.203745 | 0.187923 |
-| total technical probe seconds | 0.363366 | 0.353600 |
+| representation seconds | 0.184861 | 0.175960 |
+| single-fold model seconds | 0.204166 | 0.191047 |
+| total technical probe seconds | 0.389702 | 0.367683 |
 | PyRadiomics calls | 32 | 4 |
 | Cox core calls | 10 | 10 |
 | mask signature reuse rate | 0.8750 | 0.8750 |
