@@ -12,7 +12,7 @@ W09, or model-freeze state was changed.
 
 | Binding | Path | SHA-256 |
 |---|---|---|
-| R6-5 register JSON | `prognosis_analysis/R6_5_numerical_equivalence.json` | `9c94fb97bbffff76e0d5abe7dd85743da8f02d586bffba91bd6d32dbb9a5b763` |
+| R6-5 register JSON | `prognosis_analysis/R6_5_numerical_equivalence.json` | `ccdd307b34f5854aa84a80eb0fe286e811c74346ce97a9886fbc5d13f52b37bd` |
 | R6-5 numerical audit | `prognosis_analysis/R6_5_numerical_equivalence_audit.md` | `28c4dcae1602ca278b7a038f8647faffcb58b9629809342cf92a71147375ea1a` |
 | R6-5R coordinate register | `prognosis_analysis/R6_5R_coordinate_reconciliation.json` | `e7d40b282fff0397f12a53a79e0a404d4d1a4e9b5b49ee3429859b3949cd5ca0` |
 | R6-5R coordinate audit | `prognosis_analysis/R6_5R_coordinate_reconciliation_audit.md` | `2ff4e422e2cc29f83f6371fb54e250e7d2486e6c8b3ab613a2af8df2b68e6e7e` |

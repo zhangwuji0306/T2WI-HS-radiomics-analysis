@@ -39,4 +39,4 @@
 
 - `P5_technical_preflight_summary.json`、`P5_fold_feasibility.csv`、`P5_release_gate.json` 和 `P5_sha256_manifest.json` 为唯一 aggregate output 成员；manifest 中三项数据文件的实际 SHA-256 全部匹配。
 - 聚合 CSV 不含患者标识列、影像号、原始路径或患者级技术字段；未发现 patient-level output、formal model output 或性能字段进入 Git tracked files。
-- 审查对象 SHA-256：evidence JSON `0f82258a61ce9ba8084da9a7b06355fd81d2275ec127102ccc416e7655c30278`；Worker audit `bc20aa96d995cc617b41f6216d1f0a2d40bfaaf20de135a89d81a26a38d302f7`；aggregate manifest `0cd8a09bc395f6c22c1c07f6bc6344ebe9a97b84e1a8da34130a2062655d76e6`。
+- 审查对象 SHA-256：evidence JSON `d4bdbff38e67e18a31dec5ae0ecaa039399cdd12221e37503e58e7752c8b9a49`；Worker audit `bc20aa96d995cc617b41f6216d1f0a2d40bfaaf20de135a89d81a26a38d302f7`；aggregate manifest `0cd8a09bc395f6c22c1c07f6bc6344ebe9a97b84e1a8da34130a2062655d76e6`。

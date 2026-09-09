@@ -106,7 +106,7 @@
       "R_high_sha256": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
     },
     "w08_solver_source_sha256": "ef0416a0fafd1d1a44e44aa72a206e0634f932ddaf195444da8303cde4ead415",
-    "test_source_sha256": "cc748d8e937fc45d530aed277d860b3676d52fb72952171e9bd94efdcdf3ba01"
+    "test_source_sha256": "8062579da145a66010b306aeefbb47262df643cfde0389d69f3d4d348d141750"
   },
   "solver_lock": {
     "elastic_net_max_iter": 3000,

@@ -44,8 +44,8 @@
     "code_and_config_sha256": {
       "habitat_analysis/freeze_lock.json": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
       "prognosis_analysis/R6_4A_remediation.json": "9d49225d2e7cd7883bb3a4612aa8b8181644f519602d67feddce58dee9fb9af0",
-      "prognosis_analysis/R6_5_numerical_equivalence.json": "fd9f4d13395cf88cc00bf26472b53a40c3844a09a35b68d6d1ede8ba02629213",
-      "prognosis_analysis/R6_6_g3r_technical_preflight.json": "0f82258a61ce9ba8084da9a7b06355fd81d2275ec127102ccc416e7655c30278",
+      "prognosis_analysis/R6_5_numerical_equivalence.json": "ccdd307b34f5854aa84a80eb0fe286e811c74346ce97a9886fbc5d13f52b37bd",
+      "prognosis_analysis/R6_6_g3r_technical_preflight.json": "d4bdbff38e67e18a31dec5ae0ecaa039399cdd12221e37503e58e7752c8b9a49",
       "prognosis_analysis/W07A_pre_W08_protocol_amendment.json": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14",
       "prognosis_analysis/W07A_pre_W08_protocol_amendment.md": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
       "prognosis_analysis/configs/w07_outer_splits.json": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217",
