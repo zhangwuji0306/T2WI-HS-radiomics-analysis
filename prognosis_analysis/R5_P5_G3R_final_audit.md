@@ -5,7 +5,7 @@
 - Stage: `G3R`
 - Status: `PASS`
 - Technical execution code commit: `9b5383f70cd0a5957f8155aba6f130093d8e0c33`
-- Evidence binding commit: pending evidence-only binding commit
+- Evidence binding commit: `255c737b4f4d04a95f116fa168ed3c81ac2f1e22`
 - L6 evidence-generation source commit: `882901d0d28b6ee0978c2eb25867295249290f05`
 - L7 audit base commit: `9b5383f70cd0a5957f8155aba6f130093d8e0c33`
 - P5 coverage: `10` repeats × `5` frozen W07 outer folds = `50/50` fold units
