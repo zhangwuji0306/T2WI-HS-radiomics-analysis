@@ -1,0 +1,100 @@
+{
+  "schema": "W08_L7_current_code_preflight_evidence",
+  "version": "1.0",
+  "stage": "L7",
+  "status": "HOLD",
+  "scope": "final-code P5/G3R technical-only preflight",
+  "code_binding": {
+    "source_code_commit": "1964cee2df00be745ff2a297d56e3569c7f47a90",
+    "origin_main": "1964cee2df00be745ff2a297d56e3569c7f47a90",
+    "current_branch": "codex/l7-current-code-technical-preflight",
+    "upstream_binding": "origin/codex/l7-current-code-technical-preflight",
+    "worktree_clean": true
+  },
+  "locked_environment": {
+    "wrapper": "tools/run_t2_radiomics.ps1",
+    "conda_environment": "t2_radiomics",
+    "python": "3.7.12",
+    "numpy": "1.21.6",
+    "pandas": "1.3.5",
+    "scipy": "1.7.3",
+    "scikit_learn": "1.0.2",
+    "matplotlib": "3.5.3",
+    "PyYAML": "6.0",
+    "PyRadiomics": "3.0.1",
+    "SimpleITK": "2.2.1",
+    "PyWavelets": "1.3.0",
+    "matches_environment_yml": true
+  },
+  "tests": {
+    "full_discovery": {
+      "command": "tools/run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','discover','-s','tests','-v')",
+      "tests": 302,
+      "passed": 289,
+      "failures": 5,
+      "errors": 8,
+      "exit_code": 1,
+      "failure_scope": "pre-existing provenance/W03 local-freeze and registered-binding state"
+    },
+    "targeted_w05_w08_r6": {
+      "tests": 175,
+      "passed": 171,
+      "failures": 4,
+      "errors": 0,
+      "exit_code": 1,
+      "failure_scope": "pre-existing R6-5/R6-5R/W08 registered binding hashes"
+    },
+    "compileall": {
+      "command": "tools/run_t2_radiomics.ps1 -PythonArguments @('-m','compileall','-q','feature_extract/scripts','habitat_analysis/scripts','prognosis_analysis/scripts','tests')",
+      "exit_code": 0
+    }
+  },
+  "synthetic_current_code_core": {
+    "status": "TEST_ONLY_PASS",
+    "fold_units": 50,
+    "run_rows": 850,
+    "required_runs": 17,
+    "rows_per_run": 50,
+    "centers_and_boundaries_finite": true,
+    "training_only_boundary_contract": true,
+    "representative_low_high_support_states_tested": true,
+    "G_feature_count": 6,
+    "R_low_candidate_count": 49,
+    "R_high_candidate_count": 10,
+    "inner_5fold_feasible": true,
+    "all_paired_populations_equal": true,
+    "minimumROISize": 10,
+    "n_init": 100,
+    "R_low_candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high_candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "performance_generated": false,
+    "patient_level_outputs_written": false
+  },
+  "production_preflight": {
+    "status": "NOT_RUN",
+    "production_certificate_generated": false,
+    "reason": "This L7 worker was prohibited from reading real outcomes or patient-level material. The worker worktree did not contain the local A freeze inputs, and no other checkout was mounted.",
+    "real_outcomes_read": false,
+    "patient_level_material_read": false,
+    "B_data_read": false,
+    "formal_w08_started": false
+  },
+  "formal_output_boundary": {
+    "cox_fit_generated": false,
+    "risk_scores_generated": false,
+    "predictions_generated": false,
+    "performance_generated": false,
+    "model_artifacts_generated": false,
+    "model_freeze_lock_present": false,
+    "new_formal_output_written": false
+  },
+  "review_disposition": {
+    "L8_ready": false,
+    "disposition": "HOLD",
+    "blocking_condition": "Production current-code 50-fold P5/G3R evidence is not established by the TEST_ONLY synthetic core under the no-real-outcomes/no-patient-material boundary."
+  }
+}
