@@ -13,6 +13,7 @@
 - Observed P5 execution duration: `800.0` seconds from certificate timestamp to aggregate artifact write
 - Current output: `prognosis_analysis/output/p5_technical_preflight_A_L7_9b5383f`
 - Predecessor output: `prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60`
+- Legacy P5 output: `prognosis_analysis/output/p5_technical_preflight_A`
 
 The production entry used the existing protected A technical-ID authorization path, then the existing authorized A outcome reader only to materialize the frozen modeling population and event/censor feasibility. No outcome values are present in the submitted evidence. Each aggregate row is one fixed `run_id` × W07 outer repeat × W07 outer fold technical-feasibility unit.
 

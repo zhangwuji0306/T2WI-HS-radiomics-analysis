@@ -6,7 +6,7 @@
   "scope": "A-only technical preflight aggregate and release evidence",
   "successor": {
     "current_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_9b5383f",
-    "successor_of": "prognosis_analysis/output/p5_technical_preflight_A_G3R",
+    "successor_of": "prognosis_analysis/output/p5_technical_preflight_A",
     "predecessor_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60",
     "predecessor_artifact_sha256": {
       "P5_fold_feasibility.csv": "c2ae2bfa82e9a3f468741a2e4ae80ec76b0aa56ea4c6f786d301376d3aadbf89",
