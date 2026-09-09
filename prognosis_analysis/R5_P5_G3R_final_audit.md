@@ -12,7 +12,7 @@
 - Aggregate coverage: `17` fixed technical runs × `50` folds = `850` rows
 - Observed P5 execution duration: `1479.185` seconds
 - Current output: `prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee`
-- Predecessor output: `prognosis_analysis/output/p5_technical_preflight_A_G3R`
+- Predecessor output: `prognosis_analysis/output/p5_technical_preflight_A_G3R_historical_77cddd_ed58c08`
 
 The production entry used the existing protected A technical-ID authorization path, then the existing authorized A outcome reader only to materialize the frozen modeling population and event/censor feasibility. No outcome values are present in the submitted evidence. Each aggregate row is one fixed `run_id` × W07 outer repeat × W07 outer fold technical-feasibility unit.
 
@@ -44,7 +44,7 @@ The current L6 evidence at `prognosis_analysis/W08_local_L6_integration.json` re
 - All folds complete: `true`
 - All required runs estimable: `true`
 - All paired populations equal: `true`
-- Minimum training events/censors: `62` / `210`
+- Minimum training events/censors: `63` / `209`
 - Minimum validation events/censors: `13` / `49`
 - P5 release gate: `PASS`
 

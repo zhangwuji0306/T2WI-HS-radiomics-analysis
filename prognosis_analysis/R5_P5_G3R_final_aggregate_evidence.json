@@ -7,12 +7,12 @@
   "successor": {
     "current_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee",
     "successor_of": "prognosis_analysis/output/p5_technical_preflight_A_G3R",
-    "predecessor_output": "prognosis_analysis/output/p5_technical_preflight_A_G3R",
+    "predecessor_output": "prognosis_analysis/output/p5_technical_preflight_A_G3R_historical_77cddd_ed58c08",
     "predecessor_artifact_sha256": {
       "P5_fold_feasibility.csv": "e4cc974b3666a9a5d26efa99c8536d79fea857e38a29a0bee3bcf822de4b7ad3",
       "P5_release_gate.json": "f7219be3294026fa0ce0b72a3a7c01a1d12d647108b02db67ed1c0ec6e58fcdd",
       "P5_sha256_manifest.json": "8b9e82cdea378c1a3271d166926d461c6593c45b4c955e8b055f545e5525ede3",
-      "P5_technical_preflight_summary.json": "8f8d09ec4643cae8c4b1af469396e3de1afd1bf6b486de2c0474c065c2d5ec4"
+      "P5_technical_preflight_summary.json": "8f8d09d8ec4643ca8e4b1af469396e3de1afd1bf6b486de2c0474c065c2d5ec4"
     },
     "legacy_output_preserved": true,
     "legacy_artifact_sha256": {
@@ -101,9 +101,9 @@
       "M2-R",
       "M3L_vs_M3H"
     ],
-    "min_train_events": 62,
+    "min_train_events": 63,
     "min_validation_events": 13,
-    "min_train_censors": 210,
+    "min_train_censors": 209,
     "min_validation_censors": 49,
     "inner_5fold_feasible": true,
     "all_folds_complete": true,
