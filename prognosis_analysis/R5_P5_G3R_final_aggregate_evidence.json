@@ -5,14 +5,14 @@
   "status": "PASS",
   "scope": "A-only technical preflight aggregate and release evidence",
   "successor": {
-    "current_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60",
+    "current_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_9b5383f",
     "successor_of": "prognosis_analysis/output/p5_technical_preflight_A_G3R",
-    "predecessor_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee",
+    "predecessor_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60",
     "predecessor_artifact_sha256": {
-      "P5_fold_feasibility.csv": "6dcb57a85982653c72bf0b44d97cf03085d841a2f10f50a252ddf3ca6e52855f",
-      "P5_release_gate.json": "1d062ed06e5713d2b4fa0698b1c187e96b1f98a043edd78a496bd51e230b4676",
-      "P5_sha256_manifest.json": "b4a0a411aac2398f359ac28d1446b7f8505a138579773d11bd869f8e23113053",
-      "P5_technical_preflight_summary.json": "cdcaff83cb61a0dcf566fdafb14685cb7f8fcbebd9f66f847c84633ef9f6db16"
+      "P5_fold_feasibility.csv": "c2ae2bfa82e9a3f468741a2e4ae80ec76b0aa56ea4c6f786d301376d3aadbf89",
+      "P5_release_gate.json": "99294657c5329562255c578f15b3fb2148a53686a726a0552c435094dd03f69c",
+      "P5_sha256_manifest.json": "e6384ca3c5f8de59379799b35b1ae185c651abbebe50efd5a6ab07742cbac5fb",
+      "P5_technical_preflight_summary.json": "5f04749aea61fd19927f732b5364f87c2e256a9a6297a4668581770e0fa0b746"
     },
     "legacy_output_preserved": true,
     "legacy_artifact_sha256": {
@@ -22,17 +22,17 @@
     }
   },
   "certificate_generation": {
-    "technical_execution_code_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
-    "generated_at_utc": "2026-09-09T13:37:09Z",
+    "technical_execution_code_commit": "9b5383f70cd0a5957f8155aba6f130093d8e0c33",
+    "generated_at_utc": "2026-09-09T15:26:07Z",
     "generator": "prognosis_analysis/scripts/w08_technical_preflight_a.py",
-    "certificate": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60/P5_release_gate.json",
-    "aggregate_summary": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60/P5_technical_preflight_summary.json",
-    "sha256_manifest": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60/P5_sha256_manifest.json",
-    "observed_elapsed_seconds": 701.0
+    "certificate": "prognosis_analysis/output/p5_technical_preflight_A_L7_9b5383f/P5_release_gate.json",
+    "aggregate_summary": "prognosis_analysis/output/p5_technical_preflight_A_L7_9b5383f/P5_technical_preflight_summary.json",
+    "sha256_manifest": "prognosis_analysis/output/p5_technical_preflight_A_L7_9b5383f/P5_sha256_manifest.json",
+    "observed_elapsed_seconds": 800.0
   },
   "current_code_support": {
     "l6_evidence_source_commit": "882901d0d28b6ee0978c2eb25867295249290f05",
-    "l7_audit_base_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
+    "l7_audit_base_commit": "9b5383f70cd0a5957f8155aba6f130093d8e0c33",
     "l6_evidence": "prognosis_analysis/W08_local_L6_integration.json",
     "l6_audit": "prognosis_analysis/W08_local_L6_integration_audit.md",
     "kmeans": {
@@ -65,9 +65,9 @@
   "release_binding": {
     "schema": "P5_G3R_strict_release_binding",
     "version": "2.0",
-    "technical_execution_code_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
-    "evidence_binding_commit": "2236322ba6ccdf10d4ed2a45ddc3802635a27882",
-    "successor_mode": "evidence_only_finalization",
+    "technical_execution_code_commit": "9b5383f70cd0a5957f8155aba6f130093d8e0c33",
+    "evidence_binding_commit": "0000000000000000000000000000000000000000",
+    "successor_mode": "evidence_only_append_only",
     "allowed_paths": [
       "prognosis_analysis/R5_P5_G3R_final_aggregate_evidence.json",
       "prognosis_analysis/R5_P5_G3R_final_audit.md"
@@ -138,7 +138,7 @@
     "aggregate_only": true,
     "compatibility_provenance": {
       "compatibility_code_path": "prognosis_analysis/scripts/w08_formal_run_a.py",
-      "compatibility_code_sha256": "9100e76c625973fca293def16669b708bb4f40fcb7359912a9e1ac4d89e3e558",
+      "compatibility_code_sha256": "04b7b64483dcc7a90298ac03ea18a5228df28f96b1a2cfc121563fcb8095e8d2",
       "compatibility_config_path": "prognosis_analysis/configs/w02_habitat_radiomics.json",
       "compatibility_config_sha256": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f",
       "compatibility_reason": "PyRadiomics 3.0.1 strict <= semantics and precheck count>=10",
@@ -187,12 +187,12 @@
     }
   },
   "current_artifact_sha256": {
-    "P5_fold_feasibility.csv": "c2ae2bfa82e9a3f468741a2e4ae80ec76b0aa56ea4c6f786d301376d3aadbf89",
-    "P5_release_gate.json": "99294657c5329562255c578f15b3fb2148a53686a726a0552c435094dd03f69c",
-    "P5_sha256_manifest.json": "e6384ca3c5f8de59379799b35b1ae185c651abbebe50efd5a6ab07742cbac5fb",
-    "P5_technical_preflight_summary.json": "5f04749aea61fd19927f732b5364f87c2e256a9a6297a4668581770e0fa0b746"
+    "P5_fold_feasibility.csv": "b4026a6616e3a55f7bb44628a6ef5bdcda3c788c598be636deeb4ecb6ba0a886",
+    "P5_release_gate.json": "3dd212bbf3582397d0e953a8a4b042e7acd74ce8e604d06fc16b33826f12bb60",
+    "P5_sha256_manifest.json": "874456f827d9b44da15d08b7e7f734f4c5554a28dfe73d29807734a51effca63",
+    "P5_technical_preflight_summary.json": "7820649e5e3771bde5d5838be02b8ae28d6a90cb83769255e8194fb21d8f5daf"
   },
-  "technical_execution_code_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
+  "technical_execution_code_commit": "9b5383f70cd0a5957f8155aba6f130093d8e0c33",
   "protected_code_config_manifest": {
     "feature_extract/scripts/build_manifest.py": "42965d0d4d5ed96bcbbb39a75ad3d34e2684debb4f935956adf66e84d91d5d92",
     "feature_extract/scripts/compute_sigma_a.py": "a86977bd4328e597d73313d2bd8b67f07fa64bfb2cd28be4f85fc7077b84e668",
@@ -227,14 +227,14 @@
     "prognosis_analysis/scripts/w03_habitat_radiomics.py": "1c582a89a8694d7cc022c7634758f65ca8e06cabb4ee6c9cf3839caf783e7a92",
     "prognosis_analysis/scripts/w06_endpoint_qc.py": "0f6c20db236971a162f6c024778c5910cd78afe3b330bd07ab9e78fae125ed01",
     "prognosis_analysis/scripts/w07_outer_splits.py": "a74a6358d54f545b3b3226002462ea709c128b180361caa9e044cb9f8108f7d9",
-    "prognosis_analysis/scripts/w08_formal_run_a.py": "9100e76c625973fca293def16669b708bb4f40fcb7359912a9e1ac4d89e3e558",
+    "prognosis_analysis/scripts/w08_formal_run_a.py": "04b7b64483dcc7a90298ac03ea18a5228df28f96b1a2cfc121563fcb8095e8d2",
     "prognosis_analysis/scripts/w08_kmeans_parameters.py": "aa68e4f367ce0b8238716bf8d3c169bea9faab0f9ecb132a2daab36481c9d000",
     "prognosis_analysis/scripts/w08_local_l6_probe.py": "bca840b931ab81db8643161bd3c044db89e0950ec21ce55f5094b2ff9b428fd6",
     "prognosis_analysis/scripts/w08_local_optimization_probe.py": "9e29f62470d6465edb07d55492d95f33084d3661079b2283d6b47a52e694b3b4",
     "prognosis_analysis/scripts/w08_nested_cv.py": "5f310a174a158b8f0101140d60b892e0f0d29124ff72fc912d315bda249399a3",
     "prognosis_analysis/scripts/w08_technical_preflight_a.py": "2efeafc3990cb0ce6b4b8aca37c2dd7c8e9873fcb5d9dbdb82ae8c8efbd3cb18"
   },
-  "protected_code_config_tree_sha256": "a9e84ea56b0d724267d17b19d56fb0c7683f0d647f795a34bc13c9c151098731",
+  "protected_code_config_tree_sha256": "afdbc1de511304309369b90652560cda1968ce30d65a4e06dcb99b69d6914abf",
   "binding_hashes": {
     "P4R_reconciliation": "374ddc9f6ecd01c04ff957576f032fec18f0ebbb53f6651a725ad0b6aff7786d",
     "W03_candidate_freeze": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
@@ -260,8 +260,8 @@
     },
     "complete_regression": {
       "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','discover','-s','tests','-p','test*.py','-q')",
-      "tests_run": 312,
-      "passed": 310,
+      "tests_run": 316,
+      "passed": 314,
       "failed": 2,
       "errors": 0,
       "preexisting_failure": "test_provenance_reconciliation.ProvenanceReconciliationTests.test_execution_status_is_the_failed_w08_hold_state: execution_status wording assertion",
@@ -269,8 +269,8 @@
     },
     "targeted": {
       "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','-q','tests.test_w05_access','tests.test_w07_outer_splits','tests.test_w08_formal_serial_contract','tests.test_w08_l5_parallel_checkpoint','tests.test_r6_4a_convergence','tests.test_r6_5_validation','tests.test_w08_technical_preflight_a','tests.test_w08_formal_release_gate','tests.test_w08_transactional_outputs','tests.test_w08_local_optimization_probe','tests.test_w08_local_l6_probe')",
-      "tests_run": 145,
-      "passed": 144,
+      "tests_run": 149,
+      "passed": 148,
       "failed": 1,
       "errors": 0,
       "exit_code": 1,
