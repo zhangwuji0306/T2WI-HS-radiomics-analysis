@@ -11,6 +11,7 @@ bounded synthetic technical probe 的三次同机重复中，集成总 probe 中
 - Conda 环境：`t2_radiomics`；实际解释器：`python.exe in conda environment t2_radiomics`。
 - Python 3.7.12；NumPy 1.21.6；pandas 1.3.5；scikit-learn 1.0.2；PyRadiomics v3.0.1；SimpleITK 2.2.1。
 - 所有 Python、测试、compile 和 probe 均通过 `tools/run_t2_radiomics.ps1 -PythonArguments` 调用。
+- `source_binding.source_commit` 绑定证据生成所用的 code/config/provenance commit；审计文件另行提交。`source_binding.audit_commit` 绑定最终 audit-only commit，提交后以 `git rev-parse --verify HEAD` 解析。
 - K-means：K=2、k-means++、`n_init=100`、`max_iter=300`、`tol=1e-4`；50 个外层 fold、5 个 inner fold；4 个 alpha、每个 alpha 100 个 lambda；Elastic-Net `max_iter=3000`、`tolerance=1e-7`；`minimumROISize=10`。
 
 ## 正确性矩阵
@@ -50,9 +51,9 @@ bounded synthetic technical probe 的三次同机重复中，集成总 probe 中
 
 | 指标 | baseline 中位数 | integrated 中位数 |
 |---|---:|---:|
-| representation seconds | 0.184861 | 0.175960 |
-| single-fold model seconds | 0.204166 | 0.191047 |
-| total technical probe seconds | 0.389702 | 0.367683 |
+| representation seconds | 0.159050 | 0.161027 |
+| single-fold model seconds | 0.203745 | 0.187923 |
+| total technical probe seconds | 0.363366 | 0.353600 |
 | PyRadiomics calls | 32 | 4 |
 | Cox core calls | 10 | 10 |
 | mask signature reuse rate | 0.8750 | 0.8750 |

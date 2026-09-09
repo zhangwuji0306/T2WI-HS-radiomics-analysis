@@ -4,16 +4,18 @@
   "status": "technical_probe_complete_with_preexisting_execution_status_wording_failure",
   "scope": "A-only outcome-blind technical representation plus bounded synthetic integration probe",
   "source_binding": {
-    "source_commit": "d9a35d380e85527eb8b687c89f4462d9b07c243f",
-    "source_commit_scope": "current checked-out code/config/evidence commit before the audit artifacts are written",
+    "source_commit": "882901d0d28b6ee0978c2eb25867295249290f05",
+    "source_commit_scope": "code/config/provenance commit used to generate evidence; audit artifacts are committed separately",
+    "audit_commit": "HEAD",
+    "audit_commit_scope": "final audit-only artifact commit; resolve the symbolic HEAD value after commit",
     "runner": "prognosis_analysis/scripts/w08_local_l6_probe.py",
-    "runner_sha256": "a2cbc6c84d844f845077e61b5f2c4244655b07d04650cb3901afd42783fe7ded",
+    "runner_sha256": "bca840b931ab81db8643161bd3c044db89e0950ec21ce55f5094b2ff9b428fd6",
     "source_file_sha256": {
-      "runner": "a2cbc6c84d844f845077e61b5f2c4244655b07d04650cb3901afd42783fe7ded",
-      "w08_nested_cv": "85644f4ec772ae22bccade96a3f0b5041fe021a72cefb04210bd725c7245329d",
+      "runner": "bca840b931ab81db8643161bd3c044db89e0950ec21ce55f5094b2ff9b428fd6",
+      "w08_nested_cv": "5f310a174a158b8f0101140d60b892e0f0d29124ff72fc912d315bda249399a3",
       "w08_formal_run_a": "44d6f4ec4b8253a6d86860c3678e43a5e10931413c50b0a8b05ebf795a333074",
       "w08_config": "3e218f98b1397ef0e2615ca0556e605f91c730b5a7a30e263ada31bf34c89ef4",
-      "R6_5R_coordinate_reconciliation": "2a72a972f79306b41932c30ad5bd388d8bef827a31232817295ab309f18f0f50"
+      "R6_5R_coordinate_reconciliation": "a5eb8f4e2f209611e91563919d0f1589022aeb6cfa8ebd60f201982397c91532"
     },
     "runner_scope": "synthetic bounded performance and optional real-A technical provider probe"
   },
@@ -3027,9 +3029,9 @@
       {
         "baseline": {
           "representation": {
-            "seconds": 0.22873680000000007,
-            "cpu_percent": 95.63393384886032,
-            "peak_rss_bytes": 141336576,
+            "seconds": 0.15904980000000002,
+            "cpu_percent": 108.06363792975532,
+            "peak_rss_bytes": 141361152,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -3039,9 +3041,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.24487400000000115,
-            "cpu_percent": 102.09332146328268,
-            "peak_rss_bytes": 141361152,
+            "seconds": 0.20374479999999906,
+            "cpu_percent": 99.69579591724596,
+            "peak_rss_bytes": 141377536,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -3058,9 +3060,9 @@
         },
         "integrated": {
           "representation": {
-            "seconds": 0.2032778000000004,
-            "cpu_percent": 99.9248319295071,
-            "peak_rss_bytes": 141361152,
+            "seconds": 0.16628079999999912,
+            "cpu_percent": 93.96755368028109,
+            "peak_rss_bytes": 141377536,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -3070,9 +3072,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.20885370000000059,
-            "cpu_percent": 104.73838864238431,
-            "peak_rss_bytes": 141361152,
+            "seconds": 0.18792339999999896,
+            "cpu_percent": 99.77469543441691,
+            "peak_rss_bytes": 141381632,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -3087,17 +3089,17 @@
             ]
           }
         },
-        "baseline_total_technical_probe_seconds": 0.4744022999999995,
-        "integrated_total_technical_probe_seconds": 0.4128013999999993,
+        "baseline_total_technical_probe_seconds": 0.3633658000000004,
+        "integrated_total_technical_probe_seconds": 0.3547639,
         "same_input_and_thread_caps": true,
         "output_equivalence": true
       },
       {
         "baseline": {
           "representation": {
-            "seconds": 0.18486140000000084,
-            "cpu_percent": 101.42733961768067,
-            "peak_rss_bytes": 141361152,
+            "seconds": 0.19561269999999986,
+            "cpu_percent": 103.84039482099074,
+            "peak_rss_bytes": 141381632,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -3107,9 +3109,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.20416649999999947,
-            "cpu_percent": 99.48987713459384,
-            "peak_rss_bytes": 141361152,
+            "seconds": 0.21106529999999957,
+            "cpu_percent": 96.23798890675086,
+            "peak_rss_bytes": 141410304,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -3126,9 +3128,9 @@
         },
         "integrated": {
           "representation": {
-            "seconds": 0.1759599999999999,
-            "cpu_percent": 97.67844964764726,
-            "peak_rss_bytes": 141361152,
+            "seconds": 0.16102730000000065,
+            "cpu_percent": 106.73655957716443,
+            "peak_rss_bytes": 141410304,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -3138,9 +3140,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.19104700000000108,
-            "cpu_percent": 98.1433887996142,
-            "peak_rss_bytes": 141365248,
+            "seconds": 0.19194470000000052,
+            "cpu_percent": 97.68438513801084,
+            "peak_rss_bytes": 141414400,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -3155,17 +3157,17 @@
             ]
           }
         },
-        "baseline_total_technical_probe_seconds": 0.3897016000000004,
-        "integrated_total_technical_probe_seconds": 0.3676825000000008,
+        "baseline_total_technical_probe_seconds": 0.4071815000000001,
+        "integrated_total_technical_probe_seconds": 0.3536001999999989,
         "same_input_and_thread_caps": true,
         "output_equivalence": true
       },
       {
         "baseline": {
           "representation": {
-            "seconds": 0.15897420000000118,
-            "cpu_percent": 98.28638860896852,
-            "peak_rss_bytes": 141365248,
+            "seconds": 0.15085009999999954,
+            "cpu_percent": 93.22168165616094,
+            "peak_rss_bytes": 141414400,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -3175,9 +3177,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.19473459999999854,
-            "cpu_percent": 104.30863339129334,
-            "peak_rss_bytes": 141365248,
+            "seconds": 0.18760709999999925,
+            "cpu_percent": 99.94291260831852,
+            "peak_rss_bytes": 141414400,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -3194,9 +3196,9 @@
         },
         "integrated": {
           "representation": {
-            "seconds": 0.15515450000000008,
-            "cpu_percent": 100.70607040079399,
-            "peak_rss_bytes": 141365248,
+            "seconds": 0.15559319999999843,
+            "cpu_percent": 100.4221264168367,
+            "peak_rss_bytes": 141414400,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -3206,9 +3208,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.17337880000000006,
-            "cpu_percent": 99.13265058934537,
-            "peak_rss_bytes": 141365248,
+            "seconds": 0.18095500000000087,
+            "cpu_percent": 103.61692133403282,
+            "peak_rss_bytes": 141414400,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -3223,8 +3225,8 @@
             ]
           }
         },
-        "baseline_total_technical_probe_seconds": 0.3542134000000008,
-        "integrated_total_technical_probe_seconds": 0.3291271000000009,
+        "baseline_total_technical_probe_seconds": 0.33898890000000037,
+        "integrated_total_technical_probe_seconds": 0.33706109999999967,
         "same_input_and_thread_caps": true,
         "output_equivalence": true
       }
@@ -3233,26 +3235,26 @@
       "representation": {
         "baseline": {
           "seconds": {
-            "median": 0.18486140000000084,
+            "median": 0.15904980000000002,
             "range": [
-              0.15897420000000118,
-              0.22873680000000007
+              0.15085009999999954,
+              0.19561269999999986
             ],
             "repeat_count": 3
           },
           "peak_rss_bytes": {
-            "median": 141361152.0,
+            "median": 141381632.0,
             "range": [
-              141336576.0,
-              141365248.0
+              141361152.0,
+              141414400.0
             ],
             "repeat_count": 3
           },
           "cpu_percent": {
-            "median": 98.28638860896852,
+            "median": 103.84039482099074,
             "range": [
-              95.63393384886032,
-              101.42733961768067
+              93.22168165616094,
+              108.06363792975532
             ],
             "repeat_count": 3
           },
@@ -3275,26 +3277,26 @@
         },
         "integrated": {
           "seconds": {
-            "median": 0.1759599999999999,
+            "median": 0.16102730000000065,
             "range": [
-              0.15515450000000008,
-              0.2032778000000004
+              0.15559319999999843,
+              0.16628079999999912
             ],
             "repeat_count": 3
           },
           "peak_rss_bytes": {
-            "median": 141361152.0,
+            "median": 141410304.0,
             "range": [
-              141361152.0,
-              141365248.0
+              141377536.0,
+              141414400.0
             ],
             "repeat_count": 3
           },
           "cpu_percent": {
-            "median": 99.9248319295071,
+            "median": 100.4221264168367,
             "range": [
-              97.67844964764726,
-              100.70607040079399
+              93.96755368028109,
+              106.73655957716443
             ],
             "repeat_count": 3
           },
@@ -3319,26 +3321,26 @@
       "single_fold_model": {
         "baseline": {
           "seconds": {
-            "median": 0.20416649999999947,
+            "median": 0.20374479999999906,
             "range": [
-              0.19473459999999854,
-              0.24487400000000115
+              0.18760709999999925,
+              0.21106529999999957
             ],
             "repeat_count": 3
           },
           "peak_rss_bytes": {
-            "median": 141361152.0,
+            "median": 141410304.0,
             "range": [
-              141361152.0,
-              141365248.0
+              141377536.0,
+              141414400.0
             ],
             "repeat_count": 3
           },
           "cpu_percent": {
-            "median": 102.09332146328268,
+            "median": 99.69579591724596,
             "range": [
-              99.48987713459384,
-              104.30863339129334
+              96.23798890675086,
+              99.94291260831852
             ],
             "repeat_count": 3
           },
@@ -3361,26 +3363,26 @@
         },
         "integrated": {
           "seconds": {
-            "median": 0.19104700000000108,
+            "median": 0.18792339999999896,
             "range": [
-              0.17337880000000006,
-              0.20885370000000059
+              0.18095500000000087,
+              0.19194470000000052
             ],
             "repeat_count": 3
           },
           "peak_rss_bytes": {
-            "median": 141365248.0,
+            "median": 141414400.0,
             "range": [
-              141361152.0,
-              141365248.0
+              141381632.0,
+              141414400.0
             ],
             "repeat_count": 3
           },
           "cpu_percent": {
-            "median": 99.13265058934537,
+            "median": 99.77469543441691,
             "range": [
-              98.1433887996142,
-              104.73838864238431
+              97.68438513801084,
+              103.61692133403282
             ],
             "repeat_count": 3
           },
@@ -3404,10 +3406,10 @@
       },
       "technical_probe_baseline": {
         "seconds": {
-          "median": 0.3897016000000004,
+          "median": 0.3633658000000004,
           "range": [
-            0.3542134000000008,
-            0.4744022999999995
+            0.33898890000000037,
+            0.4071815000000001
           ],
           "repeat_count": 3
         },
@@ -3438,10 +3440,10 @@
       },
       "technical_probe_integrated": {
         "seconds": {
-          "median": 0.3676825000000008,
+          "median": 0.3536001999999989,
           "range": [
-            0.3291271000000009,
-            0.4128013999999993
+            0.33706109999999967,
+            0.3547639
           ],
           "repeat_count": 3
         },
@@ -3501,11 +3503,11 @@
     "current_code_evidence_source": [
       {
         "path": "prognosis_analysis/scripts/w08_local_l6_probe.py",
-        "sha256": "a2cbc6c84d844f845077e61b5f2c4244655b07d04650cb3901afd42783fe7ded"
+        "sha256": "bca840b931ab81db8643161bd3c044db89e0950ec21ce55f5094b2ff9b428fd6"
       },
       {
         "path": "prognosis_analysis/scripts/w08_nested_cv.py",
-        "sha256": "85644f4ec772ae22bccade96a3f0b5041fe021a72cefb04210bd725c7245329d"
+        "sha256": "5f310a174a158b8f0101140d60b892e0f0d29124ff72fc912d315bda249399a3"
       },
       {
         "path": "prognosis_analysis/scripts/w08_formal_run_a.py",
@@ -3517,7 +3519,7 @@
       },
       {
         "path": "prognosis_analysis/R6_5R_coordinate_reconciliation.json",
-        "sha256": "2a72a972f79306b41932c30ad5bd388d8bef827a31232817295ab309f18f0f50"
+        "sha256": "a5eb8f4e2f209611e91563919d0f1589022aeb6cfa8ebd60f201982397c91532"
       }
     ],
     "historical_records_excluded_from_current_code_evidence": [
@@ -3537,12 +3539,12 @@
   "test_evidence": {
     "targeted_command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','-q','tests.test_w08_formal_serial_contract','tests.test_w08_l5_parallel_checkpoint','tests.test_r6_5_validation','tests.test_w08_technical_preflight_a','tests.test_w08_local_optimization_probe','tests.test_w08_local_l6_probe')",
     "complete_regression_command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','discover','-s','tests','-p','test*.py','-q')",
-    "targeted_tests_run": 46,
-    "targeted_passed": 46,
+    "targeted_tests_run": 47,
+    "targeted_passed": 47,
     "targeted_failed": 0,
     "targeted_errors": 0,
-    "complete_tests_run": 308,
-    "complete_passed": 307,
+    "complete_tests_run": 309,
+    "complete_passed": 308,
     "complete_failed": 1,
     "complete_errors": 0,
     "unique_preexisting_failure": "execution_status wording assertion",
@@ -3571,5 +3573,5 @@
     "absolute_local_paths_in_audit": false,
     "identifier_values_in_audit": false
   },
-  "generated_at_utc": "2026-09-09T04:40:30Z"
+  "generated_at_utc": "2026-09-09T05:39:09Z"
 }
