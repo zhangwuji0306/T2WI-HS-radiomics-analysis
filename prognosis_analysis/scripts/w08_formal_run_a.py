@@ -1786,6 +1786,7 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
         self._habitat_config_path = os.path.abspath(os.fspath(habitat_config))
         self._cache_root = cache_root
         os.makedirs(self._cache_root, exist_ok=True)
+        self._cache_read_only = False
         self._case_cache = {}
         self._fit_cache = {}
         self._state_cache = {}
@@ -2009,6 +2010,10 @@ class AOnlyFoldFeatureProvider(w08.FoldFeatureProvider):
             self._cache_counts["slic_misses"] += 1
             self._record_cache_event(cache_scope, "miss", "cache_absent", "computed")
         if labels is None:
+            if getattr(self, "_cache_read_only", False):
+                raise RuntimeError(
+                    "SLIC cache is read-only and has no valid entry for %s" %
+                    case_hash)
             labels = technical.slic_labels(image, self._habitat_config, True)
             if labels.shape != roi.shape:
                 raise RuntimeError("SLIC label shape mismatch for A case %s" % identifier)

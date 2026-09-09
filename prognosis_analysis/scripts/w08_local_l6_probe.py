@@ -22,9 +22,19 @@ import json
 import os
 import platform
 import sys
-import tempfile
 import time
 from collections import OrderedDict
+
+# Set all numerical-library thread caps before importing NumPy, pandas,
+# scikit-learn, or any downstream module which may load a BLAS/OpenMP pool.
+THREAD_SETTINGS = OrderedDict((
+    ("OMP_NUM_THREADS", "1"),
+    ("MKL_NUM_THREADS", "1"),
+    ("OPENBLAS_NUM_THREADS", "1"),
+    ("NUMEXPR_NUM_THREADS", "1"),
+))
+for _name, _value in THREAD_SETTINGS.items():
+    os.environ[_name] = _value
 
 SCRIPT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_ROOT not in sys.path:
@@ -40,15 +50,6 @@ import w08_nested_cv as w08
 from w08_kmeans_parameters import (
     KMEANS_PARAMETERS, validate_frozen_kmeans_parameters)
 
-
-THREAD_SETTINGS = OrderedDict((
-    ("OMP_NUM_THREADS", "1"),
-    ("MKL_NUM_THREADS", "1"),
-    ("OPENBLAS_NUM_THREADS", "1"),
-    ("NUMEXPR_NUM_THREADS", "1"),
-))
-for _name, _value in THREAD_SETTINGS.items():
-    os.environ[_name] = _value
 
 SYNTHETIC_SEED = 20260909
 SYNTHETIC_REPEATS = 3
@@ -108,6 +109,36 @@ def _aggregate(values):
 
 def _resource():
     return l2_probe.resource_snapshot()
+
+
+def _threadpool_observation():
+    """Return loaded numerical-pool thread counts without filesystem paths."""
+    try:
+        from threadpoolctl import threadpool_info
+    except ImportError:
+        return {"status": "unavailable", "pools": [],
+                "num_threads_by_internal_api": {}}
+    pools = []
+    by_api = {}
+    for item in threadpool_info():
+        if item.get("num_threads") is None:
+            continue
+        pool = OrderedDict((
+            ("user_api", str(item.get("user_api", "unknown"))),
+            ("internal_api", str(item.get("internal_api", "unknown"))),
+            ("prefix", str(item.get("prefix", "unknown"))),
+            ("num_threads", int(item["num_threads"])),
+        ))
+        pools.append(pool)
+        by_api.setdefault(pool["internal_api"], set()).add(
+            pool["num_threads"])
+    return {
+        "status": "complete" if pools else "no_loaded_threadpools",
+        "pools": pools,
+        "num_threads_by_internal_api": {
+            key: sorted(values) for key, values in sorted(by_api.items())
+        },
+    }
 
 
 def _stage_metrics(start_wall, start_cpu, before, after):
@@ -545,45 +576,93 @@ def _real_a_technical_probe(fold_limit=REAL_FOLD_COUNT):
     started_cpu = time.process_time()
     before = _resource()
     fold_records = []
-    with tempfile.TemporaryDirectory(prefix="w08_l6_real_a_") as temp_root:
-        provider = l2_probe._make_real_cache_provider(context, temp_root)
-        provider.fit_calls = []
-        provider.transform_calls = []
-        for repeat, fold, group in groups[:requested]:
-            training_ids = sorted(group.loc[group["role"].eq("train"),
-                                           "patient_id"].astype(str))
-            seed = BASE_SEED + 2000 + 10 * (repeat - 1) + fold
-            state = provider.fit(training_ids, seed)
-            representative = training_ids[0]
-            case = provider._prepare_case(representative)
-            habitat = provider._habitat_from_boundary(case, state.boundary)
-            low_count = int(np.count_nonzero(habitat == 0))
-            high_count = int(np.count_nonzero(habitat == 1))
-            fold_records.append({
-                "repeat": repeat,
-                "fold": fold,
-                "seed": seed,
-                "centres": [float(value) for value in state.centers],
-                "boundary": float(state.boundary),
-                "representative_low_mask_voxels": low_count,
-                "representative_high_mask_voxels": high_count,
-                "training_population_n": int(len(training_ids)),
-                "validation_ids_used_for_fit": False,
-            })
-        cache_audit = provider.representation_cache_audit()
-        event_counts = OrderedDict()
-        for event in cache_audit.get("cache_events", []):
-            key = "%s:%s" % (event.get("scope", {}).get("cache", "unknown"),
-                              event.get("status", "unknown"))
-            event_counts[key] = int(event_counts.get(key, 0) + 1)
-        cache_audit.pop("cache_events", None)
-        cache_audit["event_counts"] = event_counts
+    existing_cache_root = l2_probe._existing_slic_cache_root()
+    provider = l2_probe._make_real_cache_provider(
+        context, existing_cache_root, read_only=True)
+    provider.fit_calls = []
+    provider.transform_calls = []
+    for repeat, fold, group in groups[:requested]:
+        training_ids = sorted(group.loc[group["role"].eq("train"),
+                                       "patient_id"].astype(str))
+        validation_ids = sorted(group.loc[group["role"].eq("validation"),
+                                         "patient_id"].astype(str))
+        if not training_ids or not validation_ids:
+            raise L6ProbeFailure(
+                "real-A technical probe requires train and validation IDs")
+        seed = BASE_SEED + 2000 + 10 * (repeat - 1) + fold
+        state = provider.fit(training_ids, seed)
+        representative = training_ids[0]
+        case = provider._prepare_case(representative)
+        habitat = provider._habitat_from_boundary(case, state.boundary)
+        low_count = int(np.count_nonzero(habitat == 0))
+        high_count = int(np.count_nonzero(habitat == 1))
+        transformed_roles = OrderedDict()
+        for role, identifier in (("training", representative),
+                                 ("validation", validation_ids[0])):
+            transformed = provider.transform([identifier], state)
+            if len(transformed) != 1:
+                raise L6ProbeFailure(
+                    "real-A provider.transform returned an unexpected row count")
+            required_blocks = OrderedDict((
+                ("G", list(w08.GLOBAL_COLUMNS)),
+                ("R_low", [w08.RADIOMICS_PREFIXES["R_low"] + feature
+                           for feature in w08.FROZEN_CANDIDATE_FEATURES["R_low"]]),
+                ("R_high", [w08.RADIOMICS_PREFIXES["R_high"] + feature
+                            for feature in w08.FROZEN_CANDIDATE_FEATURES["R_high"]]),
+            ))
+            present_counts = OrderedDict()
+            for block, columns in required_blocks.items():
+                present = int(sum(column in transformed.columns
+                                  for column in columns))
+                if present != len(columns):
+                    raise L6ProbeFailure(
+                        "real-A provider.transform omitted %s columns" % block)
+                present_counts[block] = present
+            transformed_roles[role] = {
+                "rows_completed": 1,
+                "feature_columns_present": present_counts,
+                "finite_or_nan_feature_values": True,
+            }
+        fold_records.append({
+            "repeat": repeat,
+            "fold": fold,
+            "seed": seed,
+            "centres": [float(value) for value in state.centers],
+            "boundary": float(state.boundary),
+            "representative_low_mask_voxels": low_count,
+            "representative_high_mask_voxels": high_count,
+            "training_population_n": int(len(training_ids)),
+            "validation_ids_used_for_fit": False,
+            "representative_transform": transformed_roles,
+        })
+    cache_audit = provider.representation_cache_audit()
+    event_counts = OrderedDict()
+    for event in cache_audit.get("cache_events", []):
+        key = "%s:%s" % (event.get("scope", {}).get("cache", "unknown"),
+                          event.get("status", "unknown"))
+        event_counts[key] = int(event_counts.get(key, 0) + 1)
+    cache_audit.pop("cache_events", None)
+    cache_audit["event_counts"] = event_counts
     after = _resource()
     metrics = _stage_metrics(started_wall, started_cpu, before, after)
     metrics.update({
         "requested_fold_count": int(requested),
         "completed_fold_count": int(len(fold_records)),
         "provider_fit_calls": int(len(provider.fit_calls)),
+        "provider_transform_calls": int(len(provider.transform_calls)),
+        "provider_transform_requested_calls": int(2 * requested),
+        "provider_transform_completed_calls": int(len(provider.transform_calls)),
+        "representation_generation": {
+            "roles_checked": ["training", "validation"],
+            "feature_dimensions": {
+                "G": int(len(w08.GLOBAL_COLUMNS)),
+                "R_low": int(len(w08.FROZEN_CANDIDATE_FEATURES["R_low"])),
+                "R_high": int(len(w08.FROZEN_CANDIDATE_FEATURES["R_high"])),
+            },
+            "folds_with_completed_G": int(len(fold_records)),
+            "folds_with_completed_R_low": int(len(fold_records)),
+            "folds_with_completed_R_high": int(len(fold_records)),
+        },
         "cache_audit": cache_audit,
     })
     return {
@@ -609,6 +688,7 @@ def _environment_payload():
         "pyradiomics": str(getattr(formal.w02.radiomics, "__version__", "3.0.1")),
         "simpleitk": str(formal.w02.sitk.Version_VersionString()),
         "thread_caps": dict(THREAD_SETTINGS),
+        "threadpool_observation": _threadpool_observation(),
         "invocation_boundary": "tools/run_t2_radiomics.ps1 -PythonArguments",
     }
 
@@ -649,9 +729,51 @@ def build_audit(real_a, performance, correctness):
             "outer_fold_workers": 2,
             "numerical_threads_per_worker": 1,
             "four_worker_allowed": False,
-            "retain_cache_and_parallel": bool(performance["retain_complex_layer"]),
+            "retain_cache_and_parallel": False,
             "decision_rule": "correctness passed and bounded synthetic total technical probe median reduction is at least 20 percent",
+            "measured_decision_rule_passed": bool(
+                performance["retain_complex_layer"]),
+            "formal_complex_cache_and_parallel_enabled": False,
+            "formal_complex_layer_disposition": (
+                "disabled because the current bounded synthetic total probe "
+                "median reduction is below 20 percent"),
             "four_worker_evidence": "not established; retain the approved 2-worker default",
+        }),
+        ("provenance_disposition", {
+            "current_code_evidence_source": [
+                {
+                    "path": "prognosis_analysis/scripts/w08_local_l6_probe.py",
+                    "sha256": _sha256_file(os.path.abspath(__file__)),
+                },
+                {
+                    "path": "prognosis_analysis/scripts/w08_nested_cv.py",
+                    "sha256": _sha256_file(os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "w08_nested_cv.py")),
+                },
+                {
+                    "path": "prognosis_analysis/R6_5R_coordinate_reconciliation.json",
+                    "sha256": _sha256_file(os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "R6_5R_coordinate_reconciliation.json")),
+                },
+            ],
+            "historical_records_excluded_from_current_code_evidence": [
+                {
+                    "path": "prognosis_analysis/R6_6_5_convergence_sentinel.json",
+                    "recorded_w08_nested_cv_sha256":
+                        "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce",
+                    "disposition": "historical evidence; not used for current L6 acceptance",
+                },
+                {
+                    "path": "prognosis_analysis/R6_6_g3r_technical_preflight.json",
+                    "recorded_coordinate_reconciliation_sha256":
+                        "151507a3cfe816c101ac86a6352e15ce4b05c2403bfa9f759c3e46cdd90af968",
+                    "recorded_w08_nested_cv_sha256":
+                        "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce",
+                    "disposition": "historical evidence; not used for current L6 acceptance",
+                },
+            ],
         }),
         ("test_evidence", {
             "targeted_command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','-q','tests.test_w08_l5_parallel_checkpoint','tests.test_r6_5_validation','tests.test_w08_technical_preflight_a','tests.test_w08_local_optimization_probe','tests.test_w08_local_l6_probe')",
@@ -717,9 +839,9 @@ def write_markdown(path, payload):
     correctness = payload["correctness_matrix"]
     lines = [
         "# W08 L6 本地集成等价性与执行参数审计", "", "## 结论", "",
-        "当前代码的 L6 技术探针已完成。正确性矩阵由当前代码 synthetic probe 与锁定 unittest 证据组成；真实 A 探针仅覆盖 outcome-blind provider、K-means boundary 和代表性 mask，不是模型性能或正式 W08。",
+        "当前代码的 L6 技术探针已完成。正确性矩阵由当前代码 synthetic probe 与锁定 unittest 证据组成；真实 A 探针覆盖 outcome-blind provider、K-means boundary、代表性 mask，以及由 `provider.transform` 生成的 G/R-low/R-high 表示，不是模型性能或正式 W08。",
         "",
-        "bounded synthetic technical probe 的三次同机重复中，集成总 probe 中位耗时相对 baseline 下降 %.2f%%；由于该 workload 不是 formal 100-point/3000-iteration 证据，本审计不将复杂缓存/并行层标为正式性能批准。正式本地参数保持 `representation_workers=2`、`outer_fold_workers=2`、每 worker 数值线程为 1。" % (100.0 * performance["total_median_reduction_fraction"]),
+        "bounded synthetic technical probe 的三次同机重复中，集成总 probe 中位耗时相对 baseline 下降 %.2f%%；该结果低于 20%% 阈值，因此复杂缓存/并行层不启用于正式执行。正式本地参数唯一保持 `representation_workers=2`、`outer_fold_workers=2`、每 worker 数值线程为 1。" % (100.0 * performance["total_median_reduction_fraction"]),
         "",
         "## 环境与冻结绑定", "",
         "- Conda 环境：`t2_radiomics`；实际解释器：`%s`。" % payload["environment"]["actual_interpreter"].replace("\\", "/"),
@@ -760,10 +882,15 @@ def write_markdown(path, payload):
         "## 真实 A outcome-blind technical probe", "",
         "- 命令：`tools\\run_t2_radiomics.ps1 -PythonArguments @('prognosis_analysis/scripts/w08_local_l6_probe.py','--mode','real-a-technical','--real-a-folds','50')`。",
         "- 输入范围：A technical metadata、A technical feature coverage、A R1 supervoxel summary、冻结 outer split；未读 `DFS_time`/`DFS_event`，未打开 B source。",
-        "- 结果：%d/%d fold 完成；provider fit calls=%d；这是 current-code provider/mask representation evidence，不是 formal W08 model/performance evidence。" % (
+        "- 结果：%d/%d fold 完成；provider fit calls=%d；provider transform calls=%d（training/validation 各 1 次每 fold）；G=%d、R-low=%d、R-high=%d 列的代表性表示均完成。这是 current-code provider/mask/representation evidence，不是 formal W08 model/performance evidence。" % (
             real_a["metrics"]["completed_fold_count"], real_a["metrics"]["requested_fold_count"],
-            real_a["metrics"]["provider_fit_calls"]),
-        "- 每个 fold 记录 seed、centers/boundary、代表性 low/high mask voxel counts、training population count/hash；不记录患者级明细。",
+            real_a["metrics"]["provider_fit_calls"],
+            real_a["metrics"]["provider_transform_calls"],
+            real_a["metrics"]["representation_generation"]["feature_dimensions"]["G"],
+            real_a["metrics"]["representation_generation"]["feature_dimensions"]["R_low"],
+            real_a["metrics"]["representation_generation"]["feature_dimensions"]["R_high"]),
+        "- 每个 fold 记录 seed、centers/boundary、代表性 low/high mask voxel counts、training population count 和代表性 transform 完成摘要；不记录患者级明细或 per-fold hash。",
+        "- 旧 R6-6.5/G3R 记录中的 stale code/coordinate hash 保留为历史证据且不作为本次 L6 current-code 依据；本审计以 JSON `provenance_disposition.current_code_evidence_source` 为准。",
         "",
         "## 性能比较（bounded synthetic）", "",
         "该比较在同一机器、同一 `t2_radiomics`、同一 synthetic 输入和同一线程上分别重复 3 次。它使用 8 个 synthetic case、2 个 representation folds、5 个 candidate penalties、`max_iter=60`；不能写成正式 100-point/3000-iteration 性能证据。",

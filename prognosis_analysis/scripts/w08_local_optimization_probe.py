@@ -272,7 +272,7 @@ def _existing_slic_cache_root():
     raise ProbeFailure("no existing SLIC cache is available for L2")
 
 
-def _make_real_cache_provider(context, cache_root):
+def _make_real_cache_provider(context, cache_root, read_only=False):
     """Reuse the production provider's case preparation/cache validation."""
     provider = formal.AOnlyFoldFeatureProvider.__new__(
         formal.AOnlyFoldFeatureProvider)
@@ -283,6 +283,10 @@ def _make_real_cache_provider(context, cache_root):
     provider._habitat_config_path = os.path.abspath(formal.HABITAT_CONFIG)
     provider._cache_root = cache_root
     os.makedirs(cache_root, exist_ok=True)
+    provider._cache_read_only = bool(read_only)
+    provider._by_id = pd.DataFrame({
+        "patient_id": sorted(context["technical_ids"]),
+    }).set_index("patient_id", drop=False)
     provider._case_cache = {}
     provider._fit_cache = {}
     provider._state_cache = {}
@@ -296,6 +300,7 @@ def _make_real_cache_provider(context, cache_root):
         "feature_hits": 0, "feature_misses": 0,
         "feature_invalidations": 0,
     }
+    provider._extractors = formal._build_exact_feature_extractors()
     provider._cache_contract = provider._build_cache_contract()
     return provider
 
