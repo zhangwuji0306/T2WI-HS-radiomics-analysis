@@ -5,14 +5,14 @@
   "status": "PASS",
   "scope": "A-only technical preflight aggregate and release evidence",
   "successor": {
-    "current_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee",
+    "current_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60",
     "successor_of": "prognosis_analysis/output/p5_technical_preflight_A_G3R",
-    "predecessor_output": "prognosis_analysis/output/p5_technical_preflight_A_G3R_historical_77cddd_ed58c08",
+    "predecessor_output": "prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee",
     "predecessor_artifact_sha256": {
-      "P5_fold_feasibility.csv": "e4cc974b3666a9a5d26efa99c8536d79fea857e38a29a0bee3bcf822de4b7ad3",
-      "P5_release_gate.json": "f7219be3294026fa0ce0b72a3a7c01a1d12d647108b02db67ed1c0ec6e58fcdd",
-      "P5_sha256_manifest.json": "8b9e82cdea378c1a3271d166926d461c6593c45b4c955e8b055f545e5525ede3",
-      "P5_technical_preflight_summary.json": "8f8d09d8ec4643ca8e4b1af469396e3de1afd1bf6b486de2c0474c065c2d5ec4"
+      "P5_fold_feasibility.csv": "6dcb57a85982653c72bf0b44d97cf03085d841a2f10f50a252ddf3ca6e52855f",
+      "P5_release_gate.json": "1d062ed06e5713d2b4fa0698b1c187e96b1f98a043edd78a496bd51e230b4676",
+      "P5_sha256_manifest.json": "b4a0a411aac2398f359ac28d1446b7f8505a138579773d11bd869f8e23113053",
+      "P5_technical_preflight_summary.json": "cdcaff83cb61a0dcf566fdafb14685cb7f8fcbebd9f66f847c84633ef9f6db16"
     },
     "legacy_output_preserved": true,
     "legacy_artifact_sha256": {
@@ -22,17 +22,17 @@
     }
   },
   "certificate_generation": {
-    "technical_execution_code_commit": "1964cee2df00be745ff2a297d56e3569c7f47a90",
-    "generated_at_utc": "2026-09-09T07:02:41Z",
+    "technical_execution_code_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
+    "generated_at_utc": "2026-09-09T13:37:09Z",
     "generator": "prognosis_analysis/scripts/w08_technical_preflight_a.py",
-    "certificate": "prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee/P5_release_gate.json",
-    "aggregate_summary": "prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee/P5_technical_preflight_summary.json",
-    "sha256_manifest": "prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee/P5_sha256_manifest.json",
-    "observed_elapsed_seconds": 1479.185
+    "certificate": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60/P5_release_gate.json",
+    "aggregate_summary": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60/P5_technical_preflight_summary.json",
+    "sha256_manifest": "prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60/P5_sha256_manifest.json",
+    "observed_elapsed_seconds": 701.0
   },
   "current_code_support": {
     "l6_evidence_source_commit": "882901d0d28b6ee0978c2eb25867295249290f05",
-    "l7_audit_base_commit": "1964cee2df00be745ff2a297d56e3569c7f47a90",
+    "l7_audit_base_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
     "l6_evidence": "prognosis_analysis/W08_local_L6_integration.json",
     "l6_audit": "prognosis_analysis/W08_local_L6_integration_audit.md",
     "kmeans": {
@@ -65,9 +65,9 @@
   "release_binding": {
     "schema": "P5_G3R_strict_release_binding",
     "version": "2.0",
-    "technical_execution_code_commit": "1964cee2df00be745ff2a297d56e3569c7f47a90",
-    "evidence_binding_commit": "245f166a9d7d354b60d06a9b99074f03bd5eb385",
-    "successor_mode": "evidence_only_finalization",
+    "technical_execution_code_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
+    "evidence_binding_commit": "0000000000000000000000000000000000000000",
+    "successor_mode": "evidence_only_append_only",
     "allowed_paths": [
       "prognosis_analysis/R5_P5_G3R_final_aggregate_evidence.json",
       "prognosis_analysis/R5_P5_G3R_final_audit.md"
@@ -138,7 +138,7 @@
     "aggregate_only": true,
     "compatibility_provenance": {
       "compatibility_code_path": "prognosis_analysis/scripts/w08_formal_run_a.py",
-      "compatibility_code_sha256": "44d6f4ec4b8253a6d86860c3678e43a5e10931413c50b0a8b05ebf795a333074",
+      "compatibility_code_sha256": "9100e76c625973fca293def16669b708bb4f40fcb7359912a9e1ac4d89e3e558",
       "compatibility_config_path": "prognosis_analysis/configs/w02_habitat_radiomics.json",
       "compatibility_config_sha256": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f",
       "compatibility_reason": "PyRadiomics 3.0.1 strict <= semantics and precheck count>=10",
@@ -187,12 +187,12 @@
     }
   },
   "current_artifact_sha256": {
-    "P5_fold_feasibility.csv": "6dcb57a85982653c72bf0b44d97cf03085d841a2f10f50a252ddf3ca6e52855f",
-    "P5_release_gate.json": "1d062ed06e5713d2b4fa0698b1c187e96b1f98a043edd78a496bd51e230b4676",
-    "P5_sha256_manifest.json": "b4a0a411aac2398f359ac28d1446b7f8505a138579773d11bd869f8e23113053",
-    "P5_technical_preflight_summary.json": "cdcaff83cb61a0dcf566fdafb14685cb7f8fcbebd9f66f847c84633ef9f6db16"
+    "P5_fold_feasibility.csv": "c2ae2bfa82e9a3f468741a2e4ae80ec76b0aa56ea4c6f786d301376d3aadbf89",
+    "P5_release_gate.json": "99294657c5329562255c578f15b3fb2148a53686a726a0552c435094dd03f69c",
+    "P5_sha256_manifest.json": "e6384ca3c5f8de59379799b35b1ae185c651abbebe50efd5a6ab07742cbac5fb",
+    "P5_technical_preflight_summary.json": "5f04749aea61fd19927f732b5364f87c2e256a9a6297a4668581770e0fa0b746"
   },
-  "technical_execution_code_commit": "1964cee2df00be745ff2a297d56e3569c7f47a90",
+  "technical_execution_code_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
   "protected_code_config_manifest": {
     "feature_extract/scripts/build_manifest.py": "42965d0d4d5ed96bcbbb39a75ad3d34e2684debb4f935956adf66e84d91d5d92",
     "feature_extract/scripts/compute_sigma_a.py": "a86977bd4328e597d73313d2bd8b67f07fa64bfb2cd28be4f85fc7077b84e668",
@@ -227,14 +227,14 @@
     "prognosis_analysis/scripts/w03_habitat_radiomics.py": "1c582a89a8694d7cc022c7634758f65ca8e06cabb4ee6c9cf3839caf783e7a92",
     "prognosis_analysis/scripts/w06_endpoint_qc.py": "0f6c20db236971a162f6c024778c5910cd78afe3b330bd07ab9e78fae125ed01",
     "prognosis_analysis/scripts/w07_outer_splits.py": "a74a6358d54f545b3b3226002462ea709c128b180361caa9e044cb9f8108f7d9",
-    "prognosis_analysis/scripts/w08_formal_run_a.py": "44d6f4ec4b8253a6d86860c3678e43a5e10931413c50b0a8b05ebf795a333074",
+    "prognosis_analysis/scripts/w08_formal_run_a.py": "9100e76c625973fca293def16669b708bb4f40fcb7359912a9e1ac4d89e3e558",
     "prognosis_analysis/scripts/w08_kmeans_parameters.py": "aa68e4f367ce0b8238716bf8d3c169bea9faab0f9ecb132a2daab36481c9d000",
     "prognosis_analysis/scripts/w08_local_l6_probe.py": "bca840b931ab81db8643161bd3c044db89e0950ec21ce55f5094b2ff9b428fd6",
     "prognosis_analysis/scripts/w08_local_optimization_probe.py": "9e29f62470d6465edb07d55492d95f33084d3661079b2283d6b47a52e694b3b4",
     "prognosis_analysis/scripts/w08_nested_cv.py": "5f310a174a158b8f0101140d60b892e0f0d29124ff72fc912d315bda249399a3",
     "prognosis_analysis/scripts/w08_technical_preflight_a.py": "2efeafc3990cb0ce6b4b8aca37c2dd7c8e9873fcb5d9dbdb82ae8c8efbd3cb18"
   },
-  "protected_code_config_tree_sha256": "0d63f6c3aa594537d8d9b6ef38e1abd8b6cf303f4558027757592b965f6884dc",
+  "protected_code_config_tree_sha256": "a9e84ea56b0d724267d17b19d56fb0c7683f0d647f795a34bc13c9c151098731",
   "binding_hashes": {
     "P4R_reconciliation": "374ddc9f6ecd01c04ff957576f032fec18f0ebbb53f6651a725ad0b6aff7786d",
     "W03_candidate_freeze": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
@@ -260,19 +260,21 @@
     },
     "complete_regression": {
       "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','discover','-s','tests','-p','test*.py','-q')",
-      "tests_run": 309,
-      "passed": 308,
-      "failed": 1,
+      "tests_run": 312,
+      "passed": 310,
+      "failed": 2,
       "errors": 0,
-      "preexisting_failure": "test_provenance_reconciliation.ProvenanceReconciliationTests.test_execution_status_is_the_failed_w08_hold_state: execution_status wording assertion"
+      "preexisting_failure": "test_provenance_reconciliation.ProvenanceReconciliationTests.test_execution_status_is_the_failed_w08_hold_state: execution_status wording assertion",
+      "additional_preexisting_failure": "test_r6_5_validation.R65CoordinateBindingTests.test_canonical_coordinate_and_registered_bindings_match_files: historical R6_5R source binding still records the prior w08_formal_run_a.py SHA-256"
     },
     "targeted": {
       "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','-q','tests.test_w05_access','tests.test_w07_outer_splits','tests.test_w08_formal_serial_contract','tests.test_w08_l5_parallel_checkpoint','tests.test_r6_4a_convergence','tests.test_r6_5_validation','tests.test_w08_technical_preflight_a','tests.test_w08_formal_release_gate','tests.test_w08_transactional_outputs','tests.test_w08_local_optimization_probe','tests.test_w08_local_l6_probe')",
-      "tests_run": 142,
-      "passed": 142,
-      "failed": 0,
+      "tests_run": 145,
+      "passed": 144,
+      "failed": 1,
       "errors": 0,
-      "exit_code": 0
+      "exit_code": 1,
+      "preexisting_failure": "test_r6_5_validation.R65CoordinateBindingTests.test_canonical_coordinate_and_registered_bindings_match_files: historical R6_5R source binding still records the prior w08_formal_run_a.py SHA-256"
     },
     "compileall": {
       "command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','compileall','-q','feature_extract','habitat_analysis','prognosis_analysis','tests','tools')",

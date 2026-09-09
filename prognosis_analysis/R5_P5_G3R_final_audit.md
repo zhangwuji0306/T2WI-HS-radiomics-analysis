@@ -4,15 +4,15 @@
 
 - Stage: `G3R`
 - Status: `PASS`
-- Technical execution code commit: `1964cee2df00be745ff2a297d56e3569c7f47a90`
-- Evidence binding commit: `245f166a9d7d354b60d06a9b99074f03bd5eb385`
+- Technical execution code commit: `eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe`
+- Evidence binding commit: pending evidence-only binding commit
 - L6 evidence-generation source commit: `882901d0d28b6ee0978c2eb25867295249290f05`
-- L7 audit base commit: `1964cee2df00be745ff2a297d56e3569c7f47a90`
+- L7 audit base commit: `eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe`
 - P5 coverage: `10` repeats × `5` frozen W07 outer folds = `50/50` fold units
 - Aggregate coverage: `17` fixed technical runs × `50` folds = `850` rows
-- Observed P5 execution duration: `1479.185` seconds
-- Current output: `prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee`
-- Predecessor output: `prognosis_analysis/output/p5_technical_preflight_A_G3R_historical_77cddd_ed58c08`
+- Observed P5 execution duration: `701.0` seconds from certificate timestamp to aggregate artifact write
+- Current output: `prognosis_analysis/output/p5_technical_preflight_A_L7_eae4b60`
+- Predecessor output: `prognosis_analysis/output/p5_technical_preflight_A_L7_1964cee`
 
 The production entry used the existing protected A technical-ID authorization path, then the existing authorized A outcome reader only to materialize the frozen modeling population and event/censor feasibility. No outcome values are present in the submitted evidence. Each aggregate row is one fixed `run_id` × W07 outer repeat × W07 outer fold technical-feasibility unit.
 
@@ -26,7 +26,7 @@ The production entry used the existing protected A technical-ID authorization pa
 - W07A amendment JSON SHA-256: `0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14`
 - P4 integrity audit SHA-256: `6baae4a1bf97a6e85bce3d71a6235fba7b6945a3aec71fa51c184502c6cbbb83`
 - P4R reconciliation SHA-256: `374ddc9f6ecd01c04ff957576f032fec18f0ebbb53f6651a725ad0b6aff7786d`
-- Protected code/config tree SHA-256: `0d63f6c3aa594537d8d9b6ef38e1abd8b6cf303f4558027757592b965f6884dc`
+- Protected code/config tree SHA-256: `a9e84ea56b0d724267d17b19d56fb0c7683f0d647f795a34bc13c9c151098731`
 - K-means: `K=2`, `k-means++`, `n_init=100`, `max_iter=300`, `tol=1e-4`
 - Fold seeds: frozen W07 seed root `12345`, 50 outer-fold entries
 - `minimumROISize=10`; support states are `0=structural_absence`, `1–9=technical_small_roi`, `>=10=extractable`
@@ -59,12 +59,12 @@ The current L6 evidence at `prognosis_analysis/W08_local_L6_integration.json` re
 - PyRadiomics: `3.0.1`
 - SimpleITK: `2.2.1`
 - Environment probe: locked specification matched
-- Complete discovery: `309` tests; `308` passed, `1` pre-existing wording failure, `0` errors
-- Targeted W05/W08/R6 suite: `142/142` passed, exit code `0`
+- Complete discovery: `312` tests; `310` passed, `2` pre-existing failures, `0` errors
+- Targeted W05/W08/R6 suite: `145` tests; `144` passed, `1` pre-existing R6-5R binding failure, exit code `1`
 - Locked-environment `compileall`: passed, exit code `0`
 - `git diff --check`: passed
 
-The complete-suite failure is the existing `test_provenance_reconciliation` assertion for historical `failure_reason_summary` wording. It does not involve the P5 entry or current P5 aggregate result.
+The complete-suite failures are the existing `test_provenance_reconciliation` assertion for historical `failure_reason_summary` wording and the `test_r6_5_validation` assertion against a historical R6-5R source binding for `w08_formal_run_a.py`. Neither failure involves the P5 entry or current P5 aggregate result; the historical R6-5R evidence remains unchanged.
 
 ## Access and release boundary
 
@@ -86,9 +86,9 @@ The historical W08 failed-attempt archives remain preserved and are not treated 
 
 ## Aggregate evidence hashes
 
-- `P5_fold_feasibility.csv`: `6dcb57a85982653c72bf0b44d97cf03085d841a2f10f50a252ddf3ca6e52855f`
-- `P5_release_gate.json`: `1d062ed06e5713d2b4fa0698b1c187e96b1f98a043edd78a496bd51e230b4676`
-- `P5_sha256_manifest.json`: `b4a0a411aac2398f359ac28d1446b7f8505a138579773d11bd869f8e23113053`
-- `P5_technical_preflight_summary.json`: `cdcaff83cb61a0dcf566fdafb14685cb7f8fcbebd9f66f847c84633ef9f6db16`
+- `P5_fold_feasibility.csv`: `c2ae2bfa82e9a3f468741a2e4ae80ec76b0aa56ea4c6f786d301376d3aadbf89`
+- `P5_release_gate.json`: `99294657c5329562255c578f15b3fb2148a53686a726a0552c435094dd03f69c`
+- `P5_sha256_manifest.json`: `e6384ca3c5f8de59379799b35b1ae185c651abbebe50efd5a6ab07742cbac5fb`
+- `P5_technical_preflight_summary.json`: `5f04749aea61fd19927f732b5364f87c2e256a9a6297a4668581770e0fa0b746`
 
 The final aggregate evidence and this audit are the only allowlisted R5 evidence paths. The aggregate release binding records the current technical execution commit and the evidence-only append-only successor relation. Independent downstream review remains read-only and does not authorize formal W08, model fitting, prediction, performance evaluation, or model freezing.
