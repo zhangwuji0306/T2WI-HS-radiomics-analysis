@@ -685,6 +685,17 @@ def _git_commit_parent(project_root, commit):
     return fields[1].lower()
 
 
+def _git_first_parent_edges(project_root, ancestor, descendant):
+    """Return first-parent edges from descendant back to ancestor."""
+    edges = []
+    cursor = descendant
+    while cursor != ancestor:
+        parent = _git_commit_parent(project_root, cursor)
+        edges.append((parent, cursor))
+        cursor = parent
+    return edges
+
+
 def _git_worktree_status(project_root):
     try:
         output = subprocess.check_output(
@@ -857,16 +868,21 @@ def _validate_r5_successor_binding(project_root, execution_commit,
     if current_head == evidence_commit:
         final_mode = "evidence_only_append_only"
     else:
-        if _git_commit_parent(project_root, current_head) != evidence_commit:
+        try:
+            finalization_edges = _git_first_parent_edges(
+                project_root, evidence_commit, current_head)
+        except RuntimeError as exc:
             raise RuntimeError(
-                "current HEAD is neither the evidence successor nor its final evidence commit")
-        final_changes = sorted(
-            _git_diff_name_status(project_root, evidence_commit, current_head))
+                "current HEAD is not a first-parent descendant of the evidence binding") from exc
         expected_final = [("M", path) for path in R5_ALLOWED_SUCCESSOR_PATHS]
-        if final_changes != sorted(expected_final):
-            raise RuntimeError(
-                "R5 final evidence commit contains non-evidence changes: %s" %
-                ",".join("%s:%s" % change for change in final_changes))
+        for _parent, finalization_commit in finalization_edges:
+            final_changes = sorted(
+                _git_diff_name_status(project_root, _parent,
+                                      finalization_commit))
+            if final_changes != sorted(expected_final):
+                raise RuntimeError(
+                    "R5 final evidence commit contains non-evidence changes: %s" %
+                    ",".join("%s:%s" % change for change in final_changes))
         final_mode = "evidence_only_finalization"
     if binding.get("successor_mode") != final_mode:
         raise RuntimeError("R5 successor mode does not match the exact current HEAD")
@@ -1393,9 +1409,20 @@ def _validate_reconciled_attempts(project_root, output_root, status,
 
     explicit_attempt_ids = [attempt_id for attempt_id in attempt_dirs
                             if validated_attempts[attempt_id][0] == "explicit_failed"]
-    for attempt_id in attempt_dirs:
-        archive_kind, failure = validated_attempts[attempt_id]
-        if archive_kind == "explicit_failed" or not explicit_attempt_ids:
+    if explicit_attempt_ids:
+        latest_attempt_id = explicit_attempt_ids[-1]
+        _archive_kind, latest_failure = validated_attempts[latest_attempt_id]
+        if last_attempt.get("attempt_id") != latest_attempt_id or \
+                last_attempt.get("code_commit_at_attempt") != \
+                latest_failure.get("code_commit_at_attempt") or \
+                last_attempt.get("failure_stage") != \
+                latest_failure.get("failure_stage"):
+            raise RuntimeError(
+                "failed attempt is not reconciled in execution_status: %s" %
+                latest_attempt_id)
+    else:
+        for attempt_id in attempt_dirs:
+            _archive_kind, failure = validated_attempts[attempt_id]
             failure_commit = failure.get("code_commit_at_attempt")
             if last_attempt.get("attempt_id") != attempt_id or \
                     last_attempt.get("code_commit_at_attempt") != failure_commit or \

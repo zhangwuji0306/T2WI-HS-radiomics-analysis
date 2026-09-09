@@ -66,16 +66,18 @@ def _status(b_data_read=False, failed=False, commit=CURRENT_COMMIT,
 
 def _write_archived_attempt(output_root, attempt_id="attempt_002_failed",
                             run_status="failed", failure_status="failed",
-                            b_overrides=None, final_outputs=False):
+                            b_overrides=None, final_outputs=False,
+                            code_commit=CURRENT_COMMIT,
+                            failure_stage="nested_cv_modeling_radiomics_extraction"):
     attempt_root = os.path.join(output_root, "attempts", attempt_id)
     os.makedirs(attempt_root)
     failure = {
         "attempt_id": attempt_id,
         "stage": "W08",
         "status": failure_status,
-        "failure_stage": "nested_cv_modeling_radiomics_extraction",
+        "failure_stage": failure_stage,
         "exception_summary": "synthetic failure",
-        "code_commit_at_attempt": CURRENT_COMMIT,
+        "code_commit_at_attempt": code_commit,
         "B_data_read": False,
         "B_reader_invoked": False,
         "B_source_opened": False,
@@ -91,8 +93,8 @@ def _write_archived_attempt(output_root, attempt_id="attempt_002_failed",
         "stage": "W08",
         "status": run_status,
         "formal_run": True,
-        "failure_stage": "nested_cv_modeling_radiomics_extraction",
-        "code_commit": CURRENT_COMMIT,
+        "failure_stage": failure_stage,
+        "code_commit": code_commit,
         "B_data_read": False,
         "B_reader_invoked": False,
         "B_source_opened": False,
@@ -339,7 +341,8 @@ class W08ReleaseGateTests(unittest.TestCase):
                                      aggregate_fields=None,
                                      resolves=True, ancestor=True,
                                      worktree_status="", frozen_bindings=None,
-                                     execution_evidence_paths=None):
+                                     execution_evidence_paths=None,
+                                     finalization_commits=()):
         aggregate, snapshot = _write_r5_successor_fixture(project_root)
         execution_evidence_paths = set(execution_evidence_paths or ())
         if aggregate_overrides:
@@ -388,7 +391,13 @@ class W08ReleaseGateTests(unittest.TestCase):
             if commit == BINDING_COMMIT:
                 return EXECUTION_COMMIT if ancestor else OLD_COMMIT
             if commit == CURRENT_COMMIT:
-                return BINDING_COMMIT
+                return (finalization_commits[0] if finalization_commits
+                        else BINDING_COMMIT)
+            for index, finalization_commit in enumerate(finalization_commits):
+                if commit == finalization_commit:
+                    if index + 1 < len(finalization_commits):
+                        return finalization_commits[index + 1]
+                    return BINDING_COMMIT
             raise RuntimeError("current HEAD parent cannot validate evidence binding: %s" % commit)
 
         with mock.patch.object(formal, "_git_head", return_value=CURRENT_COMMIT), \
@@ -405,8 +414,9 @@ class W08ReleaseGateTests(unittest.TestCase):
                  mock.patch.object(formal, "_git_diff_name_status",
                                      side_effect=lambda _root, older, newer:
                                      (diff if newer == BINDING_COMMIT and diff is not None
-                                      else final_diff if newer == CURRENT_COMMIT and
-                                      final_diff is not None else ([
+                      else final_diff if (newer == CURRENT_COMMIT or
+                                          newer in finalization_commits) and
+                      final_diff is not None else ([
                                        ("M" if execution_evidence_paths ==
                                         set(formal.R5_ALLOWED_SUCCESSOR_PATHS)
                                         else "A",
@@ -415,9 +425,9 @@ class W08ReleaseGateTests(unittest.TestCase):
                                         set(formal.R5_ALLOWED_SUCCESSOR_PATHS)
                                         else "A",
                                         formal.R5_AUDIT_RELATIVE)] if
-                                       newer == BINDING_COMMIT else [
-                                       ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
-                                       ("M", formal.R5_AUDIT_RELATIVE)]))), \
+                                        newer == BINDING_COMMIT else [
+                                        ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                                        ("M", formal.R5_AUDIT_RELATIVE)]))), \
                 mock.patch.object(formal, "_git_show_bytes",
                                    side_effect=show_bytes), \
                 mock.patch.object(formal, "_protected_code_config_manifest",
@@ -513,6 +523,24 @@ class W08ReleaseGateTests(unittest.TestCase):
                 project_root,
                 execution_evidence_paths=formal.R5_ALLOWED_SUCCESSOR_PATHS)
         self.assertEqual(result["successor_mode"], "evidence_only_finalization")
+
+    def test_successor_accepts_multiple_contiguous_evidence_finalizations(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            result = self._validate_successor_fixture(
+                project_root,
+                finalization_commits=("e" * 40, "f" * 40))
+        self.assertEqual(result["successor_mode"], "evidence_only_finalization")
+
+    def test_successor_rejects_non_evidence_intermediate_finalization(self):
+        with tempfile.TemporaryDirectory() as project_root:
+            with self.assertRaisesRegex(RuntimeError, "final evidence commit"):
+                self._validate_successor_fixture(
+                    project_root,
+                    finalization_commits=("e" * 40, "f" * 40),
+                    final_diff=[
+                        ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                        ("M", formal.R5_AUDIT_RELATIVE),
+                        ("M", "prognosis_analysis/scripts/w08_formal_run_a.py")])
 
     def test_successor_rejects_mixed_execution_evidence_presence(self):
         with tempfile.TemporaryDirectory() as project_root:
@@ -730,6 +758,19 @@ class W08ReleaseGateTests(unittest.TestCase):
             result = self._run_with_base_gate(
                 output_root,
                 status=_status(failed=True, attempt_id="attempt_002_failed"))
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["checks"]["prior_attempts_reconciled"]["status"],
+                         "PASS")
+
+    def test_multiple_explicit_failed_attempts_reconcile_only_latest_attempt(self):
+        with tempfile.TemporaryDirectory() as output_root:
+            _write_archived_attempt(
+                output_root, attempt_id="attempt_002_failed",
+                code_commit=OLD_COMMIT, failure_stage="release_gate")
+            _write_archived_attempt(output_root, attempt_id="attempt_003_failed")
+            result = self._run_with_base_gate(
+                output_root,
+                status=_status(failed=True, attempt_id="attempt_003_failed"))
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["checks"]["prior_attempts_reconciled"]["status"],
                          "PASS")
