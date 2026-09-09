@@ -342,9 +342,11 @@ class W08ReleaseGateTests(unittest.TestCase):
                                      resolves=True, ancestor=True,
                                      worktree_status="", frozen_bindings=None,
                                      execution_evidence_paths=None,
-                                     finalization_commits=()):
+                                     finalization_commits=(),
+                                     finalization_diffs=None):
         aggregate, snapshot = _write_r5_successor_fixture(project_root)
         execution_evidence_paths = set(execution_evidence_paths or ())
+        finalization_diffs = dict(finalization_diffs or {})
         if aggregate_overrides:
             aggregate["release_binding"].update(aggregate_overrides)
         if aggregate_fields:
@@ -414,9 +416,9 @@ class W08ReleaseGateTests(unittest.TestCase):
                  mock.patch.object(formal, "_git_diff_name_status",
                                      side_effect=lambda _root, older, newer:
                                      (diff if newer == BINDING_COMMIT and diff is not None
-                      else final_diff if (newer == CURRENT_COMMIT or
-                                          newer in finalization_commits) and
-                      final_diff is not None else ([
+                      else final_diff if newer == CURRENT_COMMIT and
+                      final_diff is not None else finalization_diffs.get(
+                          newer) if newer in finalization_diffs else ([
                                        ("M" if execution_evidence_paths ==
                                         set(formal.R5_ALLOWED_SUCCESSOR_PATHS)
                                         else "A",
@@ -532,15 +534,28 @@ class W08ReleaseGateTests(unittest.TestCase):
         self.assertEqual(result["successor_mode"], "evidence_only_finalization")
 
     def test_successor_rejects_non_evidence_intermediate_finalization(self):
+        intermediate_commit = "e" * 40
+        older_finalization_commit = "f" * 40
         with tempfile.TemporaryDirectory() as project_root:
-            with self.assertRaisesRegex(RuntimeError, "final evidence commit"):
+            with self.assertRaisesRegex(
+                    RuntimeError,
+                    r"final evidence commit contains non-evidence changes:.*"
+                    r"w08_formal_run_a\.py"):
                 self._validate_successor_fixture(
                     project_root,
-                    finalization_commits=("e" * 40, "f" * 40),
+                    finalization_commits=(intermediate_commit,
+                                          older_finalization_commit),
                     final_diff=[
                         ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
-                        ("M", formal.R5_AUDIT_RELATIVE),
-                        ("M", "prognosis_analysis/scripts/w08_formal_run_a.py")])
+                        ("M", formal.R5_AUDIT_RELATIVE)],
+                    finalization_diffs={
+                        intermediate_commit: [
+                            ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                            ("M", formal.R5_AUDIT_RELATIVE),
+                            ("M", "prognosis_analysis/scripts/w08_formal_run_a.py")],
+                        older_finalization_commit: [
+                            ("M", formal.R5_AGGREGATE_EVIDENCE_RELATIVE),
+                            ("M", formal.R5_AUDIT_RELATIVE)]})
 
     def test_successor_rejects_mixed_execution_evidence_presence(self):
         with tempfile.TemporaryDirectory() as project_root:
