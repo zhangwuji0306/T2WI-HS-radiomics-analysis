@@ -66,8 +66,8 @@
     "schema": "P5_G3R_strict_release_binding",
     "version": "2.0",
     "technical_execution_code_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
-    "evidence_binding_commit": "0000000000000000000000000000000000000000",
-    "successor_mode": "evidence_only_append_only",
+    "evidence_binding_commit": "2236322ba6ccdf10d4ed2a45ddc3802635a27882",
+    "successor_mode": "evidence_only_finalization",
     "allowed_paths": [
       "prognosis_analysis/R5_P5_G3R_final_aggregate_evidence.json",
       "prognosis_analysis/R5_P5_G3R_final_audit.md"
