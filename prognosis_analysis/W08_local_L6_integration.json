@@ -4,9 +4,9 @@
   "status": "technical_probe_complete_with_preexisting_execution_status_wording_failure",
   "scope": "A-only outcome-blind technical representation plus bounded synthetic integration probe",
   "source_binding": {
-    "source_commit": "ee9f74c391d76135e211614db5a1ee40308d9f30",
+    "source_commit": "8860129995a1610f162a0b009e0e3ca2b55a5a9d",
     "runner": "prognosis_analysis/scripts/w08_local_l6_probe.py",
-    "runner_sha256": "c1e3bb41d7c13b601115d5aae1067bb57c58422e48aa1a6604ba938a11f462c6",
+    "runner_sha256": "3984bbabd63c96f9301b5ed3db7315b22372019677d50cce0e85ec85b12f9cdf",
     "runner_scope": "synthetic bounded performance and optional real-A technical provider probe"
   },
   "environment": {
@@ -23,6 +23,43 @@
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
       "NUMEXPR_NUM_THREADS": "1"
+    },
+    "threadpool_observation": {
+      "status": "complete",
+      "pools": [
+        {
+          "user_api": "blas",
+          "internal_api": "mkl",
+          "prefix": "mkl_rt",
+          "num_threads": 1
+        },
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "prefix": "vcomp",
+          "num_threads": 1
+        },
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "prefix": "libiomp",
+          "num_threads": 1
+        },
+        {
+          "user_api": "openmp",
+          "internal_api": "openmp",
+          "prefix": "libomp",
+          "num_threads": 1
+        }
+      ],
+      "num_threads_by_internal_api": {
+        "mkl": [
+          1
+        ],
+        "openmp": [
+          1
+        ]
+      }
     },
     "invocation_boundary": "tools/run_t2_radiomics.ps1 -PythonArguments"
   },
@@ -1207,737 +1244,1759 @@
         "fold": 1,
         "seed": 14346,
         "centres": [
-          2.131463317416468,
-          3.597206518744058
+          2.131463317416136,
+          3.5972065187438935
         ],
-        "boundary": 2.864334918080263,
+        "boundary": 2.864334918080015,
         "representative_low_mask_voxels": 5020,
         "representative_high_mask_voxels": 2881,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 1,
         "fold": 2,
         "seed": 14347,
         "centres": [
-          2.1033126206929205,
-          3.5336294341581214
+          2.1033126206926913,
+          3.533629434158025
         ],
-        "boundary": 2.818471027425521,
+        "boundary": 2.818471027425358,
         "representative_low_mask_voxels": 2382,
         "representative_high_mask_voxels": 5483,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 1,
         "fold": 3,
         "seed": 14348,
         "centres": [
-          2.105868448411234,
-          3.5479256746254157
+          2.1058684484112735,
+          3.5479256746253762
         ],
         "boundary": 2.826897061518325,
         "representative_low_mask_voxels": 4773,
         "representative_high_mask_voxels": 3128,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 1,
         "fold": 4,
         "seed": 14349,
         "centres": [
-          2.087939189604519,
-          3.447144301140708
+          2.087939189604442,
+          3.44714430114067
         ],
-        "boundary": 2.767541745372614,
+        "boundary": 2.767541745372556,
         "representative_low_mask_voxels": 4533,
         "representative_high_mask_voxels": 3368,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 1,
         "fold": 5,
         "seed": 14350,
         "centres": [
-          2.1052423312643316,
-          3.534327454438844
+          2.105242331264188,
+          3.5343274544388925
         ],
-        "boundary": 2.8197848928515876,
+        "boundary": 2.8197848928515405,
         "representative_low_mask_voxels": 4741,
         "representative_high_mask_voxels": 3160,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 2,
         "fold": 1,
         "seed": 14356,
         "centres": [
-          2.146947135118808,
-          3.585408473879415
+          2.146947135118852,
+          3.585408473879419
         ],
-        "boundary": 2.8661778044991113,
+        "boundary": 2.8661778044991353,
         "representative_low_mask_voxels": 5046,
         "representative_high_mask_voxels": 2855,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 2,
         "fold": 2,
         "seed": 14357,
         "centres": [
-          2.079900415584982,
-          3.5014337510779523
+          2.079900415584733,
+          3.501433751077922
         ],
-        "boundary": 2.790667083331467,
+        "boundary": 2.7906670833313276,
         "representative_low_mask_voxels": 4547,
         "representative_high_mask_voxels": 3354,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 2,
         "fold": 3,
         "seed": 14358,
         "centres": [
-          2.0722435420176835,
-          3.4559585129852857
+          2.072243542017489,
+          3.4559585129852373
         ],
-        "boundary": 2.764101027501485,
+        "boundary": 2.764101027501363,
         "representative_low_mask_voxels": 4533,
         "representative_high_mask_voxels": 3368,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 2,
         "fold": 4,
         "seed": 14359,
         "centres": [
-          2.1133997105844937,
-          3.5209553505977103
+          2.1133997105842575,
+          3.5209553505976072
         ],
-        "boundary": 2.8171775305911018,
+        "boundary": 2.817177530590932,
         "representative_low_mask_voxels": 4723,
         "representative_high_mask_voxels": 3178,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 2,
         "fold": 5,
         "seed": 14360,
         "centres": [
-          2.114636792492382,
-          3.5730492217767216
+          2.114636792492252,
+          3.5730492217767287
         ],
-        "boundary": 2.8438430071345517,
+        "boundary": 2.84384300713449,
         "representative_low_mask_voxels": 21581,
         "representative_high_mask_voxels": 5727,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 3,
         "fold": 1,
         "seed": 14366,
         "centres": [
-          2.113513925606252,
-          3.525056242549039
+          2.11351392560595,
+          3.525056242549024
         ],
-        "boundary": 2.819285084077645,
+        "boundary": 2.819285084077487,
         "representative_low_mask_voxels": 4741,
         "representative_high_mask_voxels": 3160,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 3,
         "fold": 2,
         "seed": 14367,
         "centres": [
-          2.1035723121096144,
-          3.503583666351716
+          2.1035723121094376,
+          3.5035836663516
         ],
-        "boundary": 2.803577989230665,
+        "boundary": 2.8035779892305186,
         "representative_low_mask_voxels": 4597,
         "representative_high_mask_voxels": 3304,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 3,
         "fold": 3,
         "seed": 14368,
         "centres": [
-          2.121887943851978,
-          3.6035286950437753
+          2.12188794385205,
+          3.6035286950438707
         ],
-        "boundary": 2.8627083194478766,
+        "boundary": 2.86270831944796,
         "representative_low_mask_voxels": 5013,
         "representative_high_mask_voxels": 2888,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 3,
         "fold": 4,
         "seed": 14369,
         "centres": [
-          2.0831808850048676,
-          3.4410383583245667
+          2.083180885004672,
+          3.4410383583246245
         ],
-        "boundary": 2.762109621664717,
+        "boundary": 2.7621096216646484,
         "representative_low_mask_voxels": 4533,
         "representative_high_mask_voxels": 3368,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 3,
         "fold": 5,
         "seed": 14370,
         "centres": [
-          2.0909301654548638,
-          3.5343437512077975
+          2.0909301654546897,
+          3.534343751207674
         ],
-        "boundary": 2.8126369583313306,
+        "boundary": 2.812636958331182,
         "representative_low_mask_voxels": 2345,
         "representative_high_mask_voxels": 5520,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 4,
         "fold": 1,
         "seed": 14376,
         "centres": [
-          2.104742715367216,
-          3.515933885184672
+          2.1047427153671223,
+          3.515933885184597
         ],
-        "boundary": 2.8103383002759443,
+        "boundary": 2.81033830027586,
         "representative_low_mask_voxels": 4709,
         "representative_high_mask_voxels": 3192,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 4,
         "fold": 2,
         "seed": 14377,
         "centres": [
-          2.1346254627313987,
-          3.5743151197620477
+          2.134625462731271,
+          3.5743151197620593
         ],
-        "boundary": 2.8544702912467232,
+        "boundary": 2.854470291246665,
         "representative_low_mask_voxels": 4939,
         "representative_high_mask_voxels": 2962,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 4,
         "fold": 3,
         "seed": 14378,
         "centres": [
-          2.0789473068177537,
-          3.461685685091988
+          2.078947306817689,
+          3.4616856850919357
         ],
-        "boundary": 2.770316495954871,
+        "boundary": 2.7703164959548126,
         "representative_low_mask_voxels": 2272,
         "representative_high_mask_voxels": 5593,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 4,
         "fold": 4,
         "seed": 14379,
         "centres": [
-          2.099213283868884,
-          3.5320356388397443
+          2.099213283868648,
+          3.5320356388397314
         ],
-        "boundary": 2.8156244613543144,
+        "boundary": 2.8156244613541896,
         "representative_low_mask_voxels": 4723,
         "representative_high_mask_voxels": 3178,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 4,
         "fold": 5,
         "seed": 14380,
         "centres": [
-          2.1009100588324117,
-          3.537492351618686
+          2.100910058832274,
+          3.5374923516186376
         ],
-        "boundary": 2.819201205225549,
+        "boundary": 2.819201205225456,
         "representative_low_mask_voxels": 4741,
         "representative_high_mask_voxels": 3160,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 5,
         "fold": 1,
         "seed": 14386,
         "centres": [
-          2.123308148155336,
-          3.542727712361775
+          2.1233081481553127,
+          3.542727712361697
         ],
-        "boundary": 2.8330179302585554,
+        "boundary": 2.833017930258505,
         "representative_low_mask_voxels": 6970,
         "representative_high_mask_voxels": 2055,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 5,
         "fold": 2,
         "seed": 14387,
         "centres": [
-          2.098027394387708,
-          3.584324979597162
+          2.0980273943874974,
+          3.5843249795970946
         ],
-        "boundary": 2.841176186992435,
+        "boundary": 2.8411761869922962,
         "representative_low_mask_voxels": 4818,
         "representative_high_mask_voxels": 3083,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 5,
         "fold": 3,
         "seed": 14388,
         "centres": [
-          2.080380988433142,
-          3.4500127720795497
+          2.080380988432963,
+          3.4500127720795617
         ],
-        "boundary": 2.7651968802563456,
+        "boundary": 2.765196880256262,
         "representative_low_mask_voxels": 4533,
         "representative_high_mask_voxels": 3368,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 5,
         "fold": 4,
         "seed": 14389,
         "centres": [
-          2.105670364398302,
-          3.54202738112166
+          2.1056703643981227,
+          3.5420273811216134
         ],
-        "boundary": 2.823848872759981,
+        "boundary": 2.823848872759868,
         "representative_low_mask_voxels": 4773,
         "representative_high_mask_voxels": 3128,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 5,
         "fold": 5,
         "seed": 14390,
         "centres": [
-          2.1134206915305835,
-          3.5060036234391982
+          2.113420691530416,
+          3.506003623439109
         ],
-        "boundary": 2.809712157484891,
+        "boundary": 2.8097121574847623,
         "representative_low_mask_voxels": 4709,
         "representative_high_mask_voxels": 3192,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 6,
         "fold": 1,
         "seed": 14396,
         "centres": [
-          2.0877576414609313,
-          3.4990461271036324
+          2.0877576414607812,
+          3.499046127103603
         ],
-        "boundary": 2.793401884282282,
+        "boundary": 2.793401884282192,
         "representative_low_mask_voxels": 4597,
         "representative_high_mask_voxels": 3304,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 6,
         "fold": 2,
         "seed": 14397,
         "centres": [
-          2.101697094454388,
-          3.522868058973621
+          2.101697094454246,
+          3.5228680589735037
         ],
-        "boundary": 2.8122825767140043,
+        "boundary": 2.8122825767138746,
         "representative_low_mask_voxels": 2345,
         "representative_high_mask_voxels": 5520,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 6,
         "fold": 3,
         "seed": 14398,
         "centres": [
-          2.159691234303256,
-          3.604574281362198
+          2.1596912343030916,
+          3.6045742813621287
         ],
-        "boundary": 2.8821327578327267,
+        "boundary": 2.8821327578326104,
         "representative_low_mask_voxels": 5054,
         "representative_high_mask_voxels": 2847,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 6,
         "fold": 4,
         "seed": 14399,
         "centres": [
-          2.107271145524389,
-          3.523503473815149
+          2.1072711455242383,
+          3.523503473815011
         ],
-        "boundary": 2.8153873096697692,
+        "boundary": 2.8153873096696245,
         "representative_low_mask_voxels": 4709,
         "representative_high_mask_voxels": 3192,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 6,
         "fold": 5,
         "seed": 14400,
         "centres": [
-          2.0685315155750352,
-          3.4755173271028106
+          2.068531515574895,
+          3.4755173271028363
         ],
-        "boundary": 2.772024421338923,
+        "boundary": 2.7720244213388656,
         "representative_low_mask_voxels": 4547,
         "representative_high_mask_voxels": 3354,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 7,
         "fold": 1,
         "seed": 14406,
         "centres": [
-          2.149452282262985,
-          3.580022141039447
+          2.1494522822628093,
+          3.5800221410395214
         ],
-        "boundary": 2.864737211651216,
+        "boundary": 2.8647372116511653,
         "representative_low_mask_voxels": 2475,
         "representative_high_mask_voxels": 5390,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 7,
         "fold": 2,
         "seed": 14407,
         "centres": [
-          2.122894754162717,
-          3.5370112497222763
+          2.1228947541625947,
+          3.537011249722099
         ],
-        "boundary": 2.8299530019424965,
+        "boundary": 2.829953001942347,
         "representative_low_mask_voxels": 4798,
         "representative_high_mask_voxels": 3103,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 7,
         "fold": 3,
         "seed": 14408,
         "centres": [
-          2.0812770558737883,
-          3.531363454000246
+          2.081277055873566,
+          3.5313634540000396
         ],
-        "boundary": 2.806320254937017,
+        "boundary": 2.8063202549368027,
         "representative_low_mask_voxels": 4661,
         "representative_high_mask_voxels": 3240,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 7,
         "fold": 4,
         "seed": 14409,
         "centres": [
-          2.1098637881890934,
-          3.530233395248467
+          2.109863788188913,
+          3.5302333952485148
         ],
-        "boundary": 2.82004859171878,
+        "boundary": 2.820048591718714,
         "representative_low_mask_voxels": 4741,
         "representative_high_mask_voxels": 3160,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 7,
         "fold": 5,
         "seed": 14410,
         "centres": [
-          2.058744933174841,
-          3.4475174169566563
+          2.0587449331747933,
+          3.447517416956568
         ],
-        "boundary": 2.7531311750657483,
+        "boundary": 2.753131175065681,
         "representative_low_mask_voxels": 4516,
         "representative_high_mask_voxels": 3385,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 8,
         "fold": 1,
         "seed": 14416,
         "centres": [
-          2.1264025197414695,
-          3.5570427494634353
+          2.126402519741355,
+          3.5570427494635504
         ],
-        "boundary": 2.8417226346024522,
+        "boundary": 2.8417226346024527,
         "representative_low_mask_voxels": 4818,
         "representative_high_mask_voxels": 3083,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 8,
         "fold": 2,
         "seed": 14417,
         "centres": [
-          2.09827291555351,
-          3.521802066759621
+          2.098272915553513,
+          3.5218020667594985
         ],
-        "boundary": 2.8100374911565655,
+        "boundary": 2.810037491156506,
         "representative_low_mask_voxels": 4709,
         "representative_high_mask_voxels": 3192,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 8,
         "fold": 3,
         "seed": 14418,
         "centres": [
-          2.0780653708275985,
-          3.508479151191505
+          2.0780653708274373,
+          3.5084791511914184
         ],
-        "boundary": 2.7932722610095517,
+        "boundary": 2.793272261009428,
         "representative_low_mask_voxels": 4597,
         "representative_high_mask_voxels": 3304,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 8,
         "fold": 4,
         "seed": 14419,
         "centres": [
-          2.114811179134069,
-          3.5188001474785455
+          2.114811179133816,
+          3.518800147478536
         ],
-        "boundary": 2.816805663306307,
+        "boundary": 2.816805663306176,
         "representative_low_mask_voxels": 2382,
         "representative_high_mask_voxels": 5483,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 8,
         "fold": 5,
         "seed": 14420,
         "centres": [
-          2.1008253946750477,
-          3.5100391452326627
+          2.1008253946749056,
+          3.5100391452326116
         ],
-        "boundary": 2.8054322699538554,
+        "boundary": 2.8054322699537586,
         "representative_low_mask_voxels": 4597,
         "representative_high_mask_voxels": 3304,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 9,
         "fold": 1,
         "seed": 14426,
         "centres": [
-          2.115721868098147,
-          3.568275146470442
+          2.1157218680980443,
+          3.5682751464702624
         ],
-        "boundary": 2.8419985072842944,
+        "boundary": 2.8419985072841536,
         "representative_low_mask_voxels": 4818,
         "representative_high_mask_voxels": 3083,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 9,
         "fold": 2,
         "seed": 14427,
         "centres": [
-          2.114479444331697,
-          3.520696595987607
+          2.1144794443315487,
+          3.5206965959874448
         ],
-        "boundary": 2.817588020159652,
+        "boundary": 2.817588020159497,
         "representative_low_mask_voxels": 4741,
         "representative_high_mask_voxels": 3160,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 9,
         "fold": 3,
         "seed": 14428,
         "centres": [
-          2.117542098636269,
-          3.563107844671393
+          2.117542098636126,
+          3.5631078446713995
         ],
-        "boundary": 2.840324971653831,
+        "boundary": 2.8403249716537626,
         "representative_low_mask_voxels": 21581,
         "representative_high_mask_voxels": 5727,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 9,
         "fold": 4,
         "seed": 14429,
         "centres": [
-          2.0875703221217883,
-          3.469991809099162
+          2.0875703221216124,
+          3.4699918090992456
         ],
-        "boundary": 2.778781065610475,
+        "boundary": 2.778781065610429,
         "representative_low_mask_voxels": 4547,
         "representative_high_mask_voxels": 3354,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 9,
         "fold": 5,
         "seed": 14430,
         "centres": [
-          2.08134278413439,
-          3.4908347945265357
+          2.081342784134259,
+          3.4908347945265668
         ],
-        "boundary": 2.7860887893304627,
+        "boundary": 2.786088789330413,
         "representative_low_mask_voxels": 4547,
         "representative_high_mask_voxels": 3354,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 10,
         "fold": 1,
         "seed": 14436,
         "centres": [
-          2.138538334658836,
-          3.598732383934601
+          2.1385383346587474,
+          3.5987323839345153
         ],
-        "boundary": 2.8686353592967184,
+        "boundary": 2.8686353592966314,
         "representative_low_mask_voxels": 5046,
         "representative_high_mask_voxels": 2855,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 10,
         "fold": 2,
         "seed": 14437,
         "centres": [
-          2.114888004586864,
-          3.505249315156563
+          2.1148880045867573,
+          3.505249315156566
         ],
-        "boundary": 2.8100686598717135,
+        "boundary": 2.8100686598716615,
         "representative_low_mask_voxels": 21286,
         "representative_high_mask_voxels": 6022,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 10,
         "fold": 3,
         "seed": 14438,
         "centres": [
-          2.088034154119964,
-          3.472058651602895
+          2.0880341541197325,
+          3.4720586516028638
         ],
-        "boundary": 2.780046402861429,
+        "boundary": 2.780046402861298,
         "representative_low_mask_voxels": 4547,
         "representative_high_mask_voxels": 3354,
         "training_population_n": 314,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 10,
         "fold": 4,
         "seed": 14439,
         "centres": [
-          2.09732101683804,
-          3.5515703615155143
+          2.097321016837843,
+          3.5515703615155347
         ],
-        "boundary": 2.824445689176777,
+        "boundary": 2.824445689176689,
         "representative_low_mask_voxels": 4773,
         "representative_high_mask_voxels": 3128,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       },
       {
         "repeat": 10,
         "fold": 5,
         "seed": 14440,
         "centres": [
-          2.0892206644182014,
-          3.5126033977628817
+          2.089220664418087,
+          3.512603397762715
         ],
-        "boundary": 2.8009120310905415,
+        "boundary": 2.8009120310904008,
         "representative_low_mask_voxels": 4597,
         "representative_high_mask_voxels": 3304,
         "training_population_n": 315,
-        "validation_ids_used_for_fit": false
+        "validation_ids_used_for_fit": false,
+        "representative_transform": {
+          "training": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          },
+          "validation": {
+            "rows_completed": 1,
+            "feature_columns_present": {
+              "G": 6,
+              "R_low": 49,
+              "R_high": 10
+            },
+            "finite_or_nan_feature_values": true
+          }
+        }
       }
     ],
     "metrics": {
-      "seconds": 2207.5448318,
-      "cpu_percent": 316.7149721846931,
-      "peak_rss_bytes": 494903296,
-      "disk_read_bytes": 363071429,
-      "disk_write_bytes": 6560411,
+      "seconds": 1567.8474385,
+      "cpu_percent": 97.67372528701554,
+      "peak_rss_bytes": 498561024,
+      "disk_read_bytes": 408138840,
+      "disk_write_bytes": 0,
       "requested_fold_count": 50,
       "completed_fold_count": 50,
       "provider_fit_calls": 50,
+      "provider_transform_calls": 100,
+      "provider_transform_requested_calls": 100,
+      "provider_transform_completed_calls": 100,
+      "representation_generation": {
+        "roles_checked": [
+          "training",
+          "validation"
+        ],
+        "feature_dimensions": {
+          "G": 6,
+          "R_low": 49,
+          "R_high": 10
+        },
+        "folds_with_completed_G": 50,
+        "folds_with_completed_R_low": 50,
+        "folds_with_completed_R_high": 50
+      },
       "cache_audit": {
         "schema": "w08_fold_representation_cache_v1",
         "cache_contract_version": "W08-L4-20260909",
         "cache_contract_hash": "bd16a9cc4285958ae22fbaf13f1e4ca9515d1379c39dbb30a8613a407e507a1d",
         "slic_cache": {
-          "hits": 0,
-          "misses": 393,
+          "hits": 393,
+          "misses": 0,
           "invalidations": 0
         },
         "representation_cache": {
           "hits": 0,
-          "misses": 50,
+          "misses": 150,
           "invalidations": 0,
-          "states": 0
+          "states": 50
         },
         "feature_cache": {
-          "hits": 0,
-          "misses": 0,
+          "hits": 96,
+          "misses": 103,
           "invalidations": 0,
-          "entries": 0,
-          "unique_mask_signatures_by_block": {}
+          "entries": 103,
+          "unique_mask_signatures_by_block": {
+            "R_low": 52,
+            "R_high": 51
+          }
         },
         "validation_ids_used_for_fit": false,
         "event_counts": {
-          "representation:miss": 50,
-          "slic:miss": 393
+          "representation:miss": 150,
+          "slic:hit": 393,
+          "feature:miss": 103,
+          "feature:hit": 96
         }
       }
     }
@@ -1956,9 +3015,9 @@
       {
         "baseline": {
           "representation": {
-            "seconds": 0.9660243999999949,
-            "cpu_percent": 444.79984149468925,
-            "peak_rss_bytes": 142008320,
+            "seconds": 0.14131460000000118,
+            "cpu_percent": 99.51201079010862,
+            "peak_rss_bytes": 141180928,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -1968,9 +3027,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.31813499999999806,
-            "cpu_percent": 275.0404702406228,
-            "peak_rss_bytes": 142024704,
+            "seconds": 0.16938619999999993,
+            "cpu_percent": 92.2448227777706,
+            "peak_rss_bytes": 141242368,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -1987,9 +3046,9 @@
         },
         "integrated": {
           "representation": {
-            "seconds": 0.9359836000000001,
-            "cpu_percent": 405.65614611196173,
-            "peak_rss_bytes": 142041088,
+            "seconds": 0.20702099999999923,
+            "cpu_percent": 98.11806531704549,
+            "peak_rss_bytes": 141242368,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -1999,9 +3058,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.29446120000000064,
-            "cpu_percent": 222.86467622898996,
-            "peak_rss_bytes": 142041088,
+            "seconds": 0.19707390000000125,
+            "cpu_percent": 95.14197466026644,
+            "peak_rss_bytes": 141242368,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -2016,17 +3075,17 @@
             ]
           }
         },
-        "baseline_total_technical_probe_seconds": 1.284860100000003,
-        "integrated_total_technical_probe_seconds": 1.2313161000000008,
+        "baseline_total_technical_probe_seconds": 0.31115409999999954,
+        "integrated_total_technical_probe_seconds": 0.4046057999999988,
         "same_input_and_thread_caps": true,
         "output_equivalence": true
       },
       {
         "baseline": {
           "representation": {
-            "seconds": 0.8681754999999995,
-            "cpu_percent": 464.33583993098193,
-            "peak_rss_bytes": 142069760,
+            "seconds": 0.1527826000000001,
+            "cpu_percent": 102.26949927544098,
+            "peak_rss_bytes": 141242368,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -2036,9 +3095,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.29355819999999966,
-            "cpu_percent": 308.71220766444304,
-            "peak_rss_bytes": 142069760,
+            "seconds": 0.19175200000000103,
+            "cpu_percent": 97.7825524635983,
+            "peak_rss_bytes": 141266944,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -2055,9 +3114,9 @@
         },
         "integrated": {
           "representation": {
-            "seconds": 0.8742230999999947,
-            "cpu_percent": 489.72053014842845,
-            "peak_rss_bytes": 142077952,
+            "seconds": 0.15927800000000047,
+            "cpu_percent": 107.90881352101326,
+            "peak_rss_bytes": 141266944,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -2067,9 +3126,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.2850224999999966,
-            "cpu_percent": 328.9214009420348,
-            "peak_rss_bytes": 142077952,
+            "seconds": 0.18203709999999873,
+            "cpu_percent": 94.41756652902139,
+            "peak_rss_bytes": 141275136,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -2084,17 +3143,17 @@
             ]
           }
         },
-        "baseline_total_technical_probe_seconds": 1.1625653999999983,
-        "integrated_total_technical_probe_seconds": 1.1600004999999953,
+        "baseline_total_technical_probe_seconds": 0.3450734000000004,
+        "integrated_total_technical_probe_seconds": 0.34187119999999993,
         "same_input_and_thread_caps": true,
         "output_equivalence": true
       },
       {
         "baseline": {
           "representation": {
-            "seconds": 0.8899327000000028,
-            "cpu_percent": 433.6704337305493,
-            "peak_rss_bytes": 142077952,
+            "seconds": 0.169496800000001,
+            "cpu_percent": 92.18463121427607,
+            "peak_rss_bytes": 141275136,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -2104,9 +3163,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.2817214999999962,
-            "cpu_percent": 255.12784789233683,
-            "peak_rss_bytes": 142077952,
+            "seconds": 0.19164229999999982,
+            "cpu_percent": 105.99173564500123,
+            "peak_rss_bytes": 141279232,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -2123,9 +3182,9 @@
         },
         "integrated": {
           "representation": {
-            "seconds": 0.8730162999999962,
-            "cpu_percent": 427.75547260687074,
-            "peak_rss_bytes": 142077952,
+            "seconds": 0.15424400000000027,
+            "cpu_percent": 101.30053681180449,
+            "peak_rss_bytes": 141279232,
             "disk_read_bytes": 5788,
             "disk_write_bytes": 0,
             "mask_requests": 32,
@@ -2135,9 +3194,9 @@
             "fold_count": 2
           },
           "single_fold_model": {
-            "seconds": 0.2843506999999974,
-            "cpu_percent": 324.2035275453897,
-            "peak_rss_bytes": 142077952,
+            "seconds": 0.17252110000000087,
+            "cpu_percent": 99.6254950843689,
+            "peak_rss_bytes": 141279232,
             "disk_read_bytes": 0,
             "disk_write_bytes": 0,
             "cox_core_calls": 10,
@@ -2152,8 +3211,8 @@
             ]
           }
         },
-        "baseline_total_technical_probe_seconds": 1.1725719000000012,
-        "integrated_total_technical_probe_seconds": 1.1581572999999992,
+        "baseline_total_technical_probe_seconds": 0.3616450000000011,
+        "integrated_total_technical_probe_seconds": 0.32732339999999915,
         "same_input_and_thread_caps": true,
         "output_equivalence": true
       }
@@ -2162,26 +3221,26 @@
       "representation": {
         "baseline": {
           "seconds": {
-            "median": 0.8899327000000028,
+            "median": 0.1527826000000001,
             "range": [
-              0.8681754999999995,
-              0.9660243999999949
+              0.14131460000000118,
+              0.169496800000001
             ],
             "repeat_count": 3
           },
           "peak_rss_bytes": {
-            "median": 142069760.0,
+            "median": 141242368.0,
             "range": [
-              142008320.0,
-              142077952.0
+              141180928.0,
+              141275136.0
             ],
             "repeat_count": 3
           },
           "cpu_percent": {
-            "median": 444.79984149468925,
+            "median": 99.51201079010862,
             "range": [
-              433.6704337305493,
-              464.33583993098193
+              92.18463121427607,
+              102.26949927544098
             ],
             "repeat_count": 3
           },
@@ -2204,26 +3263,26 @@
         },
         "integrated": {
           "seconds": {
-            "median": 0.8742230999999947,
+            "median": 0.15927800000000047,
             "range": [
-              0.8730162999999962,
-              0.9359836000000001
+              0.15424400000000027,
+              0.20702099999999923
             ],
             "repeat_count": 3
           },
           "peak_rss_bytes": {
-            "median": 142077952.0,
+            "median": 141266944.0,
             "range": [
-              142041088.0,
-              142077952.0
+              141242368.0,
+              141279232.0
             ],
             "repeat_count": 3
           },
           "cpu_percent": {
-            "median": 427.75547260687074,
+            "median": 101.30053681180449,
             "range": [
-              405.65614611196173,
-              489.72053014842845
+              98.11806531704549,
+              107.90881352101326
             ],
             "repeat_count": 3
           },
@@ -2248,26 +3307,26 @@
       "single_fold_model": {
         "baseline": {
           "seconds": {
-            "median": 0.29355819999999966,
+            "median": 0.19164229999999982,
             "range": [
-              0.2817214999999962,
-              0.31813499999999806
+              0.16938619999999993,
+              0.19175200000000103
             ],
             "repeat_count": 3
           },
           "peak_rss_bytes": {
-            "median": 142069760.0,
+            "median": 141266944.0,
             "range": [
-              142024704.0,
-              142077952.0
+              141242368.0,
+              141279232.0
             ],
             "repeat_count": 3
           },
           "cpu_percent": {
-            "median": 275.0404702406228,
+            "median": 97.7825524635983,
             "range": [
-              255.12784789233683,
-              308.71220766444304
+              92.2448227777706,
+              105.99173564500123
             ],
             "repeat_count": 3
           },
@@ -2290,26 +3349,26 @@
         },
         "integrated": {
           "seconds": {
-            "median": 0.2850224999999966,
+            "median": 0.18203709999999873,
             "range": [
-              0.2843506999999974,
-              0.29446120000000064
+              0.17252110000000087,
+              0.19707390000000125
             ],
             "repeat_count": 3
           },
           "peak_rss_bytes": {
-            "median": 142077952.0,
+            "median": 141275136.0,
             "range": [
-              142041088.0,
-              142077952.0
+              141242368.0,
+              141279232.0
             ],
             "repeat_count": 3
           },
           "cpu_percent": {
-            "median": 324.2035275453897,
+            "median": 95.14197466026644,
             "range": [
-              222.86467622898996,
-              328.9214009420348
+              94.41756652902139,
+              99.6254950843689
             ],
             "repeat_count": 3
           },
@@ -2333,10 +3392,10 @@
       },
       "technical_probe_baseline": {
         "seconds": {
-          "median": 1.1725719000000012,
+          "median": 0.3450734000000004,
           "range": [
-            1.1625653999999983,
-            1.284860100000003
+            0.31115409999999954,
+            0.3616450000000011
           ],
           "repeat_count": 3
         },
@@ -2367,10 +3426,10 @@
       },
       "technical_probe_integrated": {
         "seconds": {
-          "median": 1.1600004999999953,
+          "median": 0.34187119999999993,
           "range": [
-            1.1581572999999992,
-            1.2313161000000008
+            0.32732339999999915,
+            0.4046057999999988
           ],
           "repeat_count": 3
         },
@@ -2400,7 +3459,7 @@
         }
       }
     },
-    "total_median_reduction_fraction": 0.010721218886454538,
+    "total_median_reduction_fraction": 0.009279764826846938,
     "correctness_preserved": true,
     "retain_complex_layer": false
   },
@@ -2411,7 +3470,39 @@
     "four_worker_allowed": false,
     "retain_cache_and_parallel": false,
     "decision_rule": "correctness passed and bounded synthetic total technical probe median reduction is at least 20 percent",
+    "measured_decision_rule_passed": false,
+    "formal_complex_cache_and_parallel_enabled": false,
+    "formal_complex_layer_disposition": "disabled because the current bounded synthetic total probe median reduction is below 20 percent",
     "four_worker_evidence": "not established; retain the approved 2-worker default"
+  },
+  "provenance_disposition": {
+    "current_code_evidence_source": [
+      {
+        "path": "prognosis_analysis/scripts/w08_local_l6_probe.py",
+        "sha256": "3984bbabd63c96f9301b5ed3db7315b22372019677d50cce0e85ec85b12f9cdf"
+      },
+      {
+        "path": "prognosis_analysis/scripts/w08_nested_cv.py",
+        "sha256": "ef0416a0fafd1d1a44e44aa72a206e0634f932ddaf195444da8303cde4ead415"
+      },
+      {
+        "path": "prognosis_analysis/R6_5R_coordinate_reconciliation.json",
+        "sha256": "220829324b1306ff2b971869843c43744d2f4ecc79498238e6c10ce79f24b9a0"
+      }
+    ],
+    "historical_records_excluded_from_current_code_evidence": [
+      {
+        "path": "prognosis_analysis/R6_6_5_convergence_sentinel.json",
+        "recorded_w08_nested_cv_sha256": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce",
+        "disposition": "historical evidence; not used for current L6 acceptance"
+      },
+      {
+        "path": "prognosis_analysis/R6_6_g3r_technical_preflight.json",
+        "recorded_coordinate_reconciliation_sha256": "151507a3cfe816c101ac86a6352e15ce4b05c2403bfa9f759c3e46cdd90af968",
+        "recorded_w08_nested_cv_sha256": "87b919d82a199461882af280adfc34a0e5e2a59974a1c4def6e3f6f9b393f6ce",
+        "disposition": "historical evidence; not used for current L6 acceptance"
+      }
+    ]
   },
   "test_evidence": {
     "targeted_command": "tools\\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','-q','tests.test_w08_l5_parallel_checkpoint','tests.test_r6_5_validation','tests.test_w08_technical_preflight_a','tests.test_w08_local_optimization_probe','tests.test_w08_local_l6_probe')",
@@ -2450,5 +3541,5 @@
     "absolute_local_paths_in_audit": false,
     "identifier_values_in_audit": false
   },
-  "generated_at_utc": "2026-09-09T00:28:35Z"
+  "generated_at_utc": "2026-09-09T01:53:24Z"
 }

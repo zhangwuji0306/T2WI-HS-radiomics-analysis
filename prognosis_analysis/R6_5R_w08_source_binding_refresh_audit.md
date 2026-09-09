@@ -13,7 +13,7 @@ model-freeze, or W09 binding was changed.
 | Path | SHA-256 |
 |---|---|
 | `prognosis_analysis/configs/w08_nested_cv.json` | `c70369e216902699b2f089a36a146b7f88140b6879ad264bb7f96ae721e0a55f` |
-| `prognosis_analysis/scripts/w08_formal_run_a.py` | `286fe46bd164ac863942f297f08a720bcd22517715d281d9ba71d583a2a49bb2` |
+| `prognosis_analysis/scripts/w08_formal_run_a.py` | `8dc5d25fea2eef396a83cab041f0e9711ab446d1f829176a401319021d99674b` |
 | `prognosis_analysis/scripts/w08_nested_cv.py` | `ef0416a0fafd1d1a44e44aa72a206e0634f932ddaf195444da8303cde4ead415` |
 
 The registered values were recomputed from the current files. The W08 config
