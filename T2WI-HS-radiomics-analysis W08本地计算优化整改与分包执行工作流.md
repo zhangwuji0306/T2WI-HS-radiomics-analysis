@@ -671,13 +671,24 @@ checkpoint属于本地敏感中间产物，不得提交，也不得在全部fold
 
 ## L6 worker数决策
 
-正式本地设置默认：
+L5 的历史请求默认仍登记为：
 
 ```text
 representation_workers=2
 outer_fold_workers=2
 BLAS/OMP threads per worker=1
 ```
+
+本次 L6 bounded synthetic total technical probe 中位耗时下降低于20%，因此按上一节规则移除收益不足的复杂缓存/并行层。当前 formal 的有效设置唯一为：
+
+```text
+representation_workers=1
+outer_fold_workers=1
+BLAS/OMP threads per worker=1
+complex_cache_and_parallel_enabled=false
+```
+
+配置中的 `historical_requested_outer_fold_workers=2` 仅保留请求历史；formal 只能使用上述 effective serial setting。L4 `FoldRepresentationCache`、L5 `ProcessPoolExecutor` 及 provider 的多层 SLIC/representation/feature cache 保留用于历史测试或非formal探针，formal current-code path 不初始化、不调用。
 
 只有同时满足以下条件才允许提高到4：
 

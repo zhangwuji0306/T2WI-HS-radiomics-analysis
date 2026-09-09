@@ -39,7 +39,14 @@ L5_CHECKPOINT_VERSION = 1
 L5_CHECKPOINT_WRITE_POLICY = (
     "coordinator_atomic_after_each_validated_fold")
 L5_ALLOWED_WORKERS = (1, 2, 4)
-L5_DEFAULT_OUTER_FOLD_WORKERS = 2
+# The L5 implementation and its serial/parallel tests retain the historical
+# 2-worker request as a supported execution option.  L6 measured the bounded
+# total probe below the retention threshold, so the current formal contract is
+# explicitly serial and must not enter the complex layer.
+L5_REQUESTED_DEFAULT_OUTER_FOLD_WORKERS = 2
+L5_DEFAULT_OUTER_FOLD_WORKERS = 1
+FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS = 1
+FORMAL_COMPLEX_LAYER_ENABLED = False
 L5_THREAD_ENVIRONMENT = {
     "OMP_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1",
@@ -579,6 +586,12 @@ def _validate_config(config):
     execution = config.get("execution", {})
     if not isinstance(execution, dict) or \
             execution.get("outer_fold_workers") != L5_DEFAULT_OUTER_FOLD_WORKERS or \
+            execution.get("historical_requested_outer_fold_workers") != \
+            L5_REQUESTED_DEFAULT_OUTER_FOLD_WORKERS or \
+            execution.get("formal_effective_outer_fold_workers") != \
+            FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS or \
+            execution.get("complex_cache_and_parallel_enabled") is not \
+            FORMAL_COMPLEX_LAYER_ENABLED or \
             tuple(execution.get("allowed_outer_fold_workers", [])) != L5_ALLOWED_WORKERS or \
             execution.get("checkpoint_schema") != L5_CHECKPOINT_SCHEMA or \
             execution.get("checkpoint_write_policy") != \
@@ -3478,13 +3491,15 @@ def _l5_worker_job(args):
         max_outer_folds=None, solver_max_iter=solver_max_iter,
         solver_tolerance=solver_tolerance, population=population,
         progress_callback=None, outer_fold_selector=tuple(fold_key),
-        outer_fold_workers=1, checkpoint_root=None, _worker_mode=True)
+        outer_fold_workers=1, checkpoint_root=None, _worker_mode=True,
+        complex_layer_enabled=not bool(require_fixed_hash))
 
 
 def _l5_merge_results(fold_results, selection_results, predictions,
                       selected_runs, split_summary, split_hash, config,
                       require_fixed_hash, worker_count, resumed_count,
-                      checkpoint_count, checkpoint_contracts):
+                      checkpoint_count, checkpoint_contracts,
+                      complex_layer_enabled=True):
     run_ids = [str(item["run_id"]) for item in selected_runs]
     run_order = dict((run_id, index) for index, run_id in enumerate(run_ids))
     fold_results = sorted(
@@ -3556,6 +3571,10 @@ def _l5_merge_results(fold_results, selection_results, predictions,
             "schema": L5_CHECKPOINT_SCHEMA,
             "checkpoint_write_policy": L5_CHECKPOINT_WRITE_POLICY,
             "outer_fold_workers": int(worker_count),
+            "effective_formal_outer_fold_workers": (
+                int(FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS)
+                if require_fixed_hash else None),
+            "complex_layer_enabled": bool(complex_layer_enabled),
             "resumed_checkpoints": int(resumed_count),
             "new_checkpoints": int(checkpoint_count),
             "checkpoint_count": int(len(checkpoint_contracts)),
@@ -3582,7 +3601,8 @@ def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
                              population, split_summary, split_hash,
                              outer_fold_workers, checkpoint_root, attempt_id,
                              code_commit, resume, max_outer_folds=None,
-                             progress_callback=None):
+                             progress_callback=None,
+                             complex_layer_enabled=True):
     if type(outer_fold_workers) is not int or \
             outer_fold_workers not in L5_ALLOWED_WORKERS:
         raise W08ValidationError(
@@ -3764,7 +3784,7 @@ def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
         fold_results, selection_results, predictions, selected_runs,
         split_summary, split_hash, config, require_fixed_hash,
         outer_fold_workers, resumed_count, new_checkpoint_count,
-        checkpoint_contracts)
+        checkpoint_contracts, complex_layer_enabled=complex_layer_enabled)
     expected_rows = len(folds) * len(selected_runs)
     if len(merged["fold_results"]) != expected_rows or \
             len(merged["selection_results"]) != expected_rows:
@@ -3781,7 +3801,8 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                       population=None, progress_callback=None,
                       outer_fold_workers=1, checkpoint_root=None,
                       attempt_id=None, code_commit=None, resume=False,
-                      outer_fold_selector=None, _worker_mode=False):
+                      outer_fold_selector=None, _worker_mode=False,
+                      complex_layer_enabled=True):
     """Run W08 against an already-authorized A-only frame without file I/O.
 
     ``max_outer_folds`` exists solely for synthetic/preflight tests.  It is
@@ -3792,6 +3813,15 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
             outer_fold_workers not in L5_ALLOWED_WORKERS:
         raise W08ValidationError(
             "outer_fold_workers must be one of %s" % (L5_ALLOWED_WORKERS,))
+    if require_fixed_hash:
+        if outer_fold_workers != FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS:
+            raise W08ValidationError(
+                "formal W08 must use the effective serial outer-fold setting")
+        # Formal W08 is fail-closed against accidentally re-enabling the
+        # L4/L5 cache and process-pool layer.
+        complex_layer_enabled = FORMAL_COMPLEX_LAYER_ENABLED
+    elif type(complex_layer_enabled) is not bool:
+        raise W08ValidationError("complex_layer_enabled must be boolean")
     config = _validate_config(config or load_config())
     if solver_max_iter is None:
         solver_max_iter = int(config["elastic_net_max_iter"])
@@ -3880,14 +3910,16 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
             solver_tolerance, population, split_summary, split_hash,
             int(outer_fold_workers), checkpoint_root, attempt_id, code_commit,
             resume, max_outer_folds=max_outer_folds,
-            progress_callback=emit_progress)
+            progress_callback=emit_progress,
+            complex_layer_enabled=complex_layer_enabled)
     population_names = list(OrderedDict(
         (run["population"], None) for run in selected_runs))
     predictions = []
     fold_results = []
     selection_results = []
-    representation_cache = FoldRepresentationCache(
+    representation_cache = (FoldRepresentationCache(
         provider, required_fold_columns)
+        if complex_layer_enabled else None)
     fold_count = 0
     # The full outer split is traversed first.  Fold-specific eligibility is
     # intentionally derived only after both provider transforms have consumed
@@ -3908,7 +3940,9 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
         inner_seed = 12345 + 1000 + 10 * (repeat - 1) + fold
         kmeans_seed = 12345 + 2000 + 10 * (repeat - 1) + fold
         solver_seed = 12345 + 3000 + 10 * (repeat - 1) + fold
-        state = representation_cache.get_or_fit(outer_train_ids, kmeans_seed)
+        state = (representation_cache.get_or_fit(outer_train_ids, kmeans_seed)
+                 if representation_cache is not None else
+                 provider.fit(outer_train_ids, kmeans_seed))
         _validate_fold_provider_state(
             provider, state, outer_train_ids, required_fold_columns)
         train_repr = _normalise_frame(provider.transform(outer_train_ids, state))
@@ -4192,7 +4226,23 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
                 int(row["linear_predictor_clipping"].get("count", 0))
                 for row in fold_results)),
         },
-        "representation_cache": representation_cache.audit(),
+        "representation_cache": (
+            representation_cache.audit()
+            if representation_cache is not None else {
+                "enabled": False,
+                "disposition": "disabled_for_formal_serial_execution",
+                "entries": 0,
+                "hits": 0,
+                "misses": 0,
+                "invalidations": [],
+            }),
+        "complex_layer": {
+            "enabled": bool(complex_layer_enabled),
+            "formal_effective_outer_fold_workers": (
+                int(FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS)
+                if require_fixed_hash else None),
+            "process_pool_used": False,
+        },
     }
     provider_cache_audit = getattr(provider, "representation_cache_audit", None)
     if callable(provider_cache_audit):
@@ -4207,10 +4257,13 @@ def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
 
 def run_w08(feature_frame, provider, config_path=DEFAULT_CONFIG,
             strict_schema=True, progress_callback=None,
-            outer_fold_workers=L5_DEFAULT_OUTER_FOLD_WORKERS,
+            outer_fold_workers=FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS,
             checkpoint_root=None, attempt_id=None, code_commit=None,
             resume=False):
     """Formal entry point: load only locked W06/W07 artifacts, then run in memory."""
+    if outer_fold_workers != FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS:
+        raise W08ValidationError(
+            "formal W08 outer_fold_workers must be the effective serial setting")
     config = load_config(config_path)
     population = load_frozen_a_population()
     outer_splits = load_frozen_outer_splits(population)
@@ -4225,7 +4278,8 @@ def run_w08(feature_frame, provider, config_path=DEFAULT_CONFIG,
         progress_callback=progress_callback,
         outer_fold_workers=outer_fold_workers,
         checkpoint_root=checkpoint_root, attempt_id=attempt_id,
-        code_commit=code_commit, resume=resume)
+        code_commit=code_commit, resume=resume,
+        complex_layer_enabled=FORMAL_COMPLEX_LAYER_ENABLED)
 
 
 def main():

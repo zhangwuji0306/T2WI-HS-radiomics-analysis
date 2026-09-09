@@ -6,7 +6,10 @@
   "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
   "elastic_net_max_iter": 3000,
   "execution": {
-    "outer_fold_workers": 2,
+    "outer_fold_workers": 1,
+    "historical_requested_outer_fold_workers": 2,
+    "formal_effective_outer_fold_workers": 1,
+    "complex_cache_and_parallel_enabled": false,
     "allowed_outer_fold_workers": [1, 2, 4],
     "thread_environment": {
       "OMP_NUM_THREADS": "1",

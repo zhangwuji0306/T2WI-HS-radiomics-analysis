@@ -694,6 +694,19 @@ def _environment_payload():
 
 
 def build_audit(real_a, performance, correctness):
+    script_path = os.path.abspath(__file__)
+    source_dir = os.path.dirname(script_path)
+    project_root = os.path.dirname(os.path.dirname(source_dir))
+    source_files = OrderedDict((
+        ("runner", script_path),
+        ("w08_nested_cv", os.path.join(source_dir, "w08_nested_cv.py")),
+        ("w08_formal_run_a", os.path.join(source_dir, "w08_formal_run_a.py")),
+        ("w08_config", os.path.join(
+            project_root, "prognosis_analysis", "configs", "w08_nested_cv.json")),
+        ("R6_5R_coordinate_reconciliation", os.path.join(
+            project_root, "prognosis_analysis",
+            "R6_5R_coordinate_reconciliation.json")),
+    ))
     return OrderedDict((
         ("schema", "w08_local_L6_integration_audit"),
         ("schema_version", "2.0"),
@@ -701,8 +714,14 @@ def build_audit(real_a, performance, correctness):
         ("scope", "A-only outcome-blind technical representation plus bounded synthetic integration probe"),
         ("source_binding", {
             "source_commit": _git_head(),
+            "source_commit_scope": (
+                "current checked-out code/config/evidence commit before the "
+                "audit artifacts are written"),
             "runner": "prognosis_analysis/scripts/w08_local_l6_probe.py",
-            "runner_sha256": _sha256_file(os.path.abspath(__file__)),
+            "runner_sha256": _sha256_file(script_path),
+            "source_file_sha256": OrderedDict((
+                (name, _sha256_file(path))
+                for name, path in source_files.items())),
             "runner_scope": "synthetic bounded performance and optional real-A technical provider probe",
         }),
         ("environment", _environment_payload()),
@@ -716,17 +735,28 @@ def build_audit(real_a, performance, correctness):
             "elastic_net_max_iter": w08.ELASTIC_NET_MAX_ITER,
             "elastic_net_tolerance": w08.ELASTIC_NET_TOLERANCE,
             "minimum_roi_size": formal.MINIMUM_ROI_SIZE,
-            "representation_workers": 2,
-            "outer_fold_workers": 2,
+            "historical_requested_representation_workers": 2,
+            "historical_requested_outer_fold_workers": 2,
+            "representation_workers": 1,
+            "outer_fold_workers": 1,
             "blas_omp_threads_per_worker": 1,
+            "complex_cache_and_parallel_enabled": False,
             "scientific_parameter_changes": False,
         }),
         ("correctness_matrix", correctness),
         ("real_a_technical_50fold_probe", real_a),
         ("timing_resource_comparison", performance),
         ("worker_decision", {
-            "representation_workers": 2,
-            "outer_fold_workers": 2,
+            "requested_worker_settings": {
+                "representation_workers": 2,
+                "outer_fold_workers": 2,
+                "numerical_threads_per_worker": 1,
+            },
+            "effective_formal_worker_settings": {
+                "representation_workers": 1,
+                "outer_fold_workers": 1,
+                "numerical_threads_per_worker": 1,
+            },
             "numerical_threads_per_worker": 1,
             "four_worker_allowed": False,
             "retain_cache_and_parallel": False,
@@ -737,19 +767,32 @@ def build_audit(real_a, performance, correctness):
             "formal_complex_layer_disposition": (
                 "disabled because the current bounded synthetic total probe "
                 "median reduction is below 20 percent"),
-            "four_worker_evidence": "not established; retain the approved 2-worker default",
+            "formal_process_pool_used": False,
+            "formal_representation_cache_initialized": False,
+            "four_worker_evidence": "not applicable after complex-layer removal",
         }),
         ("provenance_disposition", {
             "current_code_evidence_source": [
                 {
                     "path": "prognosis_analysis/scripts/w08_local_l6_probe.py",
-                    "sha256": _sha256_file(os.path.abspath(__file__)),
+                    "sha256": _sha256_file(script_path),
                 },
                 {
                     "path": "prognosis_analysis/scripts/w08_nested_cv.py",
                     "sha256": _sha256_file(os.path.join(
                         os.path.dirname(os.path.abspath(__file__)),
                         "w08_nested_cv.py")),
+                },
+                {
+                    "path": "prognosis_analysis/scripts/w08_formal_run_a.py",
+                    "sha256": _sha256_file(os.path.join(
+                        source_dir, "w08_formal_run_a.py")),
+                },
+                {
+                    "path": "prognosis_analysis/configs/w08_nested_cv.json",
+                    "sha256": _sha256_file(os.path.join(
+                        project_root, "prognosis_analysis", "configs",
+                        "w08_nested_cv.json")),
                 },
                 {
                     "path": "prognosis_analysis/R6_5R_coordinate_reconciliation.json",
@@ -841,7 +884,7 @@ def write_markdown(path, payload):
         "# W08 L6 本地集成等价性与执行参数审计", "", "## 结论", "",
         "当前代码的 L6 技术探针已完成。正确性矩阵由当前代码 synthetic probe 与锁定 unittest 证据组成；真实 A 探针覆盖 outcome-blind provider、K-means boundary、代表性 mask，以及由 `provider.transform` 生成的 G/R-low/R-high 表示，不是模型性能或正式 W08。",
         "",
-        "bounded synthetic technical probe 的三次同机重复中，集成总 probe 中位耗时相对 baseline 下降 %.2f%%；该结果低于 20%% 阈值，因此复杂缓存/并行层不启用于正式执行。正式本地参数唯一保持 `representation_workers=2`、`outer_fold_workers=2`、每 worker 数值线程为 1。" % (100.0 * performance["total_median_reduction_fraction"]),
+        "bounded synthetic technical probe 的三次同机重复中，集成总 probe 中位耗时相对 baseline 下降 %.2f%%；该结果低于 20%% 阈值，因此复杂缓存/并行层不启用于正式执行。历史请求参数为 `representation_workers=2`、`outer_fold_workers=2`；当前 formal effective 设置唯一为 `representation_workers=1`、`outer_fold_workers=1`、每 worker 数值线程为 1，且不初始化复杂缓存或进程池。" % (100.0 * performance["total_median_reduction_fraction"]),
         "",
         "## 环境与冻结绑定", "",
         "- Conda 环境：`t2_radiomics`；实际解释器：`%s`。" % payload["environment"]["actual_interpreter"].replace("\\", "/"),
@@ -889,7 +932,7 @@ def write_markdown(path, payload):
             real_a["metrics"]["representation_generation"]["feature_dimensions"]["G"],
             real_a["metrics"]["representation_generation"]["feature_dimensions"]["R_low"],
             real_a["metrics"]["representation_generation"]["feature_dimensions"]["R_high"]),
-        "- 每个 fold 记录 seed、centers/boundary、代表性 low/high mask voxel counts、training population count 和代表性 transform 完成摘要；不记录患者级明细或 per-fold hash。",
+        "- 每个 fold 记录 seed、centers/boundary、代表性 low/high mask voxel counts、training population count 和代表性 transform 完成摘要；不记录患者级明细或 per-fold hash。formal training population 仅保留聚合 count。",
         "- 旧 R6-6.5/G3R 记录中的 stale code/coordinate hash 保留为历史证据且不作为本次 L6 current-code 依据；本审计以 JSON `provenance_disposition.current_code_evidence_source` 为准。",
         "",
         "## 性能比较（bounded synthetic）", "",
@@ -903,7 +946,7 @@ def write_markdown(path, payload):
         "| mask signature reuse rate | %.4f | %.4f |" % (stages["technical_probe_baseline"]["mask_signature_reuse_rate"]["median"], stages["technical_probe_integrated"]["mask_signature_reuse_rate"]["median"]),
         "", "CPU、RSS、磁盘 read/write 的每次原始记录与 median/range 均保存在 JSON；性能数字仅表示 bounded technical software probe。", "",
         "## 回归与安全边界", "",
-        "- 定向回归：43/43 通过、0 failed、0 errors；完整回归：305 tests，304 通过、1 failed、0 errors。唯一失败为既有 `execution_status` wording assertion，未由本次 L6 文件变更引起。两次回归、compileall 和 `git diff --check` 均通过 wrapper/检查命令执行。",
+        "- 定向与完整回归、compileall 和 `git diff --check` 的最终计数见 JSON `test_evidence`；完整回归若保留既有 `execution_status` wording assertion，则仅该已知失败可接受。所有 Python 检查均通过 wrapper 执行。",
         "- 不启动 formal W08，不生成 risk、prediction、performance 或 model-freeze lock；不读 B，不写患者级输出。",
         "- `formal_100_point_3000_iteration_performance_completed=false`；真实 A 50-fold provider probe 与 synthetic bounded performance probe 不替代彼此。",
         "",
