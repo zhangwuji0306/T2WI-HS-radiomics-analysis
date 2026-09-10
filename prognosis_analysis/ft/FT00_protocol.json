@@ -1,0 +1,293 @@
+{
+  "schema_version": "1.0",
+  "artifact_id": "FT00_protocol",
+  "stage": "FT00",
+  "status": "frozen",
+  "created_at": "2026-09-10T23:41:03+08:00",
+  "exploratory_label": "exploratory_fullA_habitat_non_nested_validation",
+  "scope": {
+    "branch": "FT",
+    "description": "Independent exploratory fast-validation branch for full_A habitat.",
+    "formal_relationship": "independent_of_formal_L9_and_W08",
+    "authorized_stage": "FT00_only",
+    "downstream_stages_not_executed": ["FT01", "FT02", "FT03", "FT04", "FT05", "FT06", "FT07"]
+  },
+  "baseline": {
+    "repository_head": "88ffcda16b8ba16324f6824637490d5bc1652ef8",
+    "branch_at_baseline": "main",
+    "formal_w08_state_at_baseline": {
+      "stage": "W08",
+      "gate": "HOLD",
+      "formal_w08_started": true,
+      "last_attempt_status": "failed",
+      "final_outputs_generated": false
+    },
+    "preexisting_untracked_inputs_not_modified": [
+      "T2WI-HS 生境预后快速验证（FT）方案书.md",
+      "_codex_ft_run_20260910_01a08bf3/FT00_contract.md"
+    ]
+  },
+  "source_references": [
+    {
+      "path": "_codex_ft_run_20260910_01a08bf3/FT00_contract.md",
+      "role": "worker_contract",
+      "sha256": "0deccaab491ef8eef2e2fb938e1f0541298cae1cded5a826a7943573d778d87f"
+    },
+    {
+      "path": "T2WI-HS 生境预后快速验证（FT）方案书.md",
+      "role": "FT_scientific_scheme",
+      "sha256": "e540f6d29d2faa4c4af748c6597035cd38c1f0bbba193eb5d774e19fbbb40f73"
+    },
+    {
+      "path": "PROJECT_STATUS.md",
+      "role": "project_state",
+      "sha256": "e4a7fc73605d386f3b1e6a9c32393b1f740915b6217863ebe4d5a8904e3a523c"
+    },
+    {
+      "path": "项目说明.md",
+      "role": "project_entry_and_data_boundary",
+      "sha256": "823b17ae8a5b37b36ac71760536e7949d708072205265e33af9fc245e3c9c847"
+    },
+    {
+      "path": "T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md",
+      "role": "current_execution_SOP",
+      "sha256": "c7590746f2a714c7e8b80e3a1aba38876cb8627f11a17560016e311b0903c75f"
+    },
+    {
+      "path": "T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md",
+      "role": "scientific_master_protocol",
+      "sha256": "cc881c008629a1acc0a2b4e6570b4ef277faa27ed5c9f12f908ee947b42381dd"
+    },
+    {
+      "path": "AGENTS.md",
+      "role": "project_agent_instructions",
+      "sha256": "e021b216daad7fd843e63e508409071b4570f4cfb0e8a0ec267ccf06d1aa7913"
+    },
+    {
+      "path": "habitat_analysis/freeze_lock.json",
+      "role": "existing_technical_freeze_lock",
+      "sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262"
+    },
+    {
+      "path": "habitat_analysis/configs/main_cross_case_kmeans_k2_4mm.json",
+      "role": "existing_frozen_habitat_method_config",
+      "sha256": "fc2f856b3bc3fcd3d358f4476fd87a8117568712b3fc382c5e24e315e976bb3f"
+    },
+    {
+      "path": "feature_extract/configs/radiomics_params.yaml",
+      "role": "existing_frozen_radiomics_config",
+      "sha256": "5cad11c0c3671148e1d16a23b77263fbbcc7470c2e42bd28a8077bab60e058e9"
+    },
+    {
+      "path": "prognosis_analysis/W02_habitat_radiomics_protocol.md",
+      "role": "existing_W02_radiomics_protocol",
+      "sha256": "110fffe7bb2276d27276a338ff8cda829f7b22ffb522f539cad054c0c5bd4672"
+    },
+    {
+      "path": "prognosis_analysis/configs/w02_habitat_radiomics.json",
+      "role": "existing_W02_radiomics_config",
+      "sha256": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f"
+    },
+    {
+      "path": "prognosis_analysis/W03_habitat_radiomics_protocol.md",
+      "role": "existing_W03_radiomics_protocol",
+      "sha256": "1a572d42e405cf9b4bcc71576927ca498b373ffb43cbbacc5f75c3bc5c0b73c6"
+    },
+    {
+      "path": "prognosis_analysis/configs/w03_habitat_radiomics.json",
+      "role": "existing_W03_radiomics_config",
+      "sha256": "cfd98e5aa68f5cfcbe070287c702bd9582112c7e27f6ff4641748a78abd34307"
+    },
+    {
+      "path": "prognosis_analysis/modeling_protocol.json",
+      "role": "existing_W04_modeling_protocol",
+      "sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe"
+    },
+    {
+      "path": "prognosis_analysis/execution_status.json",
+      "role": "formal_execution_and_B_access_state",
+      "sha256": "dc92ef6dd730f660d40814e8374286fd0b8208e98cb8f167589e7f0e4c25675b"
+    },
+    {
+      "path": "prognosis_analysis/configs/w07_outer_splits.json",
+      "role": "existing_frozen_W07_split_config",
+      "sha256": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217"
+    },
+    {
+      "path": "prognosis_analysis/W07_outer_splits_protocol.md",
+      "role": "existing_frozen_W07_split_protocol",
+      "sha256": "058c3b8067d1e8429387e0a5bd999b41e9986e69220e07b5e7d3d0407fcff329"
+    },
+    {
+      "path": "prognosis_analysis/output/outer_splits_A.csv",
+      "role": "existing_frozen_W07_split_artifact",
+      "sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502"
+    },
+    {
+      "path": "prognosis_analysis/W07A_pre_W08_protocol_amendment.json",
+      "role": "existing_pre_W08_protocol_amendment",
+      "sha256": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14"
+    },
+    {
+      "path": "prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json",
+      "role": "existing_W03_candidate_freeze",
+      "sha256": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2"
+    },
+    {
+      "path": "prognosis_analysis/output/w03_habitat_radiomics_A/feature_schema.json",
+      "role": "existing_W03_feature_schema",
+      "sha256": "17d96e2ec8567b8f39cc7ff9cb72f792bdecc31d2d275ff8345cf9b6035a1d04"
+    },
+    {
+      "path": "prognosis_analysis/output/w03_habitat_radiomics_A/output_manifest.json",
+      "role": "existing_W03_output_manifest",
+      "sha256": "85756d47dafa858c9ac554d85313327ba5b7dbf7e72073ef43fa42460e01b444"
+    }
+  ],
+  "technical_freeze": {
+    "habitat": "full_A",
+    "method": "existing frozen full_A habitat; no re-optimization",
+    "parameters": {
+      "slic": "existing frozen 3D 4 mm SLIC",
+      "k": 2,
+      "n_init": 100,
+      "low_center": 2.1017172894786142,
+      "high_center": 3.519630201535477,
+      "boundary": 2.810673745507046,
+      "R_low": {
+        "candidate_count": 49,
+        "candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0"
+      },
+      "R_high": {
+        "candidate_count": 10,
+        "candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
+      },
+      "whole_tumor": "existing frozen A/B feature assets only"
+    },
+    "forbidden_changes": [
+      "A_or_B_cohort_definition",
+      "DFS_endpoint",
+      "full_A_habitat",
+      "SLIC",
+      "K",
+      "n_init",
+      "H_low_H_high_definition",
+      "C",
+      "G",
+      "R_low",
+      "R_high",
+      "W",
+      "DFS_based_univariate_screening_on_full_A"
+    ]
+  },
+  "model_contract": {
+    "family": "Cox",
+    "high_dimensional_alpha": 1.0,
+    "lambda_selection": "ordinary single-layer 5-fold CV on A training data",
+    "a_cv": {
+      "design": "ordinary single-layer 5-fold CV",
+      "split_source": "existing frozen W07 outer split artifact",
+      "split_reuse": "reuse one pre-frozen W07 fold set; preferred repeat=1",
+      "performance_label": "non_nested_exploratory_estimate",
+      "regeneration_from_performance": false
+    },
+    "models": [
+      {"id": "M0", "predictor_blocks": ["C"], "family": "Cox", "penalized": false},
+      {"id": "M1", "predictor_blocks": ["C", "H_high_fraction"], "family": "Cox", "penalized": false},
+      {"id": "M2", "predictor_blocks": ["C", "G"], "family": "Cox", "penalized": false},
+      {"id": "M3L", "predictor_blocks": ["C", "G", "R_low"], "family": "Cox", "penalized": true, "alpha": 1.0},
+      {"id": "M3H", "predictor_blocks": ["C", "G", "R_high"], "family": "Cox", "penalized": true, "alpha": 1.0},
+      {"id": "M4", "predictor_blocks": ["C", "G", "R_low", "R_high"], "family": "Cox", "penalized": true, "alpha": 1.0},
+      {"id": "M5", "predictor_blocks": ["C", "W"], "family": "Cox", "penalized": true, "alpha": 1.0}
+    ],
+    "comparisons": [
+      {"id": "M0_vs_M1", "models": ["M0", "M1"], "population": "common eligible population"},
+      {"id": "M0_vs_M2", "models": ["M0", "M2"], "population": "common eligible population"},
+      {"id": "M2_vs_M3L", "models": ["M2", "M3L"], "population": "R_low eligible population"},
+      {"id": "M2_vs_M3H", "models": ["M2", "M3H"], "population": "R_high eligible population"},
+      {"id": "M3L_vs_M3H", "models": ["M3L", "M3H"], "population": "dual-radiomics eligible population"},
+      {"id": "M2_vs_M4", "models": ["M2", "M4"], "population": "dual-radiomics eligible population"},
+      {"id": "M0_vs_M5", "models": ["M0", "M5"], "population": "W-available population"}
+    ]
+  },
+  "endpoint_and_outputs": {
+    "primary_endpoint": "DFS",
+    "horizons_years": [3, 5],
+    "A_outputs_prespecified": [
+      "cross_validated_risk_score",
+      "Uno_C_index",
+      "Harrell_C_index",
+      "AUC_3_year",
+      "AUC_5_year",
+      "Brier_3_year",
+      "Brier_5_year",
+      "calibration",
+      "KM",
+      "DCA",
+      "bootstrap_95_percent_CI",
+      "paired_model_comparisons"
+    ],
+    "B_rule": "A model freeze precedes one-time B external validation",
+    "B_existing_assets_only": true,
+    "B_reextraction": false,
+    "B_feature_checks": [
+      "patient_ID_schema",
+      "feature_names",
+      "feature_order",
+      "R_low_R_high_W_availability",
+      "candidate_hashes",
+      "radiomics_configuration_provenance",
+      "A_B_feature_definition_compatibility"
+    ]
+  },
+  "isolation_boundary": {
+    "allowed_ft00_read_scope": [
+      "FT scheme and worker contract",
+      "non-sensitive project status and documentation",
+      "existing technical freeze lock",
+      "existing W04 modeling protocol",
+      "existing W07 split metadata and artifact hash",
+      "existing W03 candidate-freeze metadata",
+      "locked environment probe"
+    ],
+    "outcome_data_read": {
+      "A_outcome_read": false,
+      "B_data_read": false,
+      "B_reader_invoked": false,
+      "B_source_opened": false,
+      "B_statistics_generated": false
+    },
+    "write_namespace": "prognosis_analysis/output/ft_20260910_01a08bf3/",
+    "tracked_ft00_artifacts": [
+      "prognosis_analysis/ft/FT00_protocol.json",
+      "prognosis_analysis/ft/FT00_isolation_audit.md"
+    ],
+    "formal_write_denials": [
+      "habitat_analysis/freeze_lock.json",
+      "prognosis_analysis/modeling_protocol.json",
+      "prognosis_analysis/execution_status.json",
+      "prognosis_analysis/configs/w07_outer_splits.json",
+      "prognosis_analysis/output/outer_splits_A.csv",
+      "prognosis_analysis/model_freeze_lock.json",
+      "formal W08/L9 output namespaces",
+      "all B source, feature, QC, outcome, and performance assets"
+    ],
+    "b_unlock_authority": "FT-specific B access amendment after FT04 review; no FT00 authority",
+    "model_freeze_state_at_ft00": {
+      "formal_model_freeze_lock": "absent",
+      "FT_model_freeze_lock": "not_created_before_FT04"
+    }
+  },
+  "validation_evidence": {
+    "static_checks": "recorded in FT00_isolation_audit.md",
+    "environment_probe": {
+      "command": "tools/run_t2_radiomics.ps1",
+      "environment": "t2_radiomics",
+      "python": "3.7.12",
+      "pyradiomics": "3.0.1",
+      "simpleitk": "2.2.1",
+      "matches_locked_spec": true,
+      "python_analysis_executed": false
+    }
+  }
+}
