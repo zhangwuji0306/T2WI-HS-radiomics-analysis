@@ -122,8 +122,8 @@ files at FT00 validation.
 
 - `codex/ft-validation` is based directly on the pre-FT baseline commit above
   and contains the two FT00 deliverables.
-- `main` retains its published history; FT00 artifacts are removed there by a
-  normal, recoverable cleanup commit after the dedicated branch was created.
+- `main` retains its published history; FT00 artifacts are removed there by
+  normal, recoverable cleanup commit `b0930615fe9974d890e1b52f2b739e47e1fa04a2`.
 - The dedicated branch is the only downstream handoff branch for later FT
   units.
 
