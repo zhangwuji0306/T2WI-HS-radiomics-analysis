@@ -1,10 +1,11 @@
 """FT02 A-only modeling and technical interfaces.
 
-This module is intentionally in-memory.  It consumes an already authorized A
-feature frame and the pre-frozen W07 repeat-1 split frame; it never opens a
-patient-data source and never writes a formal or FT result file.  FT03 can use
-the returned fold predictions and the metric/data hooks without changing the
-frozen W08/L9 implementation.
+This module is intentionally in-memory.  It consumes an A feature frame as
+ordinary data and revalidates production inputs against the pre-frozen W07
+repeat-1 split at each fitting boundary; it never opens a patient-data source
+and never writes a formal or FT result file.  FT03 can use the returned fold
+predictions and metric/data hooks without changing the frozen W08/L9
+implementation.
 """
 from __future__ import absolute_import
 
@@ -15,7 +16,6 @@ import os
 import re
 import sys
 from collections import OrderedDict
-import weakref
 
 import numpy as np
 import pandas as pd
@@ -370,10 +370,37 @@ def _validate_w07_repeat1(split, expected_ids=None):
 
 def load_frozen_w07_repeat1():
     """Load the project-bound W07 artifact and return its repeat-1 slice."""
+    expected_split_path = os.path.join(
+        _PROJECT_ROOT, "prognosis_analysis", "output", "outer_splits_A.csv")
+    expected_population_path = os.path.join(
+        _PROJECT_ROOT, "prognosis_analysis", "output", "A_modeling",
+        "A_modeling_population.csv")
+    expected_split_hash = (
+        "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502")
+    expected_repeat1_hash = (
+        "774436340ce68cd70a2c6acd17acbb7fa484fd7f29989f12670dde519c9f376d")
+    expected_w06_hashes = {
+        "FROZEN_W06_SOURCE_SHA256":
+            "5c93441f535ba86d965c3da14b4b33fe52f73d4337cd15a670b3ca2b8a2c23e4",
+        "FROZEN_W06_SCHEMA_SHA256":
+            "41f6a6ac69bc0727755817d1e3e6902e24c612c00d6c88f52c4c2f42904039c6",
+        "FROZEN_W06_SOURCE_AUDIT_SHA256":
+            "0814082014600935922d3b082b678217b81aef710b3efe62a2103a67a85ae319",
+    }
+    if os.path.normcase(os.path.abspath(W07_SPLIT_ARTIFACT)) != \
+            os.path.normcase(os.path.abspath(expected_split_path)) or \
+            os.path.normcase(os.path.abspath(_w08.DEFAULT_POPULATION)) != \
+            os.path.normcase(os.path.abspath(expected_population_path)):
+        raise FTValidationError("frozen A393/W07 source identity changed")
+    if W07_SPLIT_ARTIFACT_SHA256 != expected_split_hash or \
+            W07_REPEAT1_CANONICAL_SHA256 != expected_repeat1_hash:
+        raise FTValidationError("frozen W07 hash binding changed")
+    for name, expected in expected_w06_hashes.items():
+        if getattr(_w08.w07, name, None) != expected:
+            raise FTValidationError("frozen W06 source hash binding changed")
     if not os.path.isfile(W07_SPLIT_ARTIFACT):
         raise FTValidationError("frozen W07 split artifact is missing")
-    if _sha256_file(W07_SPLIT_ARTIFACT).lower() != \
-            W07_SPLIT_ARTIFACT_SHA256:
+    if _sha256_file(W07_SPLIT_ARTIFACT).lower() != expected_split_hash:
         raise FTValidationError("frozen W07 split artifact hash mismatch")
     try:
         population = _w08.load_frozen_a_population()
@@ -452,154 +479,57 @@ def population_mask(frame, population):
     raise FTValidationError("unknown FT population: %s" % population)
 
 
-def _make_fit_context_support():
-    """Create contexts whose issuance records stay private to this closure."""
-    production_records = weakref.WeakKeyDictionary()
-    test_records = weakref.WeakKeyDictionary()
-
-    class _ValidatedFitContext(object):
-        """Context data; registry membership is the provenance proof."""
-
-        __slots__ = ("frame", "split", "__weakref__")
-
-        def __init__(self, frame, split):
-            # Direct construction intentionally creates an unregistered object.
-            self.frame = frame.copy()
-            self.split = split.copy()
-
-    def record(context):
-        frame = context.frame
-        split = context.split
-        return {
-            "frame_columns": tuple(frame.columns),
-            "frame_hash": _canonical_frame_hash(frame, list(frame.columns)),
-            "frame_schema_hash": schema_hash(frame),
-            "split_columns": tuple(split.columns),
-            "split_hash": _canonical_split_hash(split),
-        }
-
-    def register(registry, frame, split):
-        context = _ValidatedFitContext(frame, split)
-        registry[context] = record(context)
-        return context
-
-    def issue_production(frame, split):
-        return register(production_records, frame, split)
-
-    def issue_test(frame, split):
-        return register(test_records, frame, split)
-
-    def matches(context, expected):
-        try:
-            frame = context.frame
-            split = context.split
-            if tuple(frame.columns) != expected["frame_columns"] or \
-                    tuple(split.columns) != expected["split_columns"]:
-                return False
-            return _canonical_frame_hash(frame, list(frame.columns)) == \
-                expected["frame_hash"] and schema_hash(frame) == \
-                expected["frame_schema_hash"] and \
-                _canonical_split_hash(split) == expected["split_hash"]
-        except (AttributeError, KeyError, TypeError, ValueError, FTValidationError):
-            return False
-
-    def is_production(context):
-        if not isinstance(context, _ValidatedFitContext):
-            return False
-        expected = production_records.get(context)
-        return expected is not None and matches(context, expected)
-
-    def is_test(context):
-        if not isinstance(context, _ValidatedFitContext):
-            return False
-        expected = test_records.get(context)
-        return expected is not None and matches(context, expected)
-
-    def build_production(frame, models=None):
-        """Load and validate the fixed A393/W07 inputs before private issuance."""
-        frozen_split, frozen_population = load_frozen_w07_repeat1()
-        model_ids = list(FT_MODEL_SPECS if models is None else models)
-        checked = validate_proven_a_frame(
-            frame, frozen_population, models=model_ids)
-        split_checked = _validate_w07_repeat1(
-            validate_frozen_split(
-                frozen_split, frame=checked, repeat=W07_REPEAT1),
-            expected_ids=frozen_population["patient_id"].astype(str))
-        return issue_production(checked, split_checked), split_checked
-
-    # The production issuer is deliberately not returned.  Only this closure's
-    # validated builder can reach it; test issuance remains separately exposed.
-    return (_ValidatedFitContext, issue_test, is_production, is_test,
-            build_production)
+def verify_authoritative_production_inputs(full_frame, model_id, population,
+                                           fold):
+    """Reload and verify the authoritative A393/W07 inputs for one fold."""
+    allowed_populations = {
+        "M0": {"main"},
+        "M1": {"main"},
+        "M2": {"main", "R_low", "R_high", "dual_radiomics"},
+        "M3L": {"R_low", "dual_radiomics"},
+        "M3H": {"R_high", "dual_radiomics"},
+        "M4": {"dual_radiomics", "dual_radiomics_and_W_Original"},
+        "M5": {"W_Original", "dual_radiomics_and_W_Original"},
+    }
+    if model_id not in allowed_populations or \
+            population not in allowed_populations[model_id]:
+        raise FTValidationError("model population is not an FT02 paired contract")
+    try:
+        fold = int(fold)
+    except (TypeError, ValueError):
+        raise FTValidationError("production fold is not an integer")
+    if fold not in (1, 2, 3, 4, 5):
+        raise FTValidationError("production fold is outside W07 repeat 1")
+    frozen_split, frozen_population = load_frozen_w07_repeat1()
+    checked = validate_proven_a_frame(
+        full_frame, frozen_population, models=[model_id]).reset_index(drop=True)
+    split = _validate_w07_repeat1(
+        validate_frozen_split(
+            frozen_split, frame=checked, repeat=W07_REPEAT1),
+        expected_ids=frozen_population["patient_id"].astype(str))
+    eligible_ids = checked.loc[
+        population_mask(checked, population), "patient_id"].astype(str)
+    train, valid = _rows_for_fold(split, checked, fold, eligible_ids)
+    return {
+        "frame": checked,
+        "split": split,
+        "train": train.reset_index(drop=True),
+        "validation": valid.reset_index(drop=True),
+        "model_id": model_id,
+        "population": population,
+        "fold": fold,
+    }
 
 
-(_ValidatedFitContext, _issue_test_fit_context, _is_production_fit_context,
- _is_test_fit_context, _build_validated_a_context) = _make_fit_context_support()
-
-
-def _build_test_fit_context(frame, split, repeat=1):
-    """Build the explicitly test-only context for synthetic FT fixtures."""
-    checked = validate_ft_frame(frame)
-    split_checked = validate_frozen_split(split, frame=checked, repeat=repeat)
-    return _issue_test_fit_context(checked, split_checked)
-
-
-def _validate_fit_context(context, train_frame, validation_frame,
-                          test_only=False):
-    """Fail closed unless fitting has a valid production/test-only issuance."""
-    context_is_valid = (_is_test_fit_context(context) if test_only
-                        else _is_production_fit_context(context))
-    if not context_is_valid:
-        raise FTValidationError(
-            "fold fitting requires an issued verified A context")
-    train = validate_ft_frame(train_frame).reset_index(drop=True)
-    valid = validate_ft_frame(validation_frame).reset_index(drop=True)
+def _validate_test_fit_boundary(train_frame, validation_frame, model_id):
+    """Validate rows for the explicitly test-only synthetic fitter."""
+    train = validate_ft_frame(train_frame, models=[model_id]).reset_index(drop=True)
+    valid = validate_ft_frame(
+        validation_frame, models=[model_id]).reset_index(drop=True)
     train_ids = set(train["patient_id"].astype(str))
     valid_ids = set(valid["patient_id"].astype(str))
     if not train_ids or not valid_ids or train_ids & valid_ids:
-        raise FTValidationError("validated fold context has invalid train/validation IDs")
-    if not (train_ids | valid_ids).issubset(
-            set(context.frame["patient_id"].astype(str))):
-        raise FTValidationError("fold rows are outside the validated frame context")
-    reference = context.frame.copy()
-    reference["patient_id"] = reference["patient_id"].astype(str).str.strip()
-    reference = reference.set_index("patient_id")
-    for subset, ids in ((train, train_ids), (valid, valid_ids)):
-        observed = subset.copy()
-        observed["patient_id"] = observed["patient_id"].astype(str).str.strip()
-        observed = observed.set_index("patient_id")
-        ordered = sorted(ids)
-        for column in ("DFS_time", "DFS_event", "split",
-                       "technical_cohort", "modeling_eligible"):
-            if column not in observed.columns or column not in reference.columns:
-                continue
-            expected = reference.loc[ordered, column]
-            actual = observed.loc[ordered, column]
-            if column in ("DFS_time", "DFS_event", "modeling_eligible"):
-                expected_values = pd.to_numeric(expected, errors="coerce").to_numpy()
-                actual_values = pd.to_numeric(actual, errors="coerce").to_numpy()
-                same = np.array_equal(expected_values, actual_values)
-            else:
-                same = (expected.astype(str).to_numpy() ==
-                        actual.astype(str).to_numpy()).all()
-            if not same:
-                raise FTValidationError(
-                    "fold rows differ from the validated A/test context")
-    split = context.split
-    for role, ids in (("train", train_ids), ("validation", valid_ids)):
-        allowed = set(split.loc[split["role"].eq(role), "patient_id"])
-        if not ids.issubset(allowed):
-            raise FTValidationError("fold rows do not match the validated split role")
-    if not test_only:
-        required = {"split", "technical_cohort", "modeling_eligible"}
-        if not required.issubset(train.columns) or \
-                not required.issubset(valid.columns):
-            raise FTValidationError("A provenance was lost before fold fitting")
-        for subset, ids in ((train, train_ids), (valid, valid_ids)):
-            if not subset["split"].astype(str).str.strip().str.upper().eq("A").all() or \
-                    not subset["technical_cohort"].astype(str).str.strip().eq("A393").all() or \
-                    not pd.to_numeric(subset["modeling_eligible"], errors="coerce").eq(1).all():
-                raise FTValidationError("fold fitting received unproven A provenance")
+        raise FTValidationError("test fold has invalid train/validation IDs")
     return train, valid
 
 
@@ -748,16 +678,14 @@ def fit_fold_a(train_frame, validation_frame, model_id, seed=12345,
         "fit_fold_a is internal-only; use the validated FT02 A entry point")
 
 
-def _fit_fold_a_impl(train_frame, validation_frame, model_id, fit_context,
-                     seed=12345, lambda_count=20, max_iter=1000,
-                     tolerance=1e-7, test_only=False):
-    """Fit one fold after its production or test-only boundary is proven."""
+def _fit_fold_a_for_testing_impl(train_frame, validation_frame, model_id,
+                                 seed=12345, lambda_count=20, max_iter=1000,
+                                 tolerance=1e-7):
+    """Numerical implementation used only by the synthetic test fitter."""
     if model_id not in FT_MODEL_SPECS:
         raise FTValidationError("unknown FT model: %s" % model_id)
-    train, valid = _validate_fit_context(
-        fit_context, train_frame, validation_frame, test_only=test_only)
-    train = validate_ft_frame(train, models=[model_id]).reset_index(drop=True)
-    valid = validate_ft_frame(valid, models=[model_id]).reset_index(drop=True)
+    train = train_frame.reset_index(drop=True)
+    valid = validation_frame.reset_index(drop=True)
     prep = FTPreprocessor(model_id).fit(train)
     X_train = prep.transform(train)
     X_valid = prep.transform(valid)
@@ -812,23 +740,79 @@ def _fit_fold_a_impl(train_frame, validation_frame, model_id, fit_context,
     }
 
 
-def _fit_fold_a(train_frame, validation_frame, model_id, fit_context,
-                seed=12345, lambda_count=20, max_iter=1000, tolerance=1e-7):
-    """Fit one production fold with an issued A393/W07 context only."""
-    return _fit_fold_a_impl(
-        train_frame, validation_frame, model_id, fit_context,
-        seed=seed, lambda_count=lambda_count, max_iter=max_iter,
-        tolerance=tolerance, test_only=False)
+def _fit_fold_a(full_frame, model_id, population, fold, seed=12345,
+                lambda_count=20, max_iter=1000, tolerance=1e-7):
+    """Fit one production fold after reloading authoritative A393/W07 data."""
+    if int(seed) != W07_REPEAT1_SEED:
+        raise FTValidationError("production fitting seed is not W07 repeat 1")
+    verified = verify_authoritative_production_inputs(
+        full_frame, model_id, population, fold)
+    train = verified["train"]
+    valid = verified["validation"]
+    prep = FTPreprocessor(model_id).fit(train)
+    X_train = prep.transform(train)
+    X_valid = prep.transform(valid)
+    time_train = train["DFS_time"].to_numpy(dtype=float)
+    event_train = train["DFS_event"].to_numpy(dtype=int)
+    spec = FT_MODEL_SPECS[model_id]
+    selection = {
+        "alpha": None,
+        "lambda_selection_scope": "not_applicable_unpenalized",
+        "outer_validation_used_for_lambda": False,
+        "outer_validation_used_for_selection": False,
+    }
+    if spec["penalized"]:
+        selection = _inner_lambda_selection(
+            train, model_id, seed, lambda_count=lambda_count,
+            max_iter=max_iter, tolerance=tolerance)
+        outer_max = _w08._lambda_max(X_train, time_train, event_train, 1.0)
+        final_lambda = float(outer_max * selection["lambda_ratio"])
+        if not np.isfinite(final_lambda) or final_lambda <= 0:
+            raise FTValidationError("training-only lambda is nonpositive")
+        model = _w08.CoxElasticNetModel(
+            1.0, final_lambda, max_iter=max_iter, tolerance=tolerance).fit(
+                X_train, time_train, event_train)
+        selection["outer_lambda_reference"] = float(outer_max)
+        selection["outer_lambda"] = final_lambda
+        selection["alpha"] = 1.0
+    else:
+        model = _w08.CoxPHModel(max_iter=max_iter, tolerance=tolerance).fit(
+            X_train, time_train, event_train)
+    _w08._require_converged_model(model, "FT %s Cox" % model_id)
+    risk = model.predict_risk(X_valid)
+    if not np.isfinite(risk).all():
+        raise FTValidationError("FT risk prediction is nonfinite")
+    survival = model.predict_survival(
+        X_valid, OrderedDict((("3_year", 36.0), ("5_year", 60.0))))
+    for horizon_name in ("3_year", "5_year"):
+        values = np.asarray(survival[horizon_name], dtype=float)
+        if len(values) != len(risk) or not np.isfinite(values).all() or \
+                np.any(values < 0.0) or np.any(values > 1.0):
+            raise FTValidationError(
+                "FT %s survival prediction is not a probability" % horizon_name)
+    return {
+        "model": model,
+        "preprocessor": prep,
+        "risk": risk,
+        "survival": survival,
+        "selection": selection,
+        "preprocessing": prep.audit(),
+        "fit_audit": dict(model.fit_audit),
+        "alpha": 1.0 if spec["penalized"] else None,
+        "family": "Cox",
+    }
 
 
 def _fit_fold_a_for_testing(train_frame, validation_frame, model_id,
-                            fit_context, seed=12345, lambda_count=20,
+                            seed=12345, lambda_count=20,
                             max_iter=1000, tolerance=1e-7):
     """Test-only synthetic fitter; never used by the production A runner."""
-    return _fit_fold_a_impl(
-        train_frame, validation_frame, model_id, fit_context,
+    train, valid = _validate_test_fit_boundary(
+        train_frame, validation_frame, model_id)
+    return _fit_fold_a_for_testing_impl(
+        train, valid, model_id,
         seed=seed, lambda_count=lambda_count, max_iter=max_iter,
-        tolerance=tolerance, test_only=True)
+        tolerance=tolerance)
 
 
 def _rows_for_fold(split, frame, fold, eligible_ids):
@@ -868,9 +852,9 @@ def _model_population(model_id):
     return "main"
 
 
-def _fit_model_cv(frame, split, model_id, population, fit_context,
+def _fit_model_cv(frame, split, model_id, population,
                   lambda_count=20, max_iter=1000, tolerance=1e-7,
-                  test_only=False):
+                  test_only=False, complete_frame=None):
     """Fit one model on one explicit eligible population and frozen folds."""
     eligible = frame.loc[population_mask(frame, population), "patient_id"].astype(str)
     if eligible.empty:
@@ -889,11 +873,19 @@ def _fit_model_cv(frame, split, model_id, population, fit_context,
         unique_seeds = pd.to_numeric(seed_values, errors="coerce").dropna().unique()
         if len(unique_seeds) != 1:
             raise FTValidationError("fold %d seed is ambiguous" % fold)
-        fit_function = _fit_fold_a_for_testing if test_only else _fit_fold_a
-        fitted = fit_function(
-            train, valid, model_id, fit_context=fit_context,
-            seed=int(unique_seeds[0]),
-            lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance)
+        fit_kwargs = {
+            "seed": int(unique_seeds[0]),
+            "lambda_count": lambda_count,
+            "max_iter": max_iter,
+            "tolerance": tolerance,
+        }
+        if test_only:
+            fitted = _fit_fold_a_for_testing(
+                train, valid, model_id, **fit_kwargs)
+        else:
+            fitted = _fit_fold_a(
+                frame if complete_frame is None else complete_frame,
+                model_id, population, fold, **fit_kwargs)
         valid_ids = valid["patient_id"].astype(str).tolist()
         for index, identifier in enumerate(valid_ids):
             if identifier in risk_by_id:
@@ -1012,24 +1004,9 @@ def _json_number(value):
 
 def _run_ft02_a_core(frame, split, model_ids, repeat=1, lambda_count=20,
                      max_iter=1000, tolerance=1e-7, split_source=None,
-                     fit_context=None, test_only=False):
+                     test_only=False):
     """Run the in-memory core after the boundary and split have been proven."""
     split = validate_frozen_split(split, frame=frame, repeat=repeat)
-    context_is_valid = (_is_test_fit_context(fit_context) if test_only
-                        else _is_production_fit_context(fit_context))
-    if not context_is_valid:
-        raise FTValidationError(
-            "FT02 core requires an issued verified A context")
-    if tuple(fit_context.frame.columns) != tuple(frame.columns) or \
-            schema_hash(fit_context.frame) != schema_hash(frame) or \
-            _canonical_frame_hash(
-                fit_context.frame, list(fit_context.frame.columns)) != \
-            _canonical_frame_hash(frame, list(frame.columns)):
-        raise FTValidationError("FT02 fitting context does not match the input frame")
-    if fit_context.split.columns.tolist() != split.columns.tolist() or \
-            _canonical_split_hash(fit_context.split) != \
-            _canonical_split_hash(split):
-        raise FTValidationError("FT02 fitting context does not match the frozen split")
     split_hash = _canonical_split_hash(split)
     split_seeds = sorted(set(split["seed"].astype(int).tolist()))
     if len(split_seeds) != 1:
@@ -1048,7 +1025,7 @@ def _run_ft02_a_core(frame, split, model_ids, repeat=1, lambda_count=20,
             frame.loc[population_mask(frame, population), "patient_id"]))
         if key not in fit_cache:
             fit_cache[key] = _fit_model_cv(
-                frame, split, model_id, population, fit_context=fit_context,
+                frame, split, model_id, population,
                 lambda_count=lambda_count,
                 max_iter=max_iter, tolerance=tolerance,
                 test_only=test_only)
@@ -1075,15 +1052,17 @@ def _run_ft02_a_core(frame, split, model_ids, repeat=1, lambda_count=20,
         if left_key not in fit_cache:
             common_frame = frame[frame["patient_id"].astype(str).isin(set(common_ids))]
             fit_cache[left_key] = _fit_model_cv(
-                common_frame, split, left, population, fit_context=fit_context,
+                common_frame, split, left, population,
                 lambda_count=lambda_count, max_iter=max_iter,
-                tolerance=tolerance, test_only=test_only)
+                tolerance=tolerance, test_only=test_only,
+                complete_frame=frame)
         if right_key not in fit_cache:
             common_frame = frame[frame["patient_id"].astype(str).isin(set(common_ids))]
             fit_cache[right_key] = _fit_model_cv(
-                common_frame, split, right, population, fit_context=fit_context,
+                common_frame, split, right, population,
                 lambda_count=lambda_count, max_iter=max_iter,
-                tolerance=tolerance, test_only=test_only)
+                tolerance=tolerance, test_only=test_only,
+                complete_frame=frame)
         left_fit = fit_cache[left_key]
         right_fit = fit_cache[right_key]
         paired.append(_paired_result(
@@ -1152,9 +1131,13 @@ def run_ft02_a(feature_frame, split_frame=None, models=None, lambda_count=20,
         raise FTValidationError(
             "production FT02 does not accept caller-supplied split tables")
     model_ids = list(FT_MODEL_SPECS if models is None else models)
-    fit_context, frozen_split = _build_validated_a_context(
-        feature_frame, models=model_ids)
-    frame = fit_context.frame.copy().reset_index(drop=True)
+    frozen_split, frozen_population = load_frozen_w07_repeat1()
+    frame = validate_proven_a_frame(
+        feature_frame, frozen_population, models=model_ids).reset_index(drop=True)
+    frozen_split = _validate_w07_repeat1(
+        validate_frozen_split(
+            frozen_split, frame=frame, repeat=W07_REPEAT1),
+        expected_ids=frozen_population["patient_id"].astype(str))
     split_source = {
         "kind": "project_locked_W07_repeat1",
         "artifact": "prognosis_analysis/output/outer_splits_A.csv",
@@ -1168,7 +1151,7 @@ def run_ft02_a(feature_frame, split_frame=None, models=None, lambda_count=20,
     return _run_ft02_a_core(
         frame, frozen_split, model_ids, repeat=W07_REPEAT1,
         lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance,
-        split_source=split_source, fit_context=fit_context)
+        split_source=split_source)
 
 
 def run_ft02_a_for_testing(feature_frame, split_frame, models=None, repeat=1,
@@ -1177,11 +1160,12 @@ def run_ft02_a_for_testing(feature_frame, split_frame, models=None, repeat=1,
     """Test-only synthetic runner; it is not a production A entry point."""
     model_ids = list(FT_MODEL_SPECS if models is None else models)
     frame = validate_ft_frame(feature_frame, models=model_ids).reset_index(drop=True)
-    fit_context = _build_test_fit_context(frame, split_frame, repeat=repeat)
+    split_frame = validate_frozen_split(
+        split_frame, frame=frame, repeat=repeat)
     return _run_ft02_a_core(
         frame, split_frame, model_ids, repeat=repeat, lambda_count=lambda_count,
         max_iter=max_iter, tolerance=tolerance, split_source=split_source,
-        fit_context=fit_context, test_only=True)
+        test_only=True)
 
 
 def harrell_c_index_hook(time, event, risk):

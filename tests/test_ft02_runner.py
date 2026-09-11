@@ -1,7 +1,6 @@
 """Synthetic and static FT02 contract tests."""
 from __future__ import absolute_import
 
-import copy
 import hashlib
 import inspect
 import os
@@ -239,15 +238,13 @@ class FT02RunnerTests(unittest.TestCase):
         self.assertEqual(result["mode"], "case_resample")
 
     def test_fitted_state_survival_interface(self):
-        context = ft._build_test_fit_context(self.frame, self.split)
         current = self.split[self.split.fold == 1]
         train_ids = set(current.loc[current.role == "train", "patient_id"])
         valid_ids = set(current.loc[current.role == "validation", "patient_id"])
         train = self.frame[self.frame.patient_id.isin(train_ids)]
         valid = self.frame[self.frame.patient_id.isin(valid_ids)]
         fit = ft._fit_fold_a_for_testing(
-            train, valid, "M0",
-            fit_context=context, max_iter=250)
+            train, valid, "M0", max_iter=250)
         output = ft.predict_risk_survival_hook(
             fit["model"], fit["preprocessor"], valid)
         self.assertEqual(len(output["risk"]), len(valid))
@@ -264,83 +261,115 @@ class FT02RunnerTests(unittest.TestCase):
                 max_iter=250)
         with self.assertRaises(ft.FTValidationError):
             ft._fit_fold_a(
-                self.frame.iloc[:60], self.frame.iloc[60:], "M0",
-                fit_context=None, max_iter=250)
+                self.frame, "M0", "main", 1, max_iter=250)
 
-    def test_production_issuer_is_not_directly_callable(self):
-        with self.assertRaises(AttributeError):
-            ft._issue_production_fit_context(self.frame, self.split)
-
-    def test_forged_context_cannot_reach_production_fitter(self):
-        current = self.split[self.split.fold == 1]
-        train_ids = set(current.loc[current.role == "train", "patient_id"])
-        valid_ids = set(current.loc[current.role == "validation", "patient_id"])
-        train = self.frame[self.frame.patient_id.isin(train_ids)]
-        valid = self.frame[self.frame.patient_id.isin(valid_ids)]
-        forged = ft._ValidatedFitContext(self.frame, self.split)
-        with self.assertRaises(ft.FTValidationError):
-            ft._fit_fold_a(
-                train, valid, "M0", fit_context=forged, max_iter=250)
-        frame = self.frame.copy()
+    def _trusted_m0_fixture(self):
+        _, population = ft.load_frozen_w07_repeat1()
+        rng = np.random.RandomState(31)
+        frame = population.copy()
+        frame["split"] = "A"
         frame["technical_cohort"] = "A393"
         frame["modeling_eligible"] = 1
-        population = frame[["patient_id", "DFS_time", "DFS_event"]].copy()
-        with mock.patch.object(ft, "validate_proven_a_frame",
-                               return_value=frame), \
-                mock.patch.object(ft, "load_frozen_w07_repeat1",
-                                  return_value=(self.split, population)), \
-                mock.patch.object(ft, "_validate_w07_repeat1",
-                                  return_value=self.split):
-            issued, _ = ft._build_validated_a_context(frame, models=["M0"])
-        copied = copy.copy(issued)
+        for column in ft._w08.CLINICAL_CONTINUOUS:
+            frame[column] = rng.normal(size=len(frame))
+        for column, levels in ft._w08.CLINICAL_CATEGORICAL.items():
+            frame[column] = rng.choice(levels, size=len(frame))
+        for column in ft._w08.CLINICAL_BINARY:
+            frame[column] = rng.randint(0, 2, size=len(frame))
+        return frame
+
+    def test_closure_and_registry_provenance_routes_do_not_exist(self):
+        source = inspect.getsource(ft)
+        for token in ("WeakKeyDictionary", "weakref", "production_records",
+                      "issue_production", "ValidatedFitContext"):
+            self.assertNotIn(token, source)
+        self.assertIsNone(ft._fit_fold_a.__closure__)
+        self.assertIsNone(ft.verify_authoritative_production_inputs.__closure__)
+        self.assertNotIn("_fit_fold_a_for_testing", inspect.getsource(ft._fit_fold_a))
+        self.assertEqual(
+            list(inspect.signature(ft._fit_fold_a).parameters)[:4],
+            ["full_frame", "model_id", "population", "fold"])
+        for name in ("_issue_production_fit_context", "_issue_test_fit_context",
+                     "_build_validated_a_context", "_ValidatedFitContext"):
+            self.assertFalse(hasattr(ft, name))
+
+    def test_closure_issuer_extraction_cannot_authorize_production_fit(self):
+        frame = self._trusted_m0_fixture()
+        forged = {"frame": frame.copy(), "split": self.split.copy()}
+
+        def make_issuer(payload):
+            captured = payload
+
+            def issuer():
+                return captured
+
+            return issuer
+
+        issuer = make_issuer(forged)
+        extracted = issuer.__closure__[0].cell_contents
+        with self.assertRaises(TypeError):
+            ft._fit_fold_a(
+                frame, "M0", "main", 1, fit_context=extracted, max_iter=250)
+
+    def test_registry_extraction_copy_and_injection_cannot_authorize_fit(self):
+        frame = self._trusted_m0_fixture()
+        extracted = {"frame": frame.copy(), "split": self.split.copy()}
+        registry = {"production": extracted}
+        candidates = (registry, registry.copy(), {"production": extracted.copy()})
+        for candidate in candidates:
+            with self.assertRaises(TypeError):
+                ft._fit_fold_a(
+                    frame, "M0", "main", 1, registry=candidate, max_iter=250)
+
+    def test_synchronized_context_and_registry_mutation_cannot_authorize_fit(self):
+        frame = self._trusted_m0_fixture()
+        context = {"frame": frame.copy(), "split": self.split.copy()}
+        registry = {"production": context}
+        context["frame"].loc[0, "DFS_time"] += 1.0
+        registry["production"] = {"frame": frame.copy(), "split": self.split.copy()}
+        with self.assertRaises(TypeError):
+            ft._fit_fold_a(
+                frame, "M0", "main", 1, context=context,
+                registry=registry, max_iter=250)
+
+    def test_forged_context_and_arbitrary_synthetic_provenance_fail_closed(self):
+        frame = self._trusted_m0_fixture()
         with self.assertRaises(ft.FTValidationError):
             ft._fit_fold_a(
-                train, valid, "M0", fit_context=copied, max_iter=250)
-
-    def test_issued_verified_context_reaches_production_fitter(self):
-        frame = self.frame.copy()
-        frame["technical_cohort"] = "A393"
-        frame["modeling_eligible"] = 1
-        population = frame[["patient_id", "DFS_time", "DFS_event"]].copy()
-        with mock.patch.object(ft, "validate_proven_a_frame",
-                               return_value=frame), \
-                mock.patch.object(ft, "load_frozen_w07_repeat1",
-                                  return_value=(self.split, population)), \
-                mock.patch.object(ft, "_validate_w07_repeat1",
-                                  return_value=self.split):
-            context, split = ft._build_validated_a_context(
-                frame, models=["M0"])
-        current = self.split[self.split.fold == 1]
-        train_ids = set(current.loc[current.role == "train", "patient_id"])
-        valid_ids = set(current.loc[current.role == "validation", "patient_id"])
-        train = frame[frame.patient_id.isin(train_ids)]
-        valid = frame[frame.patient_id.isin(valid_ids)]
-        fit = ft._fit_fold_a(
-            train, valid, "M0", fit_context=context, max_iter=250)
-        self.assertEqual(len(fit["risk"]), len(valid))
-
-    def test_mutated_verified_context_fails_closed(self):
-        frame = self.frame.copy()
-        frame["technical_cohort"] = "A393"
-        frame["modeling_eligible"] = 1
-        population = frame[["patient_id", "DFS_time", "DFS_event"]].copy()
-        with mock.patch.object(ft, "validate_proven_a_frame",
-                               return_value=frame), \
-                mock.patch.object(ft, "load_frozen_w07_repeat1",
-                                  return_value=(self.split, population)), \
-                mock.patch.object(ft, "_validate_w07_repeat1",
-                                  return_value=self.split):
-            context, split = ft._build_validated_a_context(
-                frame, models=["M0"])
-        current = split[split.fold == 1]
-        train_ids = set(current.loc[current.role == "train", "patient_id"])
-        valid_ids = set(current.loc[current.role == "validation", "patient_id"])
-        train = frame[frame.patient_id.isin(train_ids)]
-        valid = frame[frame.patient_id.isin(valid_ids)]
-        context.frame.loc[context.frame.index[0], "DFS_time"] += 1.0
+                self.frame, "M0", "main", 1, max_iter=250)
         with self.assertRaises(ft.FTValidationError):
             ft._fit_fold_a(
-                train, valid, "M0", fit_context=context, max_iter=250)
+                frame, "M0", "R_low", 1, max_iter=250)
+        with self.assertRaises(ft.FTValidationError):
+            ft._fit_fold_a(
+                frame, "M0", "main", 1, seed=999, max_iter=250)
+
+    def test_verified_a393_w07_path_fits_production_fold(self):
+        frame = self._trusted_m0_fixture()
+        result = ft._fit_fold_a(
+            frame, "M0", "main", 1, max_iter=1000)
+        split, _ = ft.load_frozen_w07_repeat1()
+        expected_valid = int((split.fold.eq(1) &
+                              split.role.eq("validation")).sum())
+        self.assertEqual(len(result["risk"]), expected_valid)
+        self.assertTrue(np.isfinite(result["risk"]).all())
+
+    def test_mutated_full_frame_fails_closed_at_fitting_boundary(self):
+        frame = self._trusted_m0_fixture()
+        mutated_frame = frame.copy()
+        mutated_frame.loc[mutated_frame.index[0], "DFS_time"] += 1.0
+        with self.assertRaises(ft.FTValidationError):
+            ft._fit_fold_a(
+                mutated_frame, "M0", "main", 1, max_iter=250)
+
+    def test_source_identity_and_hash_bindings_fail_closed_on_mutation(self):
+        with mock.patch.object(ft, "W07_SPLIT_ARTIFACT",
+                               os.path.join(ROOT, "copied_outer_splits_A.csv")):
+            with self.assertRaisesRegex(ft.FTValidationError, "source identity"):
+                ft.load_frozen_w07_repeat1()
+        with mock.patch.object(ft, "W07_SPLIT_ARTIFACT_SHA256", "0" * 64):
+            with self.assertRaisesRegex(ft.FTValidationError, "hash binding"):
+                ft.load_frozen_w07_repeat1()
 
     def test_calibration_uses_survival_direction_at_horizon(self):
         frame = pd.DataFrame({

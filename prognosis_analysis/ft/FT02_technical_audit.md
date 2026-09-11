@@ -9,19 +9,22 @@ bound to the project-frozen W07 split artifact and does not accept a
 caller-supplied split table. Synthetic fixtures use a separately named
 test-only helper. No B data is read or generated, and no formal W08/L9 or
 model-freeze output is written. The low-level fold fitter is internal-only:
-the former public `fit_fold_a` name fails closed, while `_fit_fold_a` accepts
-only a context registered inside a private weak-reference issuance registry
-after verified A393 provenance and W07 binding. The production issuer is not
-exported. Directly constructed contexts, copied issued contexts and contexts
-whose bound frame or split is mutated are absent from or no longer match that
-registry and fail closed. Synthetic fixtures use a separate
-`_fit_fold_a_for_testing` path available only through the explicitly test-only
-runner.
+the former public `fit_fold_a` name fails closed, while `_fit_fold_a`
+accepts only a complete A feature frame, model, population and fold, then
+`verify_authoritative_production_inputs` independently reloads and revalidates
+the code-bound W06 A393 population and W07 repeat-1 artifact at every
+production fit call. It derives the train and validation rows internally from
+the verified frame and split. Context, issuer, token, closure and registry
+state are not production credentials; caller-supplied objects cannot authorize
+fitting. Synthetic fixtures use a separate `_fit_fold_a_for_testing` path
+available only through the explicitly test-only runner.
 
 ## Frozen A boundary
 
 `load_frozen_w07_repeat1()` validates:
 
+- the exact code-bound W06 population source path plus its source, schema and
+  endpoint-audit SHA-256 bindings;
 - W07 artifact SHA-256:
   `24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502`
 - repeat-1 canonical SHA-256:
@@ -32,7 +35,9 @@ runner.
 `run_ft02_a` additionally requires `split=A`, `technical_cohort=A393`,
 `modeling_eligible=1`, exact frozen A393 membership, and DFS endpoint equality
 with the W07-bound A population. Missing or ambiguous provenance fails closed
-before model fitting.
+before model fitting. `_fit_fold_a` repeats these source, hash, population,
+membership, endpoint and canonical-split checks at the fitting boundary and
+derives the exact eligible W07 fold partition from the revalidated inputs.
 
 ## Fixed modeling contract
 
@@ -122,7 +127,7 @@ FT02 synthetic/regression/static tests:
 ```text
 Command: tools/run_t2_radiomics.ps1 -PythonArguments @('.\tests\test_ft02_runner.py')
 Exit code: 0
-Tests: 18 run, 18 passed, 0 failed (189.510 s)
+Tests: 22 run, 22 passed, 0 failed (224.712 s)
 ```
 
 The test set covers all seven model definitions, frozen split seed/role
@@ -130,11 +135,12 @@ validation, production W07 binding and fail-closed A provenance, common paired
 training/validation IDs and per-fold hashes, training-only preprocessing and
 lambda selection, P3B and legacy structural availability, W_Original-only
 schema, risk and survival interfaces, metric hooks, bootstrap seed/mode,
-B-row/path rejection and FT isolation. It also verifies that direct public
-fold-fitting bypasses and caller-constructed or unissued fit contexts fail
-closed, that copying an issued production context does not copy its private
-registry membership, that mutation invalidates an issued context, that an
-issued verified context reaches the production fitter, and that a known
+B-row/path rejection and FT isolation. It also verifies the production fitter
+signature and internal fold derivation; closure issuer extraction, registry
+state extraction/copy/injection, synchronized context and registry mutation,
+forged context arguments, arbitrary synthetic provenance, mutated full-frame
+endpoints, and mutated source/hash bindings fail closed. The genuine hash-bound
+A393/W07 repeat-1 path reaches the production fit implementation. A known
 two-case calibration fixture returns survival-direction targets at the
 requested horizon. Synthetic fitting uses a separate test-only fitter.
 
@@ -143,13 +149,14 @@ Existing W07 regression suite:
 ```text
 Command: tools/run_t2_radiomics.ps1 -PythonArguments @('.\tests\test_w07_outer_splits.py')
 Exit code: 0
-Tests: 13 run, 13 passed, 0 failed (1.617 s)
+Tests: 13 run, 13 passed, 0 failed (1.832 s)
 ```
 
 The FT isolation checks preserve the formal habitat freeze, formal modeling
 protocol, execution status, frozen W07 configuration and frozen W07 split
 artifact. The formal model-freeze lock remains absent. No later FT module was
-executed.
+executed. These are local wrapper test results, not GitHub CI status checks or
+a GitHub gate.
 
 ## Deliverables
 
