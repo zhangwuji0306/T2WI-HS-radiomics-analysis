@@ -621,7 +621,7 @@ def run_ft03(frame=None, output_root=DEFAULT_OUTPUT_ROOT,
     # The production FT02 entry point reloads and revalidates the A393/W07
     # sources at every fold boundary.
     fit_result = ft02.run_ft02_a(frame, models=list(MODEL_IDS),
-                                 lambda_count=20, max_iter=1000,
+                                 lambda_count=20, max_iter=3000,
                                  tolerance=1e-7)
     os.makedirs(output_root, exist_ok=True)
     local_records = OrderedDict()
@@ -705,6 +705,7 @@ def run_ft03(frame=None, output_root=DEFAULT_OUTPUT_ROOT,
             "models": list(MODEL_IDS),
             "ordinary_single_layer_5fold": True,
             "lambda_count": 20,
+            "max_iter": 3000,
             "lambda_selection_scope": "outer_training_inner_5fold_only",
             "alpha": 1.0,
             "horizons_months": dict(HORIZONS),
