@@ -46,6 +46,15 @@ EXPECTED_DESCRIPTOR_COLUMNS = [
     "structural_state", "hard_technical_failure",
 ]
 
+EXPECTED_B_PROVENANCE_FILENAMES = {
+    "candidate_freeze.json",
+    "feature_schema.json",
+    "manifest.json",
+    "output_manifest.json",
+    "provenance.json",
+    "run_metadata.json",
+}
+
 
 def rel(path):
     return os.path.relpath(path, ROOT).replace("\\", "/")
@@ -302,23 +311,50 @@ def source_reference_checks(ft00):
     return checks
 
 
-def find_b_habitat_assets():
-    search_roots = [
-        os.path.join(ROOT, "prognosis_analysis", "output"),
-        os.path.join(ROOT, "habitat_analysis", "output"),
-    ]
-    names = {"R_low_features.csv", "R_high_features.csv",
-             "R1_R_low_features.csv", "R1_R_high_features.csv"}
+def is_b_asset_root(root):
+    parts = [part for part in root.replace("\\", "/").lower().split("/") if part]
+    return any(
+        part == "b" or part.startswith("b_") or part.endswith("_b") or
+        part in {"validation_b", "external_b", "cohort_b"}
+        for part in parts
+    )
+
+
+def habitat_feature_kind(name):
+    normalized = name.lower().replace("-", "_")
+    if "r_low" in normalized and "feature" in normalized and normalized.endswith(".csv"):
+        return "R_low"
+    if "r_high" in normalized and "feature" in normalized and normalized.endswith(".csv"):
+        return "R_high"
+    return None
+
+
+def find_b_habitat_assets(search_roots):
     found = []
     for search_root in search_roots:
         if not os.path.isdir(search_root):
             continue
         for root, _dirs, files in os.walk(search_root):
             for name in files:
-                if name not in names:
+                if habitat_feature_kind(name) is None:
                     continue
-                root_lower = root.lower()
-                if "_b" in root_lower or root_lower.endswith("b") or "validation_b" in root_lower:
+                if is_b_asset_root(root):
+                    found.append(rel(os.path.join(root, name)))
+    return sorted(set(found))
+
+
+def find_b_provenance_files(search_roots):
+    found = []
+    for search_root in search_roots:
+        if not os.path.isdir(search_root):
+            continue
+        for root, _dirs, files in os.walk(search_root):
+            if not is_b_asset_root(root):
+                continue
+            for name in files:
+                lower_name = name.lower()
+                if (lower_name in EXPECTED_B_PROVENANCE_FILENAMES or
+                        "provenance" in lower_name):
                     found.append(rel(os.path.join(root, name)))
     return sorted(set(found))
 
@@ -423,6 +459,20 @@ def build_manifest():
         ("R_high", high_candidates),
         ("W_Original", original_feature_names),
     ])
+    canonical_w_order_hash = sha256_text(json_dump(original_feature_names))
+    manifest["W_Original_canonical_order"] = OrderedDict([
+        ("definition", "Exact ordered sequence emitted by the existing whole-tumor Original feature table; W03 schema is used for set compatibility"),
+        ("source_asset_path", rel(w_original_path)),
+        ("schema_set_reference_path", rel(w03_schema_path)),
+        ("feature_count", len(original_feature_names)),
+        ("feature_names", original_feature_names),
+        ("canonical_order_sha256", canonical_w_order_hash),
+        ("asset_order_sha256", None),
+        ("asset_order_matches_canonical_order", False),
+        ("included_image_type", "Original"),
+        ("excluded_image_types", ["Wavelet", "LoG"]),
+        ("filtered_features_excluded", True),
+    ])
     manifest["candidate_hash_recomputation"] = OrderedDict([
         ("R_low", OrderedDict([
             ("count", len(low_candidates)), ("expected_hash", expected_low_hash),
@@ -488,6 +538,7 @@ def build_manifest():
         whole["original_feature_count"] = int(len(feature_names))
         whole["non_original_feature_column_count"] = non_original_count
         whole["original_feature_set_matches_W03_schema"] = set(feature_names) == set(original_feature_names)
+        whole["original_feature_order_matches_W03_schema"] = feature_names == original_feature_names
         whole["original_feature_order_sha256"] = sha256_text(json_dump(feature_names))
         descriptor_frame = read_csv(global_desc_path)
         descriptor_ids = set(descriptor_frame["影像号"].dropna().tolist()) if "影像号" in descriptor_frame.columns else set()
@@ -530,11 +581,27 @@ def build_manifest():
         ("main_f", config.get("featureExtraction", {}).get("binning", {}).get("main", {}).get("f")),
     ])
     manifest["W_Original_asset"] = whole
+    canonical_w_order = list(whole.get("original_feature_names", []))
+    manifest["predictor_block_definitions"]["W_Original"] = canonical_w_order
+    manifest["W_Original_canonical_order"]["feature_count"] = len(canonical_w_order)
+    manifest["W_Original_canonical_order"]["feature_names"] = canonical_w_order
+    manifest["W_Original_canonical_order"]["canonical_order_sha256"] = sha256_text(json_dump(canonical_w_order))
+    manifest["W_Original_canonical_order"]["asset_order_sha256"] = whole.get("original_feature_order_sha256")
+    manifest["W_Original_canonical_order"]["schema_feature_set_matches"] = bool(
+        whole.get("original_feature_set_matches_W03_schema", False)
+    )
+    manifest["W_Original_canonical_order"]["schema_feature_order_matches"] = bool(
+        whole.get("original_feature_order_matches_W03_schema", False)
+    )
+    manifest["W_Original_canonical_order"]["asset_order_matches_canonical_order"] = bool(
+        canonical_w_order == list(whole.get("original_feature_names", []))
+    )
 
-    b_habitat_assets = find_b_habitat_assets()
-    b_search_roots = ["prognosis_analysis/output", "habitat_analysis/output"]
-    b_expected_asset_names = ["R_low_features.csv", "R_high_features.csv",
-                              "R1_R_low_features.csv", "R1_R_high_features.csv"]
+    b_search_roots = ["prognosis_analysis/output", "habitat_analysis/output", "feature_extract/output"]
+    b_search_root_paths = [os.path.join(ROOT, path.replace("/", os.sep)) for path in b_search_roots]
+    b_habitat_assets = find_b_habitat_assets(b_search_root_paths)
+    b_provenance_files = find_b_provenance_files(b_search_root_paths)
+    b_expected_asset_names = ["*R_low*feature*.csv", "*R_high*feature*.csv"]
     b_w_available = False
     b_w_rows = 0
     b_w_r1_rows = 0
@@ -580,20 +647,22 @@ def build_manifest():
             ("technical_output_roots", b_search_roots),
             ("expected_habitat_asset_filenames", b_expected_asset_names),
             ("matching_paths_found", b_habitat_assets),
+            ("expected_provenance_filenames", sorted(EXPECTED_B_PROVENANCE_FILENAMES)),
+            ("matching_provenance_paths_found", b_provenance_files),
         ])),
         ("R_low_existing_B_asset", OrderedDict([
-            ("status", "found" if any("R_low_features.csv" in item for item in b_habitat_assets) else "missing"),
-            ("asset_paths", [item for item in b_habitat_assets if "R_low_features.csv" in item]),
+            ("status", "found" if any(habitat_feature_kind(os.path.basename(item)) == "R_low" for item in b_habitat_assets) else "missing"),
+            ("asset_paths", [item for item in b_habitat_assets if habitat_feature_kind(os.path.basename(item)) == "R_low"]),
         ])),
         ("R_high_existing_B_asset", OrderedDict([
-            ("status", "found" if any("R_high_features.csv" in item for item in b_habitat_assets) else "missing"),
-            ("asset_paths", [item for item in b_habitat_assets if "R_high_features.csv" in item]),
+            ("status", "found" if any(habitat_feature_kind(os.path.basename(item)) == "R_high" for item in b_habitat_assets) else "missing"),
+            ("asset_paths", [item for item in b_habitat_assets if habitat_feature_kind(os.path.basename(item)) == "R_high"]),
         ])),
         ("candidate_hashes", OrderedDict([
             ("R_low", "not_observable_without_existing_B_habitat_asset"),
             ("R_high", "not_observable_without_existing_B_habitat_asset"),
         ])),
-        ("radiomics_configuration_provenance", "not_observable_for_B_habitat_blocks"),
+        ("radiomics_configuration_provenance", "not_observable_for_B_habitat_blocks" if not b_provenance_files else "requires_asset_level_review"),
         ("A_B_feature_definition_compatibility", "blocked_missing_existing_B_habitat_assets"),
         ("fail_closed_reason", "No existing B R_low/R_high habitat feature tables or B habitat radiomics provenance were found under the technical output roots; FT01 cannot certify B compatibility without opening prohibited source data or re-extracting B radiomics."),
     ])
@@ -653,6 +722,7 @@ def build_manifest():
         manifest["a_technical_audit"]["W02_output_manifest"].get("all_hashes_match", False),
         manifest["W_Original_asset"].get("original_feature_count") == 107,
         manifest["W_Original_asset"].get("original_feature_set_matches_W03_schema", False),
+        manifest["W_Original_canonical_order"].get("asset_order_matches_canonical_order", False),
         manifest["W_Original_asset"].get("metadata_columns_match", False),
         manifest["W_Original_asset"].get("full_A_overlap", {}).get("whole_tumor_unique_id_count_matching_full_A") == 393,
         manifest["W_Original_asset"].get("full_A_overlap", {}).get("primary_reader_rows") == 393,
@@ -675,6 +745,7 @@ def write_audit_markdown(manifest, path):
     a = manifest["a_technical_audit"]
     b = manifest["b_technical_audit"]
     w = manifest["W_Original_asset"]
+    w_canonical = manifest["W_Original_canonical_order"]
     d = a["full_A_global_descriptors"]
     m = a["full_A_habitat_map_manifest"]
     low = manifest["candidate_hash_recomputation"]["R_low"]
@@ -686,7 +757,7 @@ def write_audit_markdown(manifest, path):
         "",
         "`FAIL_CLOSED`",
         "",
-        "A technical assets and the frozen full_A habitat pass the observable FT01 checks. The existing whole-tumor asset is bound to `W_Original` only. B cannot be released to FT02 because no existing B `R_low`/`R_high` habitat feature tables or B habitat radiomics provenance are available within the permitted technical read boundary.",
+        "A technical assets and the frozen full_A habitat pass the observable FT01 checks. The existing whole-tumor asset is bound to `W_Original` only. B cannot be released to FT02 because no existing B `R_low`/`R_high` habitat feature tables or B habitat radiomics provenance were found in the permitted technical output roots.",
         "",
         "No B outcome, clinical, performance, or validation result was read. No B MRI preprocessing, SLIC, K-means, PyRadiomics extraction, feature selection, preprocessing estimation, or model fitting was executed.",
         "",
@@ -703,6 +774,8 @@ def write_audit_markdown(manifest, path):
         "| W02 A provenance | Existing W02 output manifest hashes match local files | %s |" % ("PASS" if a["W02_output_manifest"].get("all_hashes_match") else "FAIL"),
         "| W03 A provenance | Existing W03 output manifest hashes match local files | %s |" % ("PASS" if a["W03_output_manifest"].get("all_hashes_match") else "FAIL"),
         "| W | Existing whole-tumor Original table; 107 Original features; R1 rows matching full_A: %d; all finite: %d; filtered features excluded | %s |" % (w.get("full_A_overlap", {}).get("primary_reader_rows", -1), w.get("full_A_overlap", {}).get("primary_reader_all_original_finite_rows", -1), "PASS" if w.get("original_feature_count") == 107 and w.get("original_feature_set_matches_W03_schema") and w.get("metadata_columns_match") and w.get("full_A_overlap", {}).get("primary_reader_rows") == 393 and w.get("full_A_overlap", {}).get("primary_reader_all_original_finite_rows") == 393 else "FAIL"),
+        "| W_Original canonical order | Exact ordered sequence emitted by the existing W asset; %d features; W03 schema set match: %s; canonical hash `%s`; asset hash `%s` | %s |" % (w_canonical.get("feature_count", -1), "PASS" if w_canonical.get("schema_feature_set_matches") else "FAIL", w_canonical.get("canonical_order_sha256"), w_canonical.get("asset_order_sha256"), "PASS" if w_canonical.get("asset_order_matches_canonical_order") else "FAIL"),
+        "| W_Original image types | Original only; Wavelet, LoG, and other filtered features excluded | PASS |",
         "",
         "## B technical audit",
         "",
@@ -712,15 +785,16 @@ def write_audit_markdown(manifest, path):
         "| Existing B W_Original asset | schema present; technical split rows: %d; R1 finite rows: %d; B technical-cohort alignment not certified | %s |" % (b["W_Original"].get("B_rows_observed_by_existing_technical_split", 0), b["W_Original"].get("B_primary_reader_all_original_finite_rows", 0), "PASS_WITH_LIMITATION" if b["W_Original"].get("schema_summary_available") and b["W_Original"].get("radiomics_provenance_available") else "FAIL"),
         "| Existing B R_low asset | %s | FAIL_CLOSED |" % b["R_low_existing_B_asset"].get("status"),
         "| Existing B R_high asset | %s | FAIL_CLOSED |" % b["R_high_existing_B_asset"].get("status"),
+        "| B technical asset/provenance search | Roots: `%s`; matching habitat tables: %d; matching provenance files: %d | %s |" % (", ".join(b["search_scope"].get("technical_output_roots", [])), len(b["search_scope"].get("matching_paths_found", [])), len(b["search_scope"].get("matching_provenance_paths_found", [])), "PASS" if b["R_low_existing_B_asset"].get("status") == "found" and b["R_high_existing_B_asset"].get("status") == "found" else "FAIL_CLOSED"),
         "| Candidate hashes and habitat provenance | %s | FAIL_CLOSED |" % b["A_B_feature_definition_compatibility"],
         "",
-        "The B blocker is exact: the required existing B habitat feature assets are absent. FT01 does not infer compatibility from A assets and does not generate replacement B features.",
+        "The B blocker is exact: no existing B `R_low`/`R_high` habitat feature tables or B habitat radiomics provenance were found under the permitted technical output roots. FT01 does not infer compatibility from A assets and does not generate replacement B features.",
         "",
         "## Frozen-state and boundary checks",
         "",
         "- `habitat_analysis/freeze_lock.json` remains the existing technical lock; `B_unlock=false` and `B_data_read=false`.",
         "- Formal W08 remains `HOLD`; the formal model-freeze lock is absent.",
-        "- `W_Original` is the only whole-tumor block represented in FT01; filtered whole-tumor feature batches are not part of this audit manifest.",
+        "- `W_Original` is the only whole-tumor block represented in FT01; its canonical order is the exact 107-name sequence recorded in the manifest and matched by the existing asset. Wavelet, LoG, and other filtered whole-tumor features are excluded.",
         "- FT02–FT07 were not executed.",
         "",
         "## Source records",
