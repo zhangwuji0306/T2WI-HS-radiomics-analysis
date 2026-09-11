@@ -31,12 +31,22 @@
     {
       "path": "_codex_ft_run_20260910_01a08bf3/FT00_contract.md",
       "role": "worker_contract",
-      "sha256": "0deccaab491ef8eef2e2fb938e1f0541298cae1cded5a826a7943573d778d87f"
+      "sha256": "a89bb51a6f58a5b83bce4ec895fce3a9e66b115f72cbf3c918f3de1c6321cf07"
+    },
+    {
+      "path": "_codex_ft_run_20260910_01a08bf3/FT00_protocol_amendment_contract.md",
+      "role": "protocol_amendment_contract",
+      "sha256": "b618679a752b2155aeea5e8564a0a06a2749d58e70c8c2789078fe61fa4314ee"
     },
     {
       "path": "T2WI-HS 生境预后快速验证（FT）方案书.md",
       "role": "FT_scientific_scheme",
-      "sha256": "e540f6d29d2faa4c4af748c6597035cd38c1f0bbba193eb5d774e19fbbb40f73"
+      "sha256": "34fb53e43e8a40b7a26c511d1d92b4da89f3e8a526c592b8106dad175f70c67b"
+    },
+    {
+      "path": "_codex_ft_run_20260910_01a08bf3/FT01_contract.md",
+      "role": "active_FT01_contract_evidence",
+      "sha256": "f4b348cf3e20e1c4b9a899f4908e413345667018a7a10457b476f3dc6574f224"
     },
     {
       "path": "PROJECT_STATUS.md",
@@ -162,7 +172,7 @@
         "candidate_count": 10,
         "candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
       },
-      "whole_tumor": "existing frozen A/B feature assets only"
+      "whole_tumor": "existing frozen A/B whole-tumor Original feature assets only; Wavelet and LoG/filtered features excluded"
     },
     "forbidden_changes": [
       "A_or_B_cohort_definition",
@@ -176,7 +186,7 @@
       "G",
       "R_low",
       "R_high",
-      "W",
+      "W_Original",
       "DFS_based_univariate_screening_on_full_A"
     ]
   },
@@ -198,7 +208,7 @@
       {"id": "M3L", "predictor_blocks": ["C", "G", "R_low"], "family": "Cox", "penalized": true, "alpha": 1.0},
       {"id": "M3H", "predictor_blocks": ["C", "G", "R_high"], "family": "Cox", "penalized": true, "alpha": 1.0},
       {"id": "M4", "predictor_blocks": ["C", "G", "R_low", "R_high"], "family": "Cox", "penalized": true, "alpha": 1.0},
-      {"id": "M5", "predictor_blocks": ["C", "W"], "family": "Cox", "penalized": true, "alpha": 1.0}
+      {"id": "M5", "predictor_blocks": ["C", "W_Original"], "family": "Cox", "penalized": true, "alpha": 1.0}
     ],
     "comparisons": [
       {"id": "M0_vs_M1", "models": ["M0", "M1"], "population": "main A modeling population"},
@@ -207,7 +217,7 @@
       {"id": "M2_vs_M3H", "models": ["M2", "M3H"], "population": "R_high eligible population"},
       {"id": "M2_vs_M4", "models": ["M2", "M4"], "population": "dual-radiomics eligible population"},
       {"id": "M3L_vs_M3H", "models": ["M3L", "M3H"], "population": "dual-radiomics eligible population"},
-      {"id": "M4_vs_M5", "models": ["M4", "M5"], "population": "intersection of dual-radiomics and W-available populations"}
+      {"id": "M4_vs_M5", "models": ["M4", "M5"], "population": "intersection of dual-radiomics and W_Original-available populations"}
     ]
   },
   "endpoint_and_outputs": {
@@ -234,7 +244,7 @@
       "patient_ID_schema",
       "feature_names",
       "feature_order",
-      "R_low_R_high_W_availability",
+      "R_low_R_high_W_Original_availability",
       "candidate_hashes",
       "radiomics_configuration_provenance",
       "A_B_feature_definition_compatibility"

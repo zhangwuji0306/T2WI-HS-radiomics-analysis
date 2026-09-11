@@ -45,12 +45,21 @@ models.
 | M2 vs M3H | R_high eligible population |
 | M2 vs M4 | Dual-radiomics eligible population |
 | M3L vs M3H | Dual-radiomics eligible population |
-| M4 vs M5 | Intersection of dual-radiomics and W-available populations |
+| M4 vs M5 | Intersection of dual-radiomics and W_Original-available populations |
 
 For M4 vs M5, the common population requires both R_low and R_high
-availability and W availability. No full-A DFS-based univariate feature screening, habitat re-optimization,
+availability and W_Original availability. W_Original is limited to existing whole-tumor
+Original feature assets; Wavelet, LoG, and other filtered whole-tumor features are
+excluded. No full-A DFS-based univariate feature screening, habitat re-optimization,
 candidate-pool change, split regeneration, or performance-informed parameter
 change is allowed.
+
+The amendment is consistent across the active FT protocol surface: the scheme
+and FT00 protocol define M5 as `C + W_Original`, while the active FT01 contract
+uses the same W_Original asset rule and excludes filtered features. The M4 vs M5
+population is the intersection of dual-radiomics and W_Original availability.
+The amendment and active FT01 contract are recorded as source-reference
+evidence in `FT00_protocol.json`.
 
 ## State and lock checks
 
@@ -111,12 +120,13 @@ The probe reported Python 3.7.12, PyRadiomics 3.0.1 and SimpleITK 2.2.1, with
 performance calculation, feature extraction, or patient-level output was
 performed for FT00.
 
-The FT00 protocol records the SHA-256 references for the worker contract, FT
-scheme, project state, project entry documents, current SOP, master protocol,
+The FT00 protocol records the SHA-256 references for the worker contract, the
+FT00 protocol-amendment contract, FT scheme, active FT01 contract, project state,
+project entry documents, current SOP, master protocol,
 technical freeze and habitat/radiomics configurations, W02/W03 protocols and
 assets, W04 protocol, execution status, W07 split configuration and artifact,
-and W07A amendment. All 23 recorded source-reference hashes matched the local
-files at FT00 validation.
+and W07A amendment. All 25 recorded source-reference hashes matched the local
+files at FT00 amendment validation.
 
 ## Git isolation evidence
 
