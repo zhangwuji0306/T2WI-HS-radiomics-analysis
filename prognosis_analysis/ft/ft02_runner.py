@@ -15,6 +15,7 @@ import os
 import re
 import sys
 from collections import OrderedDict
+import weakref
 
 import numpy as np
 import pandas as pd
@@ -452,70 +453,88 @@ def population_mask(frame, population):
 
 
 def _make_fit_context_support():
-    """Create fit contexts with private production/test issuance capabilities."""
-    production_token = object()
-    test_token = object()
+    """Create contexts whose issuance records stay private to this closure."""
+    production_records = weakref.WeakKeyDictionary()
+    test_records = weakref.WeakKeyDictionary()
 
     class _ValidatedFitContext(object):
-        """Internal proof that a fold belongs to an authorized FT frame."""
+        """Context data; registry membership is the provenance proof."""
 
-        __slots__ = ("frame", "split", "frame_id_hash", "split_hash",
-                     "a_verified", "mode", "_validated", "_issuer_token")
+        __slots__ = ("frame", "split", "__weakref__")
 
-        def __init__(self, frame, split, a_verified, mode):
-            # Direct construction intentionally creates an unissued object.
-            # Only the private factories below can attach an issuance token.
+        def __init__(self, frame, split):
+            # Direct construction intentionally creates an unregistered object.
             self.frame = frame.copy()
             self.split = split.copy()
-            self.frame_id_hash = _id_hash(self.frame["patient_id"])
-            self.split_hash = _canonical_split_hash(self.split)
-            self.a_verified = bool(a_verified)
-            self.mode = str(mode)
-            self._validated = True
-            self._issuer_token = None
 
-        @classmethod
-        def _issue(cls, frame, split, a_verified, mode, token):
-            context = cls(frame, split, a_verified, mode)
-            context._issuer_token = token
-            return context
+    def record(context):
+        frame = context.frame
+        split = context.split
+        return {
+            "frame_columns": tuple(frame.columns),
+            "frame_hash": _canonical_frame_hash(frame, list(frame.columns)),
+            "frame_schema_hash": schema_hash(frame),
+            "split_columns": tuple(split.columns),
+            "split_hash": _canonical_split_hash(split),
+        }
+
+    def register(registry, frame, split):
+        context = _ValidatedFitContext(frame, split)
+        registry[context] = record(context)
+        return context
 
     def issue_production(frame, split):
-        return _ValidatedFitContext._issue(
-            frame, split, True, "production_A393", production_token)
+        return register(production_records, frame, split)
 
     def issue_test(frame, split):
-        return _ValidatedFitContext._issue(
-            frame, split, False, "synthetic_test", test_token)
+        return register(test_records, frame, split)
+
+    def matches(context, expected):
+        try:
+            frame = context.frame
+            split = context.split
+            if tuple(frame.columns) != expected["frame_columns"] or \
+                    tuple(split.columns) != expected["split_columns"]:
+                return False
+            return _canonical_frame_hash(frame, list(frame.columns)) == \
+                expected["frame_hash"] and schema_hash(frame) == \
+                expected["frame_schema_hash"] and \
+                _canonical_split_hash(split) == expected["split_hash"]
+        except (AttributeError, KeyError, TypeError, ValueError, FTValidationError):
+            return False
 
     def is_production(context):
-        return isinstance(context, _ValidatedFitContext) and \
-            context._issuer_token is production_token and \
-            context.a_verified is True and context.mode == "production_A393"
+        if not isinstance(context, _ValidatedFitContext):
+            return False
+        expected = production_records.get(context)
+        return expected is not None and matches(context, expected)
 
     def is_test(context):
-        return isinstance(context, _ValidatedFitContext) and \
-            context._issuer_token is test_token and \
-            context.a_verified is False and context.mode == "synthetic_test"
+        if not isinstance(context, _ValidatedFitContext):
+            return False
+        expected = test_records.get(context)
+        return expected is not None and matches(context, expected)
 
-    return (_ValidatedFitContext, issue_production, issue_test,
-            is_production, is_test)
+    def build_production(frame, models=None):
+        """Load and validate the fixed A393/W07 inputs before private issuance."""
+        frozen_split, frozen_population = load_frozen_w07_repeat1()
+        model_ids = list(FT_MODEL_SPECS if models is None else models)
+        checked = validate_proven_a_frame(
+            frame, frozen_population, models=model_ids)
+        split_checked = _validate_w07_repeat1(
+            validate_frozen_split(
+                frozen_split, frame=checked, repeat=W07_REPEAT1),
+            expected_ids=frozen_population["patient_id"].astype(str))
+        return issue_production(checked, split_checked), split_checked
+
+    # The production issuer is deliberately not returned.  Only this closure's
+    # validated builder can reach it; test issuance remains separately exposed.
+    return (_ValidatedFitContext, issue_test, is_production, is_test,
+            build_production)
 
 
-(_ValidatedFitContext, _issue_production_fit_context,
- _issue_test_fit_context, _is_production_fit_context,
- _is_test_fit_context) = _make_fit_context_support()
-
-
-def _build_validated_a_context(frame, split, frozen_population, models=None):
-    """Create the production-only context required before any fold fit."""
-    checked = validate_proven_a_frame(
-        frame, frozen_population,
-        models=list(FT_MODEL_SPECS if models is None else models))
-    split_checked = _validate_w07_repeat1(
-        validate_frozen_split(split, frame=checked, repeat=W07_REPEAT1),
-        expected_ids=frozen_population["patient_id"].astype(str))
-    return _issue_production_fit_context(checked, split_checked)
+(_ValidatedFitContext, _issue_test_fit_context, _is_production_fit_context,
+ _is_test_fit_context, _build_validated_a_context) = _make_fit_context_support()
 
 
 def _build_test_fit_context(frame, split, repeat=1):
@@ -530,7 +549,7 @@ def _validate_fit_context(context, train_frame, validation_frame,
     """Fail closed unless fitting has a valid production/test-only issuance."""
     context_is_valid = (_is_test_fit_context(context) if test_only
                         else _is_production_fit_context(context))
-    if not context_is_valid or context._validated is not True:
+    if not context_is_valid:
         raise FTValidationError(
             "fold fitting requires an issued verified A context")
     train = validate_ft_frame(train_frame).reset_index(drop=True)
@@ -998,12 +1017,18 @@ def _run_ft02_a_core(frame, split, model_ids, repeat=1, lambda_count=20,
     split = validate_frozen_split(split, frame=frame, repeat=repeat)
     context_is_valid = (_is_test_fit_context(fit_context) if test_only
                         else _is_production_fit_context(fit_context))
-    if not context_is_valid or fit_context._validated is not True:
+    if not context_is_valid:
         raise FTValidationError(
             "FT02 core requires an issued verified A context")
-    if fit_context.frame_id_hash != _id_hash(frame["patient_id"]):
+    if tuple(fit_context.frame.columns) != tuple(frame.columns) or \
+            schema_hash(fit_context.frame) != schema_hash(frame) or \
+            _canonical_frame_hash(
+                fit_context.frame, list(fit_context.frame.columns)) != \
+            _canonical_frame_hash(frame, list(frame.columns)):
         raise FTValidationError("FT02 fitting context does not match the input frame")
-    if fit_context.split_hash != _canonical_split_hash(split):
+    if fit_context.split.columns.tolist() != split.columns.tolist() or \
+            _canonical_split_hash(fit_context.split) != \
+            _canonical_split_hash(split):
         raise FTValidationError("FT02 fitting context does not match the frozen split")
     split_hash = _canonical_split_hash(split)
     split_seeds = sorted(set(split["seed"].astype(int).tolist()))
@@ -1127,11 +1152,9 @@ def run_ft02_a(feature_frame, split_frame=None, models=None, lambda_count=20,
         raise FTValidationError(
             "production FT02 does not accept caller-supplied split tables")
     model_ids = list(FT_MODEL_SPECS if models is None else models)
-    frozen_split, frozen_population = load_frozen_w07_repeat1()
-    frame = validate_proven_a_frame(
-        feature_frame, frozen_population, models=model_ids).reset_index(drop=True)
-    fit_context = _build_validated_a_context(
-        frame, frozen_split, frozen_population, models=model_ids)
+    fit_context, frozen_split = _build_validated_a_context(
+        feature_frame, models=model_ids)
+    frame = fit_context.frame.copy().reset_index(drop=True)
     split_source = {
         "kind": "project_locked_W07_repeat1",
         "artifact": "prognosis_analysis/output/outer_splits_A.csv",

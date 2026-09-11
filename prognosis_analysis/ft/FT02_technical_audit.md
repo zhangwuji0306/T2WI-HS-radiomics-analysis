@@ -10,9 +10,11 @@ caller-supplied split table. Synthetic fixtures use a separately named
 test-only helper. No B data is read or generated, and no formal W08/L9 or
 model-freeze output is written. The low-level fold fitter is internal-only:
 the former public `fit_fold_a` name fails closed, while `_fit_fold_a` accepts
-only a privately issued context produced after verified A393 provenance and
-W07 binding. Directly constructed `_ValidatedFitContext` objects are
-unissued and fail closed. Synthetic fixtures use a separate
+only a context registered inside a private weak-reference issuance registry
+after verified A393 provenance and W07 binding. The production issuer is not
+exported. Directly constructed contexts, copied issued contexts and contexts
+whose bound frame or split is mutated are absent from or no longer match that
+registry and fail closed. Synthetic fixtures use a separate
 `_fit_fold_a_for_testing` path available only through the explicitly test-only
 runner.
 
@@ -120,7 +122,7 @@ FT02 synthetic/regression/static tests:
 ```text
 Command: tools/run_t2_radiomics.ps1 -PythonArguments @('.\tests\test_ft02_runner.py')
 Exit code: 0
-Tests: 16 run, 16 passed, 0 failed (189.743 s)
+Tests: 18 run, 18 passed, 0 failed (189.510 s)
 ```
 
 The test set covers all seven model definitions, frozen split seed/role
@@ -130,16 +132,18 @@ lambda selection, P3B and legacy structural availability, W_Original-only
 schema, risk and survival interfaces, metric hooks, bootstrap seed/mode,
 B-row/path rejection and FT isolation. It also verifies that direct public
 fold-fitting bypasses and caller-constructed or unissued fit contexts fail
-closed, that an issued verified context reaches the production fitter, and
-that a known two-case calibration fixture returns survival-direction targets
-at the requested horizon. Synthetic fitting uses a separate test-only fitter.
+closed, that copying an issued production context does not copy its private
+registry membership, that mutation invalidates an issued context, that an
+issued verified context reaches the production fitter, and that a known
+two-case calibration fixture returns survival-direction targets at the
+requested horizon. Synthetic fitting uses a separate test-only fitter.
 
 Existing W07 regression suite:
 
 ```text
 Command: tools/run_t2_radiomics.ps1 -PythonArguments @('.\tests\test_w07_outer_splits.py')
 Exit code: 0
-Tests: 13 run, 13 passed, 0 failed (2.336 s)
+Tests: 13 run, 13 passed, 0 failed (1.617 s)
 ```
 
 The FT isolation checks preserve the formal habitat freeze, formal modeling

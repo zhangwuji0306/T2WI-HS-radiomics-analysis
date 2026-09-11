@@ -1,6 +1,7 @@
 """Synthetic and static FT02 contract tests."""
 from __future__ import absolute_import
 
+import copy
 import hashlib
 import inspect
 import os
@@ -266,20 +267,35 @@ class FT02RunnerTests(unittest.TestCase):
                 self.frame.iloc[:60], self.frame.iloc[60:], "M0",
                 fit_context=None, max_iter=250)
 
+    def test_production_issuer_is_not_directly_callable(self):
+        with self.assertRaises(AttributeError):
+            ft._issue_production_fit_context(self.frame, self.split)
+
     def test_forged_context_cannot_reach_production_fitter(self):
         current = self.split[self.split.fold == 1]
         train_ids = set(current.loc[current.role == "train", "patient_id"])
         valid_ids = set(current.loc[current.role == "validation", "patient_id"])
         train = self.frame[self.frame.patient_id.isin(train_ids)]
         valid = self.frame[self.frame.patient_id.isin(valid_ids)]
-        for a_verified, mode in ((False, "synthetic_test"),
-                                 (True, "production_A393")):
-            forged = ft._ValidatedFitContext(
-                self.frame, self.split, a_verified, mode)
-            with self.subTest(a_verified=a_verified, mode=mode):
-                with self.assertRaises(ft.FTValidationError):
-                    ft._fit_fold_a(
-                        train, valid, "M0", fit_context=forged, max_iter=250)
+        forged = ft._ValidatedFitContext(self.frame, self.split)
+        with self.assertRaises(ft.FTValidationError):
+            ft._fit_fold_a(
+                train, valid, "M0", fit_context=forged, max_iter=250)
+        frame = self.frame.copy()
+        frame["technical_cohort"] = "A393"
+        frame["modeling_eligible"] = 1
+        population = frame[["patient_id", "DFS_time", "DFS_event"]].copy()
+        with mock.patch.object(ft, "validate_proven_a_frame",
+                               return_value=frame), \
+                mock.patch.object(ft, "load_frozen_w07_repeat1",
+                                  return_value=(self.split, population)), \
+                mock.patch.object(ft, "_validate_w07_repeat1",
+                                  return_value=self.split):
+            issued, _ = ft._build_validated_a_context(frame, models=["M0"])
+        copied = copy.copy(issued)
+        with self.assertRaises(ft.FTValidationError):
+            ft._fit_fold_a(
+                train, valid, "M0", fit_context=copied, max_iter=250)
 
     def test_issued_verified_context_reaches_production_fitter(self):
         frame = self.frame.copy()
@@ -288,10 +304,12 @@ class FT02RunnerTests(unittest.TestCase):
         population = frame[["patient_id", "DFS_time", "DFS_event"]].copy()
         with mock.patch.object(ft, "validate_proven_a_frame",
                                return_value=frame), \
+                mock.patch.object(ft, "load_frozen_w07_repeat1",
+                                  return_value=(self.split, population)), \
                 mock.patch.object(ft, "_validate_w07_repeat1",
                                   return_value=self.split):
-            context = ft._build_validated_a_context(
-                frame, self.split, population, models=["M0"])
+            context, split = ft._build_validated_a_context(
+                frame, models=["M0"])
         current = self.split[self.split.fold == 1]
         train_ids = set(current.loc[current.role == "train", "patient_id"])
         valid_ids = set(current.loc[current.role == "validation", "patient_id"])
@@ -300,6 +318,29 @@ class FT02RunnerTests(unittest.TestCase):
         fit = ft._fit_fold_a(
             train, valid, "M0", fit_context=context, max_iter=250)
         self.assertEqual(len(fit["risk"]), len(valid))
+
+    def test_mutated_verified_context_fails_closed(self):
+        frame = self.frame.copy()
+        frame["technical_cohort"] = "A393"
+        frame["modeling_eligible"] = 1
+        population = frame[["patient_id", "DFS_time", "DFS_event"]].copy()
+        with mock.patch.object(ft, "validate_proven_a_frame",
+                               return_value=frame), \
+                mock.patch.object(ft, "load_frozen_w07_repeat1",
+                                  return_value=(self.split, population)), \
+                mock.patch.object(ft, "_validate_w07_repeat1",
+                                  return_value=self.split):
+            context, split = ft._build_validated_a_context(
+                frame, models=["M0"])
+        current = split[split.fold == 1]
+        train_ids = set(current.loc[current.role == "train", "patient_id"])
+        valid_ids = set(current.loc[current.role == "validation", "patient_id"])
+        train = frame[frame.patient_id.isin(train_ids)]
+        valid = frame[frame.patient_id.isin(valid_ids)]
+        context.frame.loc[context.frame.index[0], "DFS_time"] += 1.0
+        with self.assertRaises(ft.FTValidationError):
+            ft._fit_fold_a(
+                train, valid, "M0", fit_context=context, max_iter=250)
 
     def test_calibration_uses_survival_direction_at_horizon(self):
         frame = pd.DataFrame({
