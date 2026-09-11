@@ -451,6 +451,94 @@ def population_mask(frame, population):
     raise FTValidationError("unknown FT population: %s" % population)
 
 
+class _ValidatedFitContext(object):
+    """Internal proof that a fold belongs to an authorized FT frame."""
+
+    def __init__(self, frame, split, a_verified, mode):
+        self.frame = frame.copy()
+        self.split = split.copy()
+        self.frame_id_hash = _id_hash(self.frame["patient_id"])
+        self.split_hash = _canonical_split_hash(self.split)
+        self.a_verified = bool(a_verified)
+        self.mode = str(mode)
+        self._validated = True
+
+
+def _build_validated_a_context(frame, split, frozen_population, models=None):
+    """Create the production-only context required before any fold fit."""
+    checked = validate_proven_a_frame(
+        frame, frozen_population,
+        models=list(FT_MODEL_SPECS if models is None else models))
+    split_checked = _validate_w07_repeat1(
+        validate_frozen_split(split, frame=checked, repeat=W07_REPEAT1),
+        expected_ids=frozen_population["patient_id"].astype(str))
+    return _ValidatedFitContext(checked, split_checked, True, "production_A393")
+
+
+def _build_test_fit_context(frame, split, repeat=1):
+    """Build the explicitly test-only context for synthetic FT fixtures."""
+    checked = validate_ft_frame(frame)
+    split_checked = validate_frozen_split(split, frame=checked, repeat=repeat)
+    return _ValidatedFitContext(checked, split_checked, False, "synthetic_test")
+
+
+def _validate_fit_context(context, train_frame, validation_frame):
+    """Fail closed unless fitting is reached through a validated context."""
+    if not isinstance(context, _ValidatedFitContext) or \
+            context._validated is not True:
+        raise FTValidationError(
+            "fold fitting requires an internal validated A/test context")
+    train = validate_ft_frame(train_frame).reset_index(drop=True)
+    valid = validate_ft_frame(validation_frame).reset_index(drop=True)
+    train_ids = set(train["patient_id"].astype(str))
+    valid_ids = set(valid["patient_id"].astype(str))
+    if not train_ids or not valid_ids or train_ids & valid_ids:
+        raise FTValidationError("validated fold context has invalid train/validation IDs")
+    if not (train_ids | valid_ids).issubset(
+            set(context.frame["patient_id"].astype(str))):
+        raise FTValidationError("fold rows are outside the validated frame context")
+    reference = context.frame.copy()
+    reference["patient_id"] = reference["patient_id"].astype(str).str.strip()
+    reference = reference.set_index("patient_id")
+    for subset, ids in ((train, train_ids), (valid, valid_ids)):
+        observed = subset.copy()
+        observed["patient_id"] = observed["patient_id"].astype(str).str.strip()
+        observed = observed.set_index("patient_id")
+        ordered = sorted(ids)
+        for column in ("DFS_time", "DFS_event", "split",
+                       "technical_cohort", "modeling_eligible"):
+            if column not in observed.columns or column not in reference.columns:
+                continue
+            expected = reference.loc[ordered, column]
+            actual = observed.loc[ordered, column]
+            if column in ("DFS_time", "DFS_event", "modeling_eligible"):
+                expected_values = pd.to_numeric(expected, errors="coerce").to_numpy()
+                actual_values = pd.to_numeric(actual, errors="coerce").to_numpy()
+                same = np.array_equal(expected_values, actual_values)
+            else:
+                same = (expected.astype(str).to_numpy() ==
+                        actual.astype(str).to_numpy()).all()
+            if not same:
+                raise FTValidationError(
+                    "fold rows differ from the validated A/test context")
+    split = context.split
+    for role, ids in (("train", train_ids), ("validation", valid_ids)):
+        allowed = set(split.loc[split["role"].eq(role), "patient_id"])
+        if not ids.issubset(allowed):
+            raise FTValidationError("fold rows do not match the validated split role")
+    if context.a_verified:
+        required = {"split", "technical_cohort", "modeling_eligible"}
+        if not required.issubset(train.columns) or \
+                not required.issubset(valid.columns):
+            raise FTValidationError("A provenance was lost before fold fitting")
+        for subset, ids in ((train, train_ids), (valid, valid_ids)):
+            if not subset["split"].astype(str).str.strip().str.upper().eq("A").all() or \
+                    not subset["technical_cohort"].astype(str).str.strip().eq("A393").all() or \
+                    not pd.to_numeric(subset["modeling_eligible"], errors="coerce").eq(1).all():
+                raise FTValidationError("fold fitting received unproven A provenance")
+    return train, valid
+
+
 class FTPreprocessor(object):
     """Training-only FT preprocessing with frozen block identity."""
 
@@ -591,11 +679,20 @@ def _inner_lambda_selection(frame, model_id, seed, lambda_count=20,
 
 def fit_fold_a(train_frame, validation_frame, model_id, seed=12345,
                lambda_count=20, max_iter=1000, tolerance=1e-7):
-    """Fit one A fold and return the model, preprocessor, risk and audit."""
+    """Reject the former public low-level fitting interface."""
+    raise FTValidationError(
+        "fit_fold_a is internal-only; use the validated FT02 A entry point")
+
+
+def _fit_fold_a(train_frame, validation_frame, model_id, fit_context,
+                seed=12345, lambda_count=20, max_iter=1000, tolerance=1e-7):
+    """Fit one fold after the caller has established the FT boundary."""
     if model_id not in FT_MODEL_SPECS:
         raise FTValidationError("unknown FT model: %s" % model_id)
-    train = validate_ft_frame(train_frame, models=[model_id]).reset_index(drop=True)
-    valid = validate_ft_frame(validation_frame, models=[model_id]).reset_index(drop=True)
+    train, valid = _validate_fit_context(
+        fit_context, train_frame, validation_frame)
+    train = validate_ft_frame(train, models=[model_id]).reset_index(drop=True)
+    valid = validate_ft_frame(valid, models=[model_id]).reset_index(drop=True)
     prep = FTPreprocessor(model_id).fit(train)
     X_train = prep.transform(train)
     X_valid = prep.transform(valid)
@@ -687,7 +784,8 @@ def _model_population(model_id):
     return "main"
 
 
-def _fit_model_cv(frame, split, model_id, population, lambda_count=20,
+def _fit_model_cv(frame, split, model_id, population, fit_context,
+                  lambda_count=20,
                   max_iter=1000, tolerance=1e-7):
     """Fit one model on one explicit eligible population and frozen folds."""
     eligible = frame.loc[population_mask(frame, population), "patient_id"].astype(str)
@@ -707,8 +805,9 @@ def _fit_model_cv(frame, split, model_id, population, lambda_count=20,
         unique_seeds = pd.to_numeric(seed_values, errors="coerce").dropna().unique()
         if len(unique_seeds) != 1:
             raise FTValidationError("fold %d seed is ambiguous" % fold)
-        fitted = fit_fold_a(
-            train, valid, model_id, seed=int(unique_seeds[0]),
+        fitted = _fit_fold_a(
+            train, valid, model_id, fit_context=fit_context,
+            seed=int(unique_seeds[0]),
             lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance)
         valid_ids = valid["patient_id"].astype(str).tolist()
         for index, identifier in enumerate(valid_ids):
@@ -827,9 +926,18 @@ def _json_number(value):
 
 
 def _run_ft02_a_core(frame, split, model_ids, repeat=1, lambda_count=20,
-                     max_iter=1000, tolerance=1e-7, split_source=None):
+                     max_iter=1000, tolerance=1e-7, split_source=None,
+                     fit_context=None):
     """Run the in-memory core after the boundary and split have been proven."""
     split = validate_frozen_split(split, frame=frame, repeat=repeat)
+    if not isinstance(fit_context, _ValidatedFitContext) or \
+            fit_context._validated is not True:
+        raise FTValidationError(
+            "FT02 core requires a validated A/test fitting context")
+    if fit_context.frame_id_hash != _id_hash(frame["patient_id"]):
+        raise FTValidationError("FT02 fitting context does not match the input frame")
+    if fit_context.split_hash != _canonical_split_hash(split):
+        raise FTValidationError("FT02 fitting context does not match the frozen split")
     split_hash = _canonical_split_hash(split)
     split_seeds = sorted(set(split["seed"].astype(int).tolist()))
     if len(split_seeds) != 1:
@@ -848,7 +956,8 @@ def _run_ft02_a_core(frame, split, model_ids, repeat=1, lambda_count=20,
             frame.loc[population_mask(frame, population), "patient_id"]))
         if key not in fit_cache:
             fit_cache[key] = _fit_model_cv(
-                frame, split, model_id, population, lambda_count=lambda_count,
+                frame, split, model_id, population, fit_context=fit_context,
+                lambda_count=lambda_count,
                 max_iter=max_iter, tolerance=tolerance)
         fitted = fit_cache[key]
         population_counts[population] = int(len(fitted["eligible_ids"]))
@@ -873,12 +982,12 @@ def _run_ft02_a_core(frame, split, model_ids, repeat=1, lambda_count=20,
         if left_key not in fit_cache:
             common_frame = frame[frame["patient_id"].astype(str).isin(set(common_ids))]
             fit_cache[left_key] = _fit_model_cv(
-                common_frame, split, left, population,
+                common_frame, split, left, population, fit_context=fit_context,
                 lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance)
         if right_key not in fit_cache:
             common_frame = frame[frame["patient_id"].astype(str).isin(set(common_ids))]
             fit_cache[right_key] = _fit_model_cv(
-                common_frame, split, right, population,
+                common_frame, split, right, population, fit_context=fit_context,
                 lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance)
         left_fit = fit_cache[left_key]
         right_fit = fit_cache[right_key]
@@ -951,6 +1060,8 @@ def run_ft02_a(feature_frame, split_frame=None, models=None, lambda_count=20,
     frozen_split, frozen_population = load_frozen_w07_repeat1()
     frame = validate_proven_a_frame(
         feature_frame, frozen_population, models=model_ids).reset_index(drop=True)
+    fit_context = _build_validated_a_context(
+        frame, frozen_split, frozen_population, models=model_ids)
     split_source = {
         "kind": "project_locked_W07_repeat1",
         "artifact": "prognosis_analysis/output/outer_splits_A.csv",
@@ -964,7 +1075,7 @@ def run_ft02_a(feature_frame, split_frame=None, models=None, lambda_count=20,
     return _run_ft02_a_core(
         frame, frozen_split, model_ids, repeat=W07_REPEAT1,
         lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance,
-        split_source=split_source)
+        split_source=split_source, fit_context=fit_context)
 
 
 def run_ft02_a_for_testing(feature_frame, split_frame, models=None, repeat=1,
@@ -973,9 +1084,11 @@ def run_ft02_a_for_testing(feature_frame, split_frame, models=None, repeat=1,
     """Test-only synthetic runner; it is not a production A entry point."""
     model_ids = list(FT_MODEL_SPECS if models is None else models)
     frame = validate_ft_frame(feature_frame, models=model_ids).reset_index(drop=True)
+    fit_context = _build_test_fit_context(frame, split_frame, repeat=repeat)
     return _run_ft02_a_core(
         frame, split_frame, model_ids, repeat=repeat, lambda_count=lambda_count,
-        max_iter=max_iter, tolerance=tolerance, split_source=split_source)
+        max_iter=max_iter, tolerance=tolerance, split_source=split_source,
+        fit_context=fit_context)
 
 
 def harrell_c_index_hook(time, event, risk):
@@ -1074,7 +1187,12 @@ def auc_5_year_hook(training_frame, evaluation_frame, risk):
 
 
 def brier_score_hook(training_frame, evaluation_frame, survival_probability, horizon):
-    """IPCW Brier hook; censoring weights are estimated from training only."""
+    """IPCW Brier hook for S(t); censoring weights use training data only.
+
+    The observed target is 0 for an event by ``horizon`` and 1 for survival
+    beyond it, so the input must be the survival probability S(t), not event
+    probability 1 - S(t).
+    """
     train_time = training_frame["DFS_time"].to_numpy(dtype=float)
     train_event = training_frame["DFS_event"].to_numpy(dtype=int)
     time = evaluation_frame["DFS_time"].to_numpy(dtype=float)
@@ -1107,14 +1225,30 @@ def brier_5_year_hook(training_frame, evaluation_frame, survival_probability):
 
 def calibration_data_hook(training_frame, evaluation_frame, survival_probability,
                           horizon, bins=5):
+    """Bin predicted S(t) against the observed survival indicator S(t).
+
+    The prediction and target are both survival quantities at ``horizon``:
+    events by the horizon map to 0 and observations known to survive beyond
+    it map to 1.  Censoring before the horizon is excluded by this simple
+    calibration hook, matching the other uncensored-or-event-by-horizon
+    technical hooks.
+    """
+    horizon = float(horizon)
+    if not np.isfinite(horizon) or horizon <= 0:
+        raise FTValidationError("calibration horizon must be finite and positive")
     time = evaluation_frame["DFS_time"].to_numpy(dtype=float)
     event = evaluation_frame["DFS_event"].to_numpy(dtype=int)
     prediction = np.asarray(survival_probability, dtype=float)
-    usable = ((event == 1) & (time <= float(horizon))) | (time > float(horizon))
+    if len(prediction) != len(time) or not np.isfinite(prediction).all() or \
+            np.any(prediction < 0.0) or np.any(prediction > 1.0):
+        raise FTValidationError("survival prediction is not a probability")
+    usable = ((event == 1) & (time <= horizon)) | (time > horizon)
     if not np.any(usable):
-        return {"horizon": float(horizon), "bins": [], "estimable_n": 0}
+        return {"horizon": horizon, "bins": [], "estimable_n": 0,
+                "prediction_quantity": "survival_probability",
+                "observed_quantity": "survival_at_horizon"}
     values = prediction[usable]
-    outcome = (((event[usable] == 1) & (time[usable] <= float(horizon)))).astype(float)
+    outcome = (time[usable] > horizon).astype(float)
     edges = np.unique(np.quantile(values, np.linspace(0, 1, int(bins) + 1)))
     records = []
     for index in range(max(1, len(edges) - 1)):
@@ -1127,9 +1261,12 @@ def calibration_data_hook(training_frame, evaluation_frame, survival_probability
         if np.any(mask):
             records.append({"bin": int(index + 1), "n": int(mask.sum()),
                             "mean_predicted_survival": float(np.mean(values[mask])),
-                            "observed_event_fraction": float(np.mean(outcome[mask]))})
-    return {"horizon": float(horizon), "bins": records,
-            "estimable_n": int(len(values)), "method": "uncensored_or_event_by_horizon"}
+                            "observed_survival_fraction": float(np.mean(outcome[mask]))})
+    return {"horizon": horizon, "bins": records,
+            "estimable_n": int(len(values)),
+            "prediction_quantity": "survival_probability",
+            "observed_quantity": "survival_at_horizon",
+            "method": "uncensored_or_event_by_horizon"}
 
 
 def km_data_hook(evaluation_frame, risk, groups=2):
@@ -1161,7 +1298,11 @@ def km_data_hook(evaluation_frame, risk, groups=2):
 
 def dca_data_hook(evaluation_frame, event_probability, horizon,
                   thresholds=None):
-    """Return decision-curve net benefit points for a supplied horizon risk."""
+    """Return decision-curve net benefit for event probability by horizon.
+
+    For a model survival output S(t), callers should pass the directionally
+    consistent event probability 1 - S(t).
+    """
     if thresholds is None:
         thresholds = np.linspace(0.05, 0.95, 19)
     time = evaluation_frame["DFS_time"].to_numpy(dtype=float)

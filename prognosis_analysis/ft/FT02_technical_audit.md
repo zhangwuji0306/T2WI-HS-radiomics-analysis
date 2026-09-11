@@ -8,7 +8,11 @@ FT02 is an A-only, in-memory modeling runner. The production entry point is
 bound to the project-frozen W07 split artifact and does not accept a
 caller-supplied split table. Synthetic fixtures use a separately named
 test-only helper. No B data is read or generated, and no formal W08/L9 or
-model-freeze output is written.
+model-freeze output is written. The low-level fold fitter is internal-only:
+the former public `fit_fold_a` name fails closed, while `_fit_fold_a` requires
+an internally created validated fit context before it can fit. Production
+contexts prove A393 provenance and W07 binding; synthetic contexts are
+available only through the explicitly test-only runner.
 
 ## Frozen A boundary
 
@@ -83,8 +87,12 @@ interfaces are:
 - `paired_comparison_hook` and `build_provenance_record`.
 
 The survival outputs are finite probabilities in `[0, 1]` derived from the
-fitted Cox baseline survival and are suitable for Brier, calibration, KM and
-DCA data hooks.
+fitted Cox baseline survival. The numerical hook contract is explicit:
+`S(t)` is the survival probability at 36 or 60 months; Brier compares `S(t)`
+with a target of 1 for survival beyond the horizon and 0 for an event by the
+horizon; calibration bins `S(t)` against the same observed survival quantity;
+and DCA receives the corresponding event probability `1 - S(t)`. KM uses the
+fold risk score for its fixed risk-rank groups.
 
 ## Validation evidence
 
@@ -110,7 +118,7 @@ FT02 synthetic/regression/static tests:
 ```text
 Command: tools/run_t2_radiomics.ps1 -PythonArguments @('.\tests\test_ft02_runner.py')
 Exit code: 0
-Tests: 12 run, 12 passed, 0 failed (199.300 s)
+Tests: 14 run, 14 passed, 0 failed (181.456 s)
 ```
 
 The test set covers all seven model definitions, frozen split seed/role
@@ -118,14 +126,16 @@ validation, production W07 binding and fail-closed A provenance, common paired
 training/validation IDs and per-fold hashes, training-only preprocessing and
 lambda selection, P3B and legacy structural availability, W_Original-only
 schema, risk and survival interfaces, metric hooks, bootstrap seed/mode,
-B-row/path rejection and FT isolation.
+B-row/path rejection and FT isolation. It also verifies that direct public
+fold-fitting bypasses fail closed and that a known two-case calibration fixture
+returns survival-direction targets at the requested horizon.
 
 Existing W07 regression suite:
 
 ```text
 Command: tools/run_t2_radiomics.ps1 -PythonArguments @('.\tests\test_w07_outer_splits.py')
 Exit code: 0
-Tests: 13 run, 13 passed, 0 failed (1.682 s)
+Tests: 13 run, 13 passed, 0 failed (1.116 s)
 ```
 
 The FT isolation checks preserve the formal habitat freeze, formal modeling

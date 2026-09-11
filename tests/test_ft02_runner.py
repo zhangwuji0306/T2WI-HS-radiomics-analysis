@@ -237,16 +237,47 @@ class FT02RunnerTests(unittest.TestCase):
         self.assertEqual(result["mode"], "case_resample")
 
     def test_fitted_state_survival_interface(self):
-        fit = ft.fit_fold_a(
-            self.frame.iloc[:60], self.frame.iloc[60:], "M0", max_iter=250)
+        context = ft._build_test_fit_context(self.frame, self.split)
+        current = self.split[self.split.fold == 1]
+        train_ids = set(current.loc[current.role == "train", "patient_id"])
+        valid_ids = set(current.loc[current.role == "validation", "patient_id"])
+        train = self.frame[self.frame.patient_id.isin(train_ids)]
+        valid = self.frame[self.frame.patient_id.isin(valid_ids)]
+        fit = ft._fit_fold_a(
+            train, valid, "M0",
+            fit_context=context, max_iter=250)
         output = ft.predict_risk_survival_hook(
-            fit["model"], fit["preprocessor"], self.frame.iloc[60:])
-        self.assertEqual(len(output["risk"]), 15)
+            fit["model"], fit["preprocessor"], valid)
+        self.assertEqual(len(output["risk"]), len(valid))
         for key in ("survival_probability_36_months",
                     "survival_probability_60_months"):
             self.assertIn(key, output)
             self.assertTrue(np.isfinite(output[key]).all())
             self.assertTrue(np.all((output[key] >= 0) & (output[key] <= 1)))
+
+    def test_public_fold_fit_bypass_fails_closed(self):
+        with self.assertRaises(ft.FTValidationError):
+            ft.fit_fold_a(
+                self.frame.iloc[:60], self.frame.iloc[60:], "M0",
+                max_iter=250)
+        with self.assertRaises(ft.FTValidationError):
+            ft._fit_fold_a(
+                self.frame.iloc[:60], self.frame.iloc[60:], "M0",
+                fit_context=None, max_iter=250)
+
+    def test_calibration_uses_survival_direction_at_horizon(self):
+        frame = pd.DataFrame({
+            "DFS_time": [12.0, 48.0],
+            "DFS_event": [1, 0],
+        })
+        result = ft.calibration_data_hook(
+            frame, frame, np.array([0.2, 0.8]), 36.0, bins=2)
+        self.assertEqual(result["prediction_quantity"], "survival_probability")
+        self.assertEqual(result["observed_quantity"], "survival_at_horizon")
+        self.assertEqual(
+            [row["observed_survival_fraction"] for row in result["bins"]],
+            [0.0, 1.0])
+        self.assertNotIn("observed_event_fraction", result["bins"][0])
 
     def test_static_ft_isolation(self):
         source = inspect.getsource(ft)
