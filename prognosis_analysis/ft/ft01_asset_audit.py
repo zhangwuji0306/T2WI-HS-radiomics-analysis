@@ -23,6 +23,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FT_DIR = os.path.join(ROOT, "prognosis_analysis", "ft")
 
 FT00_PATH = os.path.join(FT_DIR, "FT00_protocol.json")
+AMENDMENT_PATH = os.path.join(FT_DIR, "FT_protocol_amendment_20260911.json")
 CONTRACT_PATH = os.path.join(ROOT, "_codex_ft_run_20260910_01a08bf3", "FT01_contract.md")
 SCHEME_PATH = os.path.join(ROOT, "T2WI-HS 生境预后快速验证（FT）方案书.md")
 
@@ -291,8 +292,9 @@ def verify_output_manifest(manifest_path):
     return result
 
 
-def source_reference_checks(ft00):
+def source_reference_checks(ft00, amendment):
     checks = []
+    superseded_paths = set(amendment.get("superseded_ft00_source_reference_paths", []))
     for reference in ft00.get("source_references", []):
         path = os.path.join(ROOT, *reference["path"].replace("/", os.sep).split(os.sep))
         item = OrderedDict([
@@ -307,6 +309,11 @@ def source_reference_checks(ft00):
             item["matches_ft00"] = actual.lower() == str(reference.get("sha256", "")).lower()
         else:
             item["matches_ft00"] = False
+        item["superseded_by_amendment"] = reference["path"] in superseded_paths
+        item["effective_check_status"] = (
+            "SUPERSEDED" if item["superseded_by_amendment"] else
+            ("PASS" if item["matches_ft00"] else "FAIL")
+        )
         checks.append(item)
     return checks
 
@@ -361,6 +368,7 @@ def find_b_provenance_files(search_roots):
 
 def build_manifest():
     ft00 = load_json(FT00_PATH)
+    amendment = load_json(AMENDMENT_PATH)
     candidate_path = os.path.join(ROOT, "prognosis_analysis", "output", "w03_habitat_radiomics_A", "candidate_freeze.json")
     candidate = load_json(candidate_path)
     w03_schema_path = os.path.join(ROOT, "prognosis_analysis", "output", "w03_habitat_radiomics_A", "feature_schema.json")
@@ -400,7 +408,7 @@ def build_manifest():
     manifest["schema_version"] = "1.0"
     manifest["artifact_id"] = "FT01_asset_manifest"
     manifest["stage"] = "FT01"
-    manifest["status"] = "PASS_A_FAIL_CLOSED_B"
+    manifest["status"] = "PARTIAL_PASS"
     manifest["exploratory_label"] = ft00.get("exploratory_label")
     manifest["scope"] = OrderedDict([
         ("habitat", "existing frozen full_A"),
@@ -408,14 +416,18 @@ def build_manifest():
         ("filtered_whole_tumor_features_included", False),
         ("b_outcome_or_clinical_data_read", False),
         ("b_reextraction", False),
+        ("b_first_habitat_extraction_completed", False),
+        ("b_first_habitat_extraction_authorized_stage", "FT05A_after_FT04_model_freeze"),
         ("b_optimization_or_model_fitting", False),
     ])
     manifest["contract_binding"] = OrderedDict([
         ("branch", "codex/ft-validation"),
         ("ft00_protocol_path", rel(FT00_PATH)),
         ("ft00_protocol_sha256", sha256_file(FT00_PATH)),
-        ("ft01_contract_path", rel(CONTRACT_PATH)),
-        ("ft01_contract_sha256", sha256_file(CONTRACT_PATH)),
+        ("protocol_amendment_path", rel(AMENDMENT_PATH)),
+        ("protocol_amendment_sha256", sha256_file(AMENDMENT_PATH)),
+        ("historical_ft01_contract_path", rel(CONTRACT_PATH)),
+        ("historical_ft01_contract_sha256", sha256_file(CONTRACT_PATH)),
         ("scheme_path", rel(SCHEME_PATH)),
         ("scheme_sha256", sha256_file(SCHEME_PATH)),
     ])
@@ -651,20 +663,21 @@ def build_manifest():
             ("matching_provenance_paths_found", b_provenance_files),
         ])),
         ("R_low_existing_B_asset", OrderedDict([
-            ("status", "found" if any(habitat_feature_kind(os.path.basename(item)) == "R_low" for item in b_habitat_assets) else "missing"),
+            ("status", "FOUND" if any(habitat_feature_kind(os.path.basename(item)) == "R_low" for item in b_habitat_assets) else "NOT_YET_GENERATED"),
             ("asset_paths", [item for item in b_habitat_assets if habitat_feature_kind(os.path.basename(item)) == "R_low"]),
         ])),
         ("R_high_existing_B_asset", OrderedDict([
-            ("status", "found" if any(habitat_feature_kind(os.path.basename(item)) == "R_high" for item in b_habitat_assets) else "missing"),
+            ("status", "FOUND" if any(habitat_feature_kind(os.path.basename(item)) == "R_high" for item in b_habitat_assets) else "NOT_YET_GENERATED"),
             ("asset_paths", [item for item in b_habitat_assets if habitat_feature_kind(os.path.basename(item)) == "R_high"]),
         ])),
         ("candidate_hashes", OrderedDict([
-            ("R_low", "not_observable_without_existing_B_habitat_asset"),
-            ("R_high", "not_observable_without_existing_B_habitat_asset"),
+            ("R_low_frozen_target", expected_low_hash),
+            ("R_high_frozen_target", expected_high_hash),
+            ("current_B_asset_verification", "NOT_YET_GENERATED"),
         ])),
-        ("radiomics_configuration_provenance", "not_observable_for_B_habitat_blocks" if not b_provenance_files else "requires_asset_level_review"),
-        ("A_B_feature_definition_compatibility", "blocked_missing_existing_B_habitat_assets"),
-        ("fail_closed_reason", "No existing B R_low/R_high habitat feature tables or B habitat radiomics provenance were found under the technical output roots; FT01 cannot certify B compatibility without opening prohibited source data or re-extracting B radiomics."),
+        ("radiomics_configuration_provenance", "TO_BE_GENERATED_AND_AUDITED_IN_FT05A" if not b_provenance_files else "requires_asset_level_review"),
+        ("A_B_feature_definition_compatibility", "TO_BE_GENERATED_FROM_FROZEN_A_DEFINITION_IN_FT05A"),
+        ("generation_plan", "After FT04 model freeze, perform one outcome-blind first B habitat radiomics extraction under the frozen A-full definition; retain only frozen R_low/R_high candidates."),
     ])
 
     manifest["source_files"] = [
@@ -682,7 +695,7 @@ def build_manifest():
         file_record(w_original_path),
         file_record(feature_manifest_path),
     ]
-    manifest["ft00_source_reference_checks"] = source_reference_checks(ft00)
+    manifest["ft00_source_reference_checks"] = source_reference_checks(ft00, amendment)
     manifest["formal_state"] = OrderedDict([
         ("formal_w08_stage", execution_status.get("execution", {}).get("stage")),
         ("formal_w08_gate", execution_status.get("execution", {}).get("gate")),
@@ -708,7 +721,13 @@ def build_manifest():
     manifest["observed_at"] = datetime.now().astimezone().isoformat()
 
     source_check_failures = [item["path"] for item in manifest["ft00_source_reference_checks"]
-                             if not item.get("matches_ft00", False)]
+                             if item.get("effective_check_status") == "FAIL"]
+    amendment_valid = (
+        amendment.get("status") == "approved_and_frozen" and
+        amendment.get("effective_branch") == "codex/ft-validation" and
+        amendment.get("FT01", {}).get("FT01_A") == "PASS" and
+        amendment.get("FT01", {}).get("FT01_B_habitat_assets") == "NOT_YET_GENERATED"
+    )
     a_required = [
         manifest["candidate_hash_recomputation"]["R_low"]["matches"],
         manifest["candidate_hash_recomputation"]["R_high"]["matches"],
@@ -727,17 +746,21 @@ def build_manifest():
         manifest["W_Original_asset"].get("full_A_overlap", {}).get("whole_tumor_unique_id_count_matching_full_A") == 393,
         manifest["W_Original_asset"].get("full_A_overlap", {}).get("primary_reader_rows") == 393,
         manifest["W_Original_asset"].get("full_A_overlap", {}).get("primary_reader_all_original_finite_rows") == 393,
+        amendment_valid,
     ]
+    a_status = "PASS" if all(a_required) and not source_check_failures else "FAIL_CLOSED"
     manifest["conclusion"] = OrderedDict([
-        ("A_status", "PASS" if all(a_required) and not source_check_failures else "FAIL_CLOSED"),
-        ("B_status", "FAIL_CLOSED"),
-        ("overall_status", "FAIL_CLOSED"),
+        ("FT01_A", a_status),
+        ("FT01_B_habitat_assets", "NOT_YET_GENERATED"),
+        ("overall_status", "PARTIAL_PASS" if a_status == "PASS" else "FAIL_CLOSED"),
         ("A_required_checks_passed", int(sum(bool(item) for item in a_required))),
         ("A_required_checks_total", int(len(a_required))),
-        ("FT02_ready", False),
-        ("reason", "B existing habitat technical assets and provenance are unavailable; compatibility cannot be certified under the FT01 read boundary."),
+        ("FT02_ready", a_status == "PASS"),
+        ("authorized_next_scope", "FT02_to_FT04_A_only" if a_status == "PASS" else "none"),
+        ("reason", "A assets are complete. B habitat radiomics are intentionally deferred to the one-time outcome-blind FT05A generation after FT04 model freeze."),
         ("source_reference_failures", source_check_failures),
     ])
+    manifest["status"] = manifest["conclusion"]["overall_status"]
     return manifest
 
 
@@ -750,14 +773,19 @@ def write_audit_markdown(manifest, path):
     m = a["full_A_habitat_map_manifest"]
     low = manifest["candidate_hash_recomputation"]["R_low"]
     high = manifest["candidate_hash_recomputation"]["R_high"]
+    conclusion = manifest["conclusion"]
     lines = [
         "# FT01 Asset Audit",
         "",
         "## Conclusion",
         "",
-        "`FAIL_CLOSED`",
+        "`PARTIAL_PASS`",
         "",
-        "A technical assets and the frozen full_A habitat pass the observable FT01 checks. The existing whole-tumor asset is bound to `W_Original` only. B cannot be released to FT02 because no existing B `R_low`/`R_high` habitat feature tables or B habitat radiomics provenance were found in the permitted technical output roots.",
+        "`FT01_A = %s`" % conclusion["FT01_A"],
+        "",
+        "`FT01_B_habitat_assets = NOT_YET_GENERATED`",
+        "",
+        "A technical assets and the frozen full_A habitat pass the FT01 checks. The existing whole-tumor asset is bound to the approved 107-feature `W_Original` definition. B `R_low`/`R_high` have never been generated; their absence is the expected pre-FT05A state and does not block A-only FT02-FT04.",
         "",
         "No B outcome, clinical, performance, or validation result was read. No B MRI preprocessing, SLIC, K-means, PyRadiomics extraction, feature selection, preprocessing estimation, or model fitting was executed.",
         "",
@@ -783,23 +811,24 @@ def write_audit_markdown(manifest, path):
         "|---|---|",
         "| Patient-ID schema | Technical ID column is `影像号`; no identifiers are emitted in tracked FT01 artifacts | PASS |",
         "| Existing B W_Original asset | schema present; technical split rows: %d; R1 finite rows: %d; B technical-cohort alignment not certified | %s |" % (b["W_Original"].get("B_rows_observed_by_existing_technical_split", 0), b["W_Original"].get("B_primary_reader_all_original_finite_rows", 0), "PASS_WITH_LIMITATION" if b["W_Original"].get("schema_summary_available") and b["W_Original"].get("radiomics_provenance_available") else "FAIL"),
-        "| Existing B R_low asset | %s | FAIL_CLOSED |" % b["R_low_existing_B_asset"].get("status"),
-        "| Existing B R_high asset | %s | FAIL_CLOSED |" % b["R_high_existing_B_asset"].get("status"),
-        "| B technical asset/provenance search | Roots: `%s`; matching habitat tables: %d; matching provenance files: %d | %s |" % (", ".join(b["search_scope"].get("technical_output_roots", [])), len(b["search_scope"].get("matching_paths_found", [])), len(b["search_scope"].get("matching_provenance_paths_found", [])), "PASS" if b["R_low_existing_B_asset"].get("status") == "found" and b["R_high_existing_B_asset"].get("status") == "found" else "FAIL_CLOSED"),
-        "| Candidate hashes and habitat provenance | %s | FAIL_CLOSED |" % b["A_B_feature_definition_compatibility"],
+        "| Existing B R_low asset | %s | NOT_YET_GENERATED |" % b["R_low_existing_B_asset"].get("status"),
+        "| Existing B R_high asset | %s | NOT_YET_GENERATED |" % b["R_high_existing_B_asset"].get("status"),
+        "| B technical asset/provenance search | Roots: `%s`; matching habitat tables: %d; matching provenance files: %d | NOT_YET_GENERATED |" % (", ".join(b["search_scope"].get("technical_output_roots", [])), len(b["search_scope"].get("matching_paths_found", [])), len(b["search_scope"].get("matching_provenance_paths_found", []))),
+        "| Candidate hashes and habitat provenance | Frozen target hashes recorded; B evidence will be generated and audited in FT05A | NOT_YET_GENERATED |",
         "",
-        "The B blocker is exact: no existing B `R_low`/`R_high` habitat feature tables or B habitat radiomics provenance were found under the permitted technical output roots. FT01 does not infer compatibility from A assets and does not generate replacement B features.",
+        "B habitat radiomics are deferred until FT04 freezes `FT_model_freeze_lock.json`. FT05A then permits one outcome-blind first extraction using the frozen A-full boundary, no B K-means fit, and the unchanged A/W03 PyRadiomics configuration. B outcome remains locked until the feature table, hash, and provenance audit pass.",
         "",
         "## Frozen-state and boundary checks",
         "",
         "- `habitat_analysis/freeze_lock.json` remains the existing technical lock; `B_unlock=false` and `B_data_read=false`.",
         "- Formal W08 remains `HOLD`; the formal model-freeze lock is absent.",
         "- `W_Original` is the only whole-tumor block represented in FT01; its canonical order is the exact 107-name sequence recorded in the manifest and matched by the existing asset. Wavelet, LoG, and other filtered whole-tumor features are excluded.",
-        "- FT02–FT07 were not executed.",
+        "- FT02–FT07 were not executed by this audit; `FT02_ready=%s` authorizes only A-only FT02-FT04." % str(conclusion["FT02_ready"]).lower(),
         "",
         "## Source records",
         "",
         "- FT00 protocol: `prognosis_analysis/ft/FT00_protocol.json`",
+        "- FT protocol amendment: `prognosis_analysis/ft/FT_protocol_amendment_20260911.json`",
         "- Full_A descriptors: `habitat_analysis/output/habitat_features_A/global_descriptors_full_A.csv`",
         "- W03 A technical assets: `prognosis_analysis/output/w03_habitat_radiomics_A/`",
         "- Whole-tumor Original asset: `feature_extract/output/features_v2/muscle_f0.25/features_original.csv`",

@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.0",
+  "artifact_id": "FT_protocol_amendment_20260911",
+  "status": "approved_and_frozen",
+  "scope": "FT-specific approved amendment",
+  "effective_branch": "codex/ft-validation",
+  "effective_date": "2026-09-11",
+  "superseded_ft00_source_reference_paths": [
+    "T2WI-HS 生境预后快速验证（FT）方案书.md",
+    "_codex_ft_run_20260910_01a08bf3/FT01_contract.md"
+  ],
+  "supersedes_only": [
+    "FT01 unified PASS/FAIL_CLOSED gate",
+    "requirement that B R_low/R_high must already exist before FT02",
+    "blanket prohibition on first-time B habitat radiomics extraction",
+    "FT05 ordering that unlocked B outcome before B feature preparation"
+  ],
+  "FT00_protocol_overrides": {
+    "/endpoint_and_outputs/B_existing_assets_only": false,
+    "/endpoint_and_outputs/B_reextraction": "No repeat extraction; one outcome-blind first B habitat extraction is allowed only in FT05A after FT04 model freeze.",
+    "/endpoint_and_outputs/B_rule": "A model freeze precedes B technical generation; B feature freeze precedes B outcome unlock and external validation."
+  },
+  "unchanged": [
+    "FT main framework",
+    "full_A habitat definition",
+    "SLIC",
+    "K=2",
+    "n_init=100",
+    "H-low/H-high definition",
+    "DFS endpoint",
+    "A cohort and frozen split",
+    "R_low candidate set",
+    "R_high candidate set",
+    "M0-M5 model set",
+    "FT06 direct external prediction design",
+    "no B-to-A feedback"
+  ],
+  "M5": {
+    "amendment_class": "FT-specific approved amendment",
+    "definition": "C + W_Original",
+    "whole_tumor_image_type": "Original",
+    "whole_tumor_feature_count": 107,
+    "whole_tumor_feature_order_sha256": "1c07cd4e129e368dde8539d552ecb0f453d9c655fe2a5383d00a5de7b408ca1f",
+    "ordered_feature_list_binding": "prognosis_analysis/ft/FT01_asset_manifest.json#/W_Original_canonical_order/ordered_feature_names",
+    "excluded": [
+      "Wavelet",
+      "LoG",
+      "other filtered whole-tumor features"
+    ],
+    "B_rule": "reuse existing B W_Original asset; no whole-tumor re-extraction"
+  },
+  "FT01": {
+    "overall_status": "PARTIAL_PASS",
+    "FT01_A": "PASS",
+    "FT01_B_habitat_assets": "NOT_YET_GENERATED",
+    "B_asset_absence_is_failure": false,
+    "authorized_next_stages": [
+      "FT02",
+      "FT03",
+      "FT04"
+    ],
+    "authorized_scope": "A-only through FT_model_freeze_lock.json",
+    "B_outcome_access": false
+  },
+  "FT05A": {
+    "name": "B Technical Generation",
+    "prerequisite": "FT04 accepted and FT_model_freeze_lock.json frozen",
+    "outcome_state": "B DFS/outcome remains unread",
+    "habitat_definition": "frozen A-full habitat definition",
+    "B_kmeans_fit": false,
+    "projection": "project B supervoxels directly to the frozen A H-low/H-high definition",
+    "pyradiomics_configuration": "identical to A/W03",
+    "habitat_radiomics_operation": "one-time first outcome-blind extraction",
+    "retained_candidates": {
+      "R_low": {
+        "count": 49,
+        "candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0"
+      },
+      "R_high": {
+        "count": 10,
+        "candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
+      }
+    },
+    "whole_tumor_rule": "reuse existing B W_Original; do not re-extract",
+    "repeat_extraction": false,
+    "performance_informed_rerun": false,
+    "required_lock": "FT05_B_feature_manifest.json",
+    "required_pre_run_audit": {
+      "independent": true,
+      "model": "gpt-5.6-sol",
+      "thinking": "medium",
+      "accepted_verdicts": [
+        "PASS",
+        "PASS_WITH_FINDINGS"
+      ],
+      "checks": [
+        "uses frozen A-full boundary",
+        "does not fit B K-means",
+        "does not read B outcome",
+        "does not change PyRadiomics parameters",
+        "does not extract unnecessary whole-tumor features",
+        "detects duplicate patients and duplicate extraction",
+        "checkpoint/resume does not repeat completed extraction",
+        "does not mix FT outputs with formal directories"
+      ]
+    }
+  },
+  "FT05B": {
+    "name": "B Outcome Unlock",
+    "prerequisites": [
+      "B feature table complete",
+      "FT05_B_feature_manifest.json frozen",
+      "hash audit passed",
+      "provenance audit passed"
+    ],
+    "action": "unlock B DFS/outcome for FT06 only"
+  },
+  "FT06": {
+    "models": "M0-M5",
+    "operation": "direct prediction only",
+    "forbidden": [
+      "fit",
+      "lambda tuning",
+      "feature selection",
+      "cutoff tuning",
+      "habitat reconstruction or optimization",
+      "radiomics re-extraction"
+    ]
+  },
+  "one_way_sequence": [
+    "A model freeze",
+    "B outcome-blind technical imaging processing",
+    "B feature freeze",
+    "B outcome unlock",
+    "B external validation"
+  ]
+}
