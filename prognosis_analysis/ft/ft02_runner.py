@@ -37,6 +37,17 @@ W_ORIGINAL_FEATURE_COUNT = 107
 W_ORIGINAL_ORDER_SHA256 = (
     "1c07cd4e129e368dde8539d552ecb0f453d9c655fe2a5383d00a5de7b408ca1f")
 W_ORIGINAL_MANIFEST = os.path.join(_HERE, "FT01_asset_manifest.json")
+W07_SPLIT_ARTIFACT = os.path.join(
+    _PROJECT_ROOT, "prognosis_analysis", "output", "outer_splits_A.csv")
+W07_SPLIT_ARTIFACT_SHA256 = (
+    "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502")
+W07_REPEAT1_CANONICAL_SHA256 = (
+    "774436340ce68cd70a2c6acd17acbb7fa484fd7f29989f12670dde519c9f376d")
+W07_REPEAT1_SEED = 12345
+W07_REPEAT1 = 1
+W07_A393_SIZE = 393
+W07_SPLIT_COLUMNS = ("patient_id", "repeat", "fold", "role", "seed")
+W07_ROLES = ("train", "validation")
 
 FT_MODEL_SPECS = OrderedDict((
     ("M0", {"blocks": ("C",), "family": "Cox", "penalized": False}),
@@ -143,8 +154,28 @@ def _numeric_flag(frame, column):
 def availability_mask(frame, block):
     """Resolve explicit availability without turning structural absence into NA."""
     if block in ("R_low", "R_high"):
+        p3b_fields = {
+            "%s_voxel_count" % block,
+            "%s_state" % block,
+            "%s_structurally_defined" % block,
+            "%s_technically_extractable" % block,
+        }
+        present = p3b_fields & set(frame.columns)
+        p3b_specific = p3b_fields - {
+            "%s_structurally_defined" % block,
+        }
+        if present & p3b_specific:
+            if present != p3b_fields:
+                raise FTValidationError(
+                    "%s P3B structural-state fields are incomplete" % block)
+            categories = _w08._p3b_extractability_categories(
+                frame, required=True)
+            return categories[block].eq("extractable")
         structural = _numeric_flag(frame, block + "_structurally_defined")
         technical = _numeric_flag(frame, block + "_technically_available")
+        if (technical & ~structural).any():
+            raise FTValidationError(
+                "%s technical availability exceeds structural definition" % block)
         return structural & technical
     if block == "W_Original":
         if "W_Original_available" in frame.columns:
@@ -224,6 +255,12 @@ def validate_ft_frame(frame, models=None):
         for block in FT_MODEL_SPECS[model_id]["blocks"]:
             if block in ("R_low", "R_high", "W_Original"):
                 availability_mask(frame, block)
+    # Availability state is a structural invariant of the input frame, not a
+    # performance-dependent option.  Validate any supplied R-block state even
+    # when a caller requests a lower-dimensional model subset.
+    for block in ("R_low", "R_high"):
+        if any(str(column).startswith(block + "_") for column in frame.columns):
+            availability_mask(frame, block)
     # If W_Original is requested, any other W-prefixed feature is a schema
     # violation; this is the hard boundary excluding Wavelet/LoG inputs.
     if "M5" in models:
@@ -237,7 +274,7 @@ def validate_ft_frame(frame, models=None):
 
 def validate_frozen_split(split_frame, frame=None, repeat=1):
     """Validate, but never regenerate, one frozen five-fold split set."""
-    required = {"patient_id", "repeat", "fold", "role"}
+    required = set(W07_SPLIT_COLUMNS)
     if not isinstance(split_frame, pd.DataFrame) or not required.issubset(split_frame.columns):
         raise FTValidationError("split frame lacks frozen W07 columns")
     split = split_frame.copy()
@@ -253,6 +290,14 @@ def validate_frozen_split(split_frame, frame=None, repeat=1):
     split["role"] = split["role"].astype(str).str.lower()
     if not set(split["role"]).issubset({"train", "validation"}):
         raise FTValidationError("W07 split has an unknown role")
+    split["seed"] = pd.to_numeric(split["seed"], errors="coerce")
+    if split["seed"].isna().any() or not np.isfinite(
+            split["seed"].to_numpy(dtype=float)).all():
+        raise FTValidationError("W07 split seed is invalid")
+    split["seed"] = split["seed"].astype(int)
+    seed_values = split.groupby("fold")["seed"].unique()
+    if any(len(values) != 1 for values in seed_values):
+        raise FTValidationError("W07 fold seed is not unique")
     validation_ids = []
     for fold in range(1, 6):
         current = split[split["fold"].eq(fold)]
@@ -272,6 +317,121 @@ def validate_frozen_split(split_frame, frame=None, repeat=1):
         if not frame_ids.issubset(set(split["patient_id"])):
             raise FTValidationError("A frame contains IDs absent from the frozen W07 split")
     return split.reset_index(drop=True)
+
+
+def _canonical_split_hash(split):
+    return _canonical_frame_hash(split, list(W07_SPLIT_COLUMNS))
+
+
+def _validate_w07_repeat1(split, expected_ids=None):
+    """Validate the exact frozen W07 repeat-1 slice and its provenance locks."""
+    if list(split.columns) != list(W07_SPLIT_COLUMNS):
+        raise FTValidationError("frozen W07 split schema mismatch")
+    split = split.copy()
+    split["patient_id"] = split["patient_id"].astype(str).str.strip()
+    split["repeat"] = pd.to_numeric(split["repeat"], errors="coerce")
+    split["fold"] = pd.to_numeric(split["fold"], errors="coerce")
+    split["seed"] = pd.to_numeric(split["seed"], errors="coerce")
+    if split[["repeat", "fold", "seed"]].isna().any().any():
+        raise FTValidationError("frozen W07 repeat-1 contains invalid numeric fields")
+    split["repeat"] = split["repeat"].astype(int)
+    split["fold"] = split["fold"].astype(int)
+    split["seed"] = split["seed"].astype(int)
+    split["role"] = split["role"].astype(str).str.strip().str.lower()
+    if set(split["repeat"]) != {W07_REPEAT1}:
+        raise FTValidationError("frozen W07 artifact is not repeat 1")
+    if len(split) != W07_A393_SIZE * 5:
+        raise FTValidationError("frozen W07 repeat-1 row count is not A393 x 5")
+    if sorted(split["fold"].unique().tolist()) != [1, 2, 3, 4, 5]:
+        raise FTValidationError("frozen W07 repeat-1 folds are incomplete")
+    if set(split["role"]) != set(W07_ROLES):
+        raise FTValidationError("frozen W07 repeat-1 roles are incomplete")
+    if set(split["seed"]) != {W07_REPEAT1_SEED}:
+        raise FTValidationError("frozen W07 repeat-1 seed is not frozen")
+    for fold in range(1, 6):
+        current = split[split["fold"].eq(fold)]
+        if set(current["role"]) != set(W07_ROLES):
+            raise FTValidationError("frozen W07 fold %d roles are incomplete" % fold)
+        train_ids = current.loc[current["role"].eq("train"), "patient_id"]
+        valid_ids = current.loc[current["role"].eq("validation"), "patient_id"]
+        if train_ids.duplicated().any() or valid_ids.duplicated().any() or \
+                set(train_ids) & set(valid_ids):
+            raise FTValidationError("frozen W07 fold %d ID roles are invalid" % fold)
+    ids = set(split["patient_id"])
+    if len(ids) != W07_A393_SIZE:
+        raise FTValidationError("frozen W07 repeat-1 membership is not complete A393")
+    if expected_ids is not None and ids != set(str(value) for value in expected_ids):
+        raise FTValidationError("frozen W07 repeat-1 membership differs from A393")
+    if _canonical_split_hash(split) != W07_REPEAT1_CANONICAL_SHA256:
+        raise FTValidationError("frozen W07 repeat-1 canonical hash mismatch")
+    return split.reset_index(drop=True)
+
+
+def load_frozen_w07_repeat1():
+    """Load the project-bound W07 artifact and return its repeat-1 slice."""
+    if not os.path.isfile(W07_SPLIT_ARTIFACT):
+        raise FTValidationError("frozen W07 split artifact is missing")
+    if _sha256_file(W07_SPLIT_ARTIFACT).lower() != \
+            W07_SPLIT_ARTIFACT_SHA256:
+        raise FTValidationError("frozen W07 split artifact hash mismatch")
+    try:
+        population = _w08.load_frozen_a_population()
+        all_split = _w08.load_frozen_outer_splits(population)
+    except Exception as exc:
+        raise FTValidationError("frozen W07 binding failed: %s" % exc)
+    if list(all_split.columns) != list(W07_SPLIT_COLUMNS):
+        raise FTValidationError("frozen W07 split schema mismatch")
+    repeat1 = all_split[all_split["repeat"].eq(W07_REPEAT1)].copy()
+    repeat1 = _validate_w07_repeat1(
+        repeat1, expected_ids=population["patient_id"].astype(str))
+    return repeat1, population.copy()
+
+
+def validate_proven_a_frame(frame, frozen_population, models=None):
+    """Require explicit A provenance and complete frozen A393 membership."""
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        raise FTValidationError("A feature frame must be a non-empty pandas DataFrame")
+    if "patient_id" not in frame.columns:
+        raise FTValidationError("A feature frame lacks patient_id")
+    required_provenance = {"split", "technical_cohort", "modeling_eligible"}
+    missing = sorted(required_provenance - set(frame.columns))
+    if missing:
+        raise FTValidationError(
+            "A cohort identity is unproven; missing provenance columns: %s" % missing)
+    split = frame["split"].astype(str).str.strip().str.upper()
+    cohort = frame["technical_cohort"].astype(str).str.strip()
+    eligible = pd.to_numeric(frame["modeling_eligible"], errors="coerce")
+    if not split.eq("A").all():
+        raise FTValidationError("A-only FT02 input contains non-A or ambiguous split")
+    if not cohort.eq("A393").all():
+        raise FTValidationError("A-only FT02 input is not technical cohort A393")
+    if eligible.isna().any() or not eligible.isin([0, 1]).all() or \
+            not eligible.eq(1).all():
+        raise FTValidationError("A-only FT02 input has unproven modeling eligibility")
+    population = frozen_population.copy()
+    population["patient_id"] = population["patient_id"].astype(str).str.strip()
+    ids = frame["patient_id"].astype(str).str.strip()
+    if ids.eq("").any() or ids.duplicated().any():
+        raise FTValidationError("A feature frame IDs must be unique and nonblank")
+    frozen_ids = set(population["patient_id"])
+    if len(frozen_ids) != W07_A393_SIZE or set(ids) != frozen_ids:
+        raise FTValidationError("A-only FT02 input is not complete frozen A393 membership")
+    if len(frame) != W07_A393_SIZE:
+        raise FTValidationError("A-only FT02 input must contain all 393 A cases")
+    if not set({"patient_id", "DFS_time", "DFS_event"}).issubset(population.columns):
+        raise FTValidationError("frozen A393 endpoint provenance is incomplete")
+    population = population.set_index("patient_id")
+    observed = frame.set_index(ids)
+    expected_time = pd.to_numeric(population.loc[ids, "DFS_time"], errors="coerce")
+    expected_event = pd.to_numeric(population.loc[ids, "DFS_event"], errors="coerce")
+    observed_time = pd.to_numeric(observed["DFS_time"], errors="coerce")
+    observed_event = pd.to_numeric(observed["DFS_event"], errors="coerce")
+    if not np.array_equal(observed_time.to_numpy(dtype=float),
+                          expected_time.to_numpy(dtype=float)) or \
+            not np.array_equal(observed_event.to_numpy(dtype=int),
+                               expected_event.to_numpy(dtype=int)):
+        raise FTValidationError("A feature-frame endpoint differs from frozen A393")
+    return validate_ft_frame(frame, models=models)
 
 
 def population_mask(frame, population):
@@ -469,10 +629,19 @@ def fit_fold_a(train_frame, validation_frame, model_id, seed=12345,
     risk = model.predict_risk(X_valid)
     if not np.isfinite(risk).all():
         raise FTValidationError("FT risk prediction is nonfinite")
+    survival = model.predict_survival(
+        X_valid, OrderedDict((("3_year", 36.0), ("5_year", 60.0))))
+    for horizon_name in ("3_year", "5_year"):
+        values = np.asarray(survival[horizon_name], dtype=float)
+        if len(values) != len(risk) or not np.isfinite(values).all() or \
+                np.any(values < 0.0) or np.any(values > 1.0):
+            raise FTValidationError(
+                "FT %s survival prediction is not a probability" % horizon_name)
     return {
         "model": model,
         "preprocessor": prep,
         "risk": risk,
+        "survival": survival,
         "selection": selection,
         "preprocessing": prep.audit(),
         "fit_audit": dict(model.fit_audit),
@@ -493,19 +662,142 @@ def _rows_for_fold(split, frame, fold, eligible_ids):
     return train, valid
 
 
-def _prediction_frame(ids, risks, folds):
-    return pd.DataFrame({"patient_id": [str(value) for value in ids],
-                         "risk": np.asarray(risks, dtype=float),
-                         "fold": np.asarray(folds, dtype=int)})
+def _prediction_frame(ids, risks, folds, survival_36=None, survival_60=None):
+    output = {
+        "patient_id": [str(value) for value in ids],
+        "risk": np.asarray(risks, dtype=float),
+        "fold": np.asarray(folds, dtype=int),
+    }
+    if survival_36 is not None and survival_60 is not None:
+        output["survival_probability_36"] = np.asarray(survival_36, dtype=float)
+        output["survival_probability_60"] = np.asarray(survival_60, dtype=float)
+    return pd.DataFrame(output)
 
 
-def _paired_result(frame, left_prediction, right_prediction, comparison_id,
-                   left_model, right_model, population):
-    left = left_prediction.set_index("patient_id")
-    right = right_prediction.set_index("patient_id")
-    ids = sorted(set(left.index) & set(right.index))
-    if not ids:
-        raise FTValidationError("paired comparison has no common eligible IDs")
+def _model_population(model_id):
+    blocks = FT_MODEL_SPECS[model_id]["blocks"]
+    if "R_low" in blocks and "R_high" in blocks:
+        return "dual_radiomics"
+    if "R_low" in blocks:
+        return "R_low"
+    if "R_high" in blocks:
+        return "R_high"
+    if "W_Original" in blocks:
+        return "W_Original"
+    return "main"
+
+
+def _fit_model_cv(frame, split, model_id, population, lambda_count=20,
+                  max_iter=1000, tolerance=1e-7):
+    """Fit one model on one explicit eligible population and frozen folds."""
+    eligible = frame.loc[population_mask(frame, population), "patient_id"].astype(str)
+    if eligible.empty:
+        raise FTValidationError("empty eligible population for %s" % model_id)
+    risk_by_id = {}
+    survival36_by_id = {}
+    survival60_by_id = {}
+    fold_by_id = {}
+    folds = []
+    states = []
+    for fold in range(1, 6):
+        train, valid = _rows_for_fold(split, frame, fold, eligible)
+        if int(train["DFS_event"].sum()) < 1 or int(valid["DFS_event"].sum()) < 1:
+            raise FTValidationError("fold %d lacks an event for %s" % (fold, model_id))
+        seed_values = split.loc[split["fold"].eq(fold), "seed"]
+        unique_seeds = pd.to_numeric(seed_values, errors="coerce").dropna().unique()
+        if len(unique_seeds) != 1:
+            raise FTValidationError("fold %d seed is ambiguous" % fold)
+        fitted = fit_fold_a(
+            train, valid, model_id, seed=int(unique_seeds[0]),
+            lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance)
+        valid_ids = valid["patient_id"].astype(str).tolist()
+        for index, identifier in enumerate(valid_ids):
+            if identifier in risk_by_id:
+                raise FTValidationError("duplicate cross-validated prediction")
+            risk_by_id[identifier] = float(fitted["risk"][index])
+            survival36_by_id[identifier] = float(fitted["survival"]["3_year"][index])
+            survival60_by_id[identifier] = float(fitted["survival"]["5_year"][index])
+            fold_by_id[identifier] = int(fold)
+        train_ids = train["patient_id"].astype(str).tolist()
+        folds.append({
+            "fold": int(fold),
+            "n_train": int(len(train)),
+            "n_validation": int(len(valid)),
+            "train_event_count": int(train["DFS_event"].sum()),
+            "validation_event_count": int(valid["DFS_event"].sum()),
+            "training_id_hash": _id_hash(train_ids),
+            "validation_id_hash": _id_hash(valid_ids),
+            "selection": fitted["selection"],
+            "preprocessing": fitted["preprocessing"],
+            "fit_audit": fitted["fit_audit"],
+        })
+        states.append({
+            "fold": int(fold),
+            "model": fitted["model"],
+            "preprocessor": fitted["preprocessor"],
+            "selection": fitted["selection"],
+        })
+    expected_ids = set(str(value) for value in eligible)
+    if set(risk_by_id) != expected_ids:
+        raise FTValidationError("cross-validation did not cover the eligible population")
+    ordered_ids = sorted(risk_by_id)
+    prediction = _prediction_frame(
+        ordered_ids, [risk_by_id[item] for item in ordered_ids],
+        [fold_by_id[item] for item in ordered_ids],
+        [survival36_by_id[item] for item in ordered_ids],
+        [survival60_by_id[item] for item in ordered_ids])
+    spec = FT_MODEL_SPECS[model_id]
+    return {
+        "record": {
+            "model_id": model_id,
+            "predictor_blocks": list(spec["blocks"]),
+            "population": population,
+            "eligible_n": int(len(eligible)),
+            "alpha": 1.0 if spec["penalized"] else None,
+            "family": "Cox",
+            "ordinary_single_layer_5fold": True,
+            "folds": folds,
+            "prediction_coverage": int(len(prediction)),
+        },
+        "prediction": prediction,
+        "states": states,
+        "eligible_ids": tuple(sorted(expected_ids)),
+    }
+
+
+def _paired_result(frame, left_fit, right_fit, comparison_id,
+                   left_model, right_model, population, split):
+    """Compare two models fit on exactly one common population and folds."""
+    left = left_fit["prediction"].set_index("patient_id")
+    right = right_fit["prediction"].set_index("patient_id")
+    ids = sorted(set(left.index))
+    if not ids or set(ids) != set(right.index):
+        raise FTValidationError(
+            "paired comparison models do not share one common eligible population")
+    if not left.loc[ids, "fold"].equals(right.loc[ids, "fold"]):
+        raise FTValidationError("paired comparison fold assignments differ")
+    common_ids = set(ids)
+    fold_records = []
+    for fold in range(1, 6):
+        current = split[split["fold"].eq(fold)]
+        train_ids = sorted(set(current.loc[current["role"].eq("train"), "patient_id"]) & common_ids)
+        valid_ids = sorted(set(current.loc[current["role"].eq("validation"), "patient_id"]) & common_ids)
+        if not train_ids or not valid_ids:
+            raise FTValidationError("paired comparison fold %d is empty" % fold)
+        assignment = pd.DataFrame({
+            "patient_id": train_ids + valid_ids,
+            "role": (["train"] * len(train_ids)) +
+                    (["validation"] * len(valid_ids)),
+        }).sort_values(["role", "patient_id"], kind="mergesort").reset_index(drop=True)
+        fold_records.append({
+            "fold": int(fold),
+            "n_train": int(len(train_ids)),
+            "n_validation": int(len(valid_ids)),
+            "training_id_hash": _id_hash(train_ids),
+            "validation_id_hash": _id_hash(valid_ids),
+            "fold_assignment_hash": _canonical_frame_hash(
+                assignment, ["patient_id", "role"]),
+        })
     source = frame.set_index(frame["patient_id"].astype(str)).loc[ids]
     left_risk = left.loc[ids, "risk"].to_numpy(dtype=float)
     right_risk = right.loc[ids, "risk"].to_numpy(dtype=float)
@@ -520,6 +812,8 @@ def _paired_result(frame, left_prediction, right_prediction, comparison_id,
         "population": population,
         "common_n": int(len(ids)),
         "common_id_hash": _id_hash(ids),
+        "common_training_validation_are_identical": True,
+        "folds": fold_records,
         "harrell_c_left": _json_number(left_c),
         "harrell_c_right": _json_number(right_c),
         "harrell_c_delta_right_minus_left": _json_number(right_c - left_c)
@@ -532,89 +826,71 @@ def _json_number(value):
     return None if value is None or not np.isfinite(value) else float(value)
 
 
-def run_ft02_a(feature_frame, split_frame, models=None, repeat=1,
-               lambda_count=20, max_iter=1000, tolerance=1e-7,
-               split_source=None):
-    """Run FT02 A-only fold fitting and return FT03-consumable interfaces."""
-    model_ids = list(FT_MODEL_SPECS if models is None else models)
-    frame = validate_ft_frame(feature_frame, models=model_ids).reset_index(drop=True)
-    split = validate_frozen_split(split_frame, frame=frame, repeat=repeat)
-    split_hash = _canonical_frame_hash(
-        split, ["patient_id", "repeat", "fold", "role"] +
-        (["seed"] if "seed" in split.columns else []))
+def _run_ft02_a_core(frame, split, model_ids, repeat=1, lambda_count=20,
+                     max_iter=1000, tolerance=1e-7, split_source=None):
+    """Run the in-memory core after the boundary and split have been proven."""
+    split = validate_frozen_split(split, frame=frame, repeat=repeat)
+    split_hash = _canonical_split_hash(split)
+    split_seeds = sorted(set(split["seed"].astype(int).tolist()))
+    if len(split_seeds) != 1:
+        raise FTValidationError("frozen split has ambiguous repeat seed")
     if (split_source and split_source.get("canonical_sha256") and
             split_source["canonical_sha256"] != split_hash):
         raise FTValidationError("frozen split canonical hash mismatch")
-    frame_ids = frame["patient_id"].astype(str).tolist()
     predictions = OrderedDict()
     model_results = OrderedDict()
+    fitted_states = OrderedDict()
     population_counts = {}
+    fit_cache = {}
     for model_id in model_ids:
-        blocks = FT_MODEL_SPECS[model_id]["blocks"]
-        if "R_low" in blocks and "R_high" in blocks:
-            population = "dual_radiomics"
-        elif "R_low" in blocks:
-            population = "R_low"
-        elif "R_high" in blocks:
-            population = "R_high"
-        elif "W_Original" in blocks:
-            population = "W_Original"
-        else:
-            population = "main"
-        eligible = frame.loc[population_mask(frame, population), "patient_id"].astype(str)
-        population_counts[population] = int(len(eligible))
-        risk_by_id = {}
-        fold_by_id = {}
-        folds = []
-        for fold in range(1, 6):
-            train, valid = _rows_for_fold(split, frame, fold, eligible)
-            if int(train["DFS_event"].sum()) < 1 or int(valid["DFS_event"].sum()) < 1:
-                raise FTValidationError("fold %d lacks an event for %s" % (fold, model_id))
-            seed_values = split.loc[split["fold"].eq(fold), "seed"] if "seed" in split else pd.Series([12345])
-            seed = int(pd.to_numeric(seed_values, errors="coerce").dropna().iloc[0])
-            fitted = fit_fold_a(train, valid, model_id, seed=seed,
-                                lambda_count=lambda_count, max_iter=max_iter,
-                                tolerance=tolerance)
-            valid_ids = valid["patient_id"].astype(str).tolist()
-            for identifier, risk in zip(valid_ids, fitted["risk"]):
-                if identifier in risk_by_id:
-                    raise FTValidationError("duplicate cross-validated prediction")
-                risk_by_id[identifier] = float(risk)
-                fold_by_id[identifier] = int(fold)
-            folds.append({
-                "fold": int(fold),
-                "n_train": int(len(train)),
-                "n_validation": int(len(valid)),
-                "train_event_count": int(train["DFS_event"].sum()),
-                "validation_event_count": int(valid["DFS_event"].sum()),
-                "training_id_hash": _id_hash(train["patient_id"]),
-                "validation_id_hash": _id_hash(valid["patient_id"]),
-                "selection": fitted["selection"],
-                "preprocessing": fitted["preprocessing"],
-                "fit_audit": fitted["fit_audit"],
-            })
-        if set(risk_by_id) != set(eligible):
-            raise FTValidationError("cross-validation did not cover the eligible population")
-        prediction = _prediction_frame(
-            sorted(risk_by_id), [risk_by_id[item] for item in sorted(risk_by_id)],
-            [fold_by_id[item] for item in sorted(risk_by_id)])
-        predictions[model_id] = prediction
-        model_results[model_id] = {
-            "model_id": model_id,
-            "predictor_blocks": list(blocks),
-            "population": population,
-            "eligible_n": int(len(eligible)),
-            "alpha": 1.0 if FT_MODEL_SPECS[model_id]["penalized"] else None,
-            "family": "Cox",
-            "ordinary_single_layer_5fold": True,
-            "folds": folds,
-            "prediction_coverage": int(len(prediction)),
-        }
+        population = _model_population(model_id)
+        key = (model_id, population, _id_hash(
+            frame.loc[population_mask(frame, population), "patient_id"]))
+        if key not in fit_cache:
+            fit_cache[key] = _fit_model_cv(
+                frame, split, model_id, population, lambda_count=lambda_count,
+                max_iter=max_iter, tolerance=tolerance)
+        fitted = fit_cache[key]
+        population_counts[population] = int(len(fitted["eligible_ids"]))
+        predictions[model_id] = fitted["prediction"]
+        model_results[model_id] = fitted["record"]
+        fitted_states[model_id] = fitted["states"]
+
     paired = []
+    paired_states = OrderedDict()
     for comparison_id, left, right, population in FT_COMPARISONS:
+        if left not in model_ids or right not in model_ids:
+            continue
+        left_population = population_mask(frame, _model_population(left))
+        right_population = population_mask(frame, _model_population(right))
+        common_mask = left_population & right_population
+        common_ids = frame.loc[common_mask, "patient_id"].astype(str)
+        if common_ids.empty:
+            raise FTValidationError("paired comparison has no common eligible IDs")
+        common_key = _id_hash(common_ids)
+        left_key = (left, population, common_key)
+        right_key = (right, population, common_key)
+        if left_key not in fit_cache:
+            common_frame = frame[frame["patient_id"].astype(str).isin(set(common_ids))]
+            fit_cache[left_key] = _fit_model_cv(
+                common_frame, split, left, population,
+                lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance)
+        if right_key not in fit_cache:
+            common_frame = frame[frame["patient_id"].astype(str).isin(set(common_ids))]
+            fit_cache[right_key] = _fit_model_cv(
+                common_frame, split, right, population,
+                lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance)
+        left_fit = fit_cache[left_key]
+        right_fit = fit_cache[right_key]
         paired.append(_paired_result(
-            frame, predictions[left], predictions[right], comparison_id,
-            left, right, population))
+            frame, left_fit, right_fit, comparison_id, left, right,
+            population, split))
+        paired_states[comparison_id] = {
+            "population": population,
+            "left": left_fit["states"],
+            "right": right_fit["states"],
+        }
+
     provenance = {
         "stage": FT_STAGE,
         "label": FT_LABEL,
@@ -623,8 +899,9 @@ def run_ft02_a(feature_frame, split_frame, models=None, repeat=1,
         "split_repeat": int(repeat),
         "split_fold_count": 5,
         "split_hash": split_hash,
-        "split_source": dict(split_source or {"kind": "caller_supplied_frozen_split"}),
+        "split_source": dict(split_source or {"kind": "validated_test_split"}),
         "input_schema_hash": schema_hash(frame),
+        "input_id_hash": _id_hash(frame["patient_id"]),
         "w_original_feature_count": W_ORIGINAL_FEATURE_COUNT,
         "w_original_order_sha256": W_ORIGINAL_ORDER_SHA256,
         "runner_source": "prognosis_analysis/ft/ft02_runner.py",
@@ -640,6 +917,7 @@ def run_ft02_a(feature_frame, split_frame, models=None, repeat=1,
         "split_provenance": {
             "repeat": int(repeat),
             "folds": [1, 2, 3, 4, 5],
+            "seed": int(split_seeds[0]),
             "hash": split_hash,
             "regenerated": False,
         },
@@ -647,14 +925,57 @@ def run_ft02_a(feature_frame, split_frame, models=None, repeat=1,
         "models": model_results,
         "predictions": predictions,
         "paired_model_comparisons": paired,
+        "fitted_state": {
+            "native": fitted_states,
+            "paired_comparisons": paired_states,
+            "survival_horizons_months": {"3_year": 36.0, "5_year": 60.0},
+        },
         "provenance": provenance,
         "validation": {
             "fail_closed": True,
+            "a_cohort_proven": True,
             "b_data_read": False,
             "formal_outputs_written": False,
             "formal_lock_written": False,
         },
     }
+
+
+def run_ft02_a(feature_frame, split_frame=None, models=None, lambda_count=20,
+               max_iter=1000, tolerance=1e-7):
+    """Production FT02 entry point bound to the frozen W07 repeat-1 artifact."""
+    if split_frame is not None:
+        raise FTValidationError(
+            "production FT02 does not accept caller-supplied split tables")
+    model_ids = list(FT_MODEL_SPECS if models is None else models)
+    frozen_split, frozen_population = load_frozen_w07_repeat1()
+    frame = validate_proven_a_frame(
+        feature_frame, frozen_population, models=model_ids).reset_index(drop=True)
+    split_source = {
+        "kind": "project_locked_W07_repeat1",
+        "artifact": "prognosis_analysis/output/outer_splits_A.csv",
+        "artifact_sha256": W07_SPLIT_ARTIFACT_SHA256,
+        "canonical_sha256": W07_REPEAT1_CANONICAL_SHA256,
+        "repeat": W07_REPEAT1,
+        "seed": W07_REPEAT1_SEED,
+        "roles": list(W07_ROLES),
+        "membership": "A393",
+    }
+    return _run_ft02_a_core(
+        frame, frozen_split, model_ids, repeat=W07_REPEAT1,
+        lambda_count=lambda_count, max_iter=max_iter, tolerance=tolerance,
+        split_source=split_source)
+
+
+def run_ft02_a_for_testing(feature_frame, split_frame, models=None, repeat=1,
+                            lambda_count=20, max_iter=1000, tolerance=1e-7,
+                            split_source=None):
+    """Test-only synthetic runner; it is not a production A entry point."""
+    model_ids = list(FT_MODEL_SPECS if models is None else models)
+    frame = validate_ft_frame(feature_frame, models=model_ids).reset_index(drop=True)
+    return _run_ft02_a_core(
+        frame, split_frame, model_ids, repeat=repeat, lambda_count=lambda_count,
+        max_iter=max_iter, tolerance=tolerance, split_source=split_source)
 
 
 def harrell_c_index_hook(time, event, risk):
@@ -676,6 +997,41 @@ def predict_risk_hook(model, preprocessor, frame):
     if not np.isfinite(risk).all():
         raise FTValidationError("risk prediction is nonfinite")
     return np.asarray(risk, dtype=float)
+
+
+def predict_risk_survival_hook(model, preprocessor, frame,
+                               horizons=(36.0, 60.0)):
+    """Return risk and Cox survival probabilities for explicit horizons."""
+    if not isinstance(preprocessor, FTPreprocessor):
+        raise FTValidationError("survival prediction requires an FT preprocessor")
+    checked = validate_ft_frame(frame, models=[preprocessor.model_id])
+    X = preprocessor.transform(checked)
+    risk = np.asarray(model.predict_risk(X), dtype=float)
+    if not np.isfinite(risk).all():
+        raise FTValidationError("risk prediction is nonfinite")
+    horizon_map = OrderedDict()
+    for horizon in horizons:
+        horizon = float(horizon)
+        if not np.isfinite(horizon) or horizon <= 0:
+            raise FTValidationError("survival horizon must be finite and positive")
+        horizon_map["%g_months" % horizon] = horizon
+    survival = model.predict_survival(X, horizon_map)
+    output = {"risk": risk}
+    for name, values in survival.items():
+        values = np.asarray(values, dtype=float)
+        if len(values) != len(risk) or not np.isfinite(values).all() or \
+                np.any(values < 0.0) or np.any(values > 1.0):
+            raise FTValidationError("survival prediction is not a probability")
+        output["survival_probability_%s" % name] = values
+    return output
+
+
+def predict_survival_hook(model, preprocessor, frame, horizons=(36.0, 60.0)):
+    """Return only horizon-keyed survival probabilities for FT03 metrics."""
+    result = predict_risk_survival_hook(
+        model, preprocessor, frame, horizons=horizons)
+    return {key: value for key, value in result.items()
+            if key.startswith("survival_probability_")}
 
 
 def _censoring_survival(training_time, training_event, query):

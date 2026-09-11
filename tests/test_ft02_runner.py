@@ -35,9 +35,9 @@ def synthetic_frame(n=75):
         "活检病理非腺癌": rng.randint(0, 2, n),
         "H_high_fraction": rng.uniform(0.1, 0.9, n),
         "R_low_structurally_defined": [0 if i in (2, 11) else 1 for i in range(n)],
-        "R_low_technically_available": [0 if i == 17 else 1 for i in range(n)],
+        "R_low_technically_available": [0 if i in (2, 11, 17) else 1 for i in range(n)],
         "R_high_structurally_defined": [0 if i in (5, 23) else 1 for i in range(n)],
-        "R_high_technically_available": [0 if i == 29 else 1 for i in range(n)],
+        "R_high_technically_available": [0 if i in (5, 23, 29) else 1 for i in range(n)],
         "W_Original_available": [0 if i in (31, 32) else 1 for i in range(n)],
     })
     extras = {}
@@ -107,11 +107,15 @@ class FT02RunnerTests(unittest.TestCase):
         self.assertNotEqual(float(valid["年龄"].mean()), mean_before)
 
     def test_all_models_run_and_lambda_is_training_only(self):
-        result = ft.run_ft02_a(self.frame, self.split, lambda_count=3, max_iter=250)
+        result = ft.run_ft02_a_for_testing(
+            self.frame, self.split, lambda_count=3, max_iter=250)
         self.assertEqual(set(result["models"]), set(ft.FT_MODEL_SPECS))
         self.assertEqual(result["split_provenance"]["regenerated"], False)
+        self.assertEqual(result["split_provenance"]["seed"], 24680)
         for model_id, record in result["models"].items():
             self.assertEqual(record["prediction_coverage"], record["eligible_n"])
+            self.assertIn("survival_probability_36", result["predictions"][model_id])
+            self.assertIn("survival_probability_60", result["predictions"][model_id])
             if ft.FT_MODEL_SPECS[model_id]["penalized"]:
                 for fold in record["folds"]:
                     self.assertEqual(fold["selection"]["alpha"], 1.0)
@@ -125,6 +129,48 @@ class FT02RunnerTests(unittest.TestCase):
                         (self.frame.R_high_technically_available == 1) &
                         (self.frame.W_Original_available == 1)).sum())
         self.assertEqual(paired["M4_vs_M5"]["common_n"], expected)
+        for comparison_id in ("M2_vs_M3L", "M2_vs_M3H", "M2_vs_M4",
+                              "M3L_vs_M3H", "M4_vs_M5"):
+            self.assertTrue(paired[comparison_id][
+                "common_training_validation_are_identical"])
+            self.assertEqual(len(paired[comparison_id]["folds"]), 5)
+            for fold in paired[comparison_id]["folds"]:
+                self.assertTrue(fold["training_id_hash"])
+                self.assertTrue(fold["validation_id_hash"])
+                self.assertTrue(fold["fold_assignment_hash"])
+
+    def test_production_entry_point_is_w07_bound_and_fail_closed(self):
+        with self.assertRaises(ft.FTValidationError):
+            ft.run_ft02_a(self.frame, self.split)
+        with self.assertRaises(ft.FTValidationError):
+            ft.run_ft02_a(self.frame)
+        frozen_split, frozen_population = ft.load_frozen_w07_repeat1()
+        self.assertEqual(len(frozen_population), 393)
+        self.assertEqual(len(frozen_split), 393 * 5)
+        self.assertEqual(ft._canonical_split_hash(frozen_split),
+                         ft.W07_REPEAT1_CANONICAL_SHA256)
+        self.assertEqual(set(frozen_split["seed"]), {12345})
+        self.assertEqual(set(frozen_split["role"]), {"train", "validation"})
+
+    def test_common_pair_uses_same_training_and_validation_id_sets(self):
+        result = ft.run_ft02_a_for_testing(
+            self.frame, self.split, models=["M2", "M3L"],
+            lambda_count=3, max_iter=250)
+        pair = result["paired_model_comparisons"][0]
+        common = set(self.frame.loc[
+            (self.frame.R_low_structurally_defined == 1) &
+            (self.frame.R_low_technically_available == 1), "patient_id"])
+        for fold in range(1, 6):
+            current = self.split[self.split.fold == fold]
+            train_ids = sorted(set(current.loc[
+                current.role == "train", "patient_id"]) & common)
+            valid_ids = sorted(set(current.loc[
+                current.role == "validation", "patient_id"]) & common)
+            record = pair["folds"][fold - 1]
+            self.assertEqual(record["n_train"], len(train_ids))
+            self.assertEqual(record["n_validation"], len(valid_ids))
+            self.assertEqual(record["training_id_hash"], ft._id_hash(train_ids))
+            self.assertEqual(record["validation_id_hash"], ft._id_hash(valid_ids))
 
     def test_structural_absence_and_explicit_availability(self):
         valid = ft.validate_ft_frame(self.frame)
@@ -132,6 +178,28 @@ class FT02RunnerTests(unittest.TestCase):
         invalid = self.frame.drop(columns=["R_low_technically_available"])
         with self.assertRaises(ft.FTValidationError):
             ft.validate_ft_frame(invalid)
+        invalid = self.frame.copy()
+        invalid.loc[0, "R_low_structurally_defined"] = 0
+        invalid.loc[0, "R_low_technically_available"] = 1
+        with self.assertRaises(ft.FTValidationError):
+            ft.validate_ft_frame(invalid)
+
+    def test_frozen_p3b_structural_state_is_accepted(self):
+        p3b = self.frame.drop(columns=[
+            "R_low_structurally_defined", "R_low_technically_available",
+            "R_high_structurally_defined", "R_high_technically_available"]).copy()
+        for block in ("R_low", "R_high"):
+            structural = self.frame[block + "_structurally_defined"].to_numpy()
+            technical = self.frame[block + "_technically_available"].to_numpy()
+            counts = np.where(structural == 0, 0, np.where(technical == 1, 20, 2))
+            p3b[block + "_voxel_count"] = counts
+            p3b[block + "_structurally_defined"] = (counts > 0).astype(int)
+            p3b[block + "_technically_extractable"] = (counts >= 10).astype(int)
+            p3b[block + "_state"] = np.where(
+                counts == 0, "structural_absence",
+                np.where(counts < 10, "technical_small_roi", "extractable"))
+        checked = ft.validate_ft_frame(p3b)
+        self.assertEqual(int(ft.population_mask(checked, "dual_radiomics").sum()), 69)
 
     def test_w_filtered_schema_and_b_row_or_path_rejection(self):
         bad = self.frame.copy()
@@ -168,13 +236,25 @@ class FT02RunnerTests(unittest.TestCase):
         self.assertEqual(result["seed"], 7)
         self.assertEqual(result["mode"], "case_resample")
 
+    def test_fitted_state_survival_interface(self):
+        fit = ft.fit_fold_a(
+            self.frame.iloc[:60], self.frame.iloc[60:], "M0", max_iter=250)
+        output = ft.predict_risk_survival_hook(
+            fit["model"], fit["preprocessor"], self.frame.iloc[60:])
+        self.assertEqual(len(output["risk"]), 15)
+        for key in ("survival_probability_36_months",
+                    "survival_probability_60_months"):
+            self.assertIn(key, output)
+            self.assertTrue(np.isfinite(output[key]).all())
+            self.assertTrue(np.all((output[key] >= 0) & (output[key] <= 1)))
+
     def test_static_ft_isolation(self):
         source = inspect.getsource(ft)
         self.assertNotIn("read_B_validation", source)
         self.assertNotIn("model_freeze_lock.json", source)
         self.assertNotIn("open(.*\\\"w\\\"", source)
         self.assertNotIn("json.dump(", source)
-        self.assertFalse(ft.run_ft02_a.__defaults__[-1] is not None)
+        self.assertIsNone(ft.run_ft02_a.__defaults__[0])
         for relative, digest in self.formal_guard.items():
             with open(os.path.join(ROOT, relative), "rb") as handle:
                 self.assertEqual(hashlib.sha256(handle.read()).hexdigest(), digest)
