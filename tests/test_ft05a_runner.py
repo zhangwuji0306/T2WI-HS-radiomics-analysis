@@ -539,6 +539,107 @@ class FT05ARunnerTests(unittest.TestCase):
                 ft.CANONICAL_OUTPUT_ROOT),
             ft.CANONICAL_OUTPUT_ROOT)
 
+    def test_production_default_tracked_artifacts_use_canonical_namespace(self):
+        production = self._output_constants
+        with mock.patch.object(
+                ft, "CANONICAL_OUTPUT_ROOT", production["CANONICAL_OUTPUT_ROOT"]), \
+                mock.patch.object(ft, "DEFAULT_MANIFEST",
+                                  production["DEFAULT_MANIFEST"]), \
+                mock.patch.object(ft, "DEFAULT_CODE_AUDIT",
+                                  production["DEFAULT_CODE_AUDIT"]), \
+                mock.patch.object(ft, "DEFAULT_TECHNICAL_AUDIT",
+                                  production["DEFAULT_TECHNICAL_AUDIT"]), \
+                mock.patch.object(ft, "DEFAULT_FEATURE_TABLE",
+                                  production["DEFAULT_FEATURE_TABLE"]):
+            for path, label in (
+                    (production["DEFAULT_MANIFEST"], "FT05_B_feature_manifest"),
+                    (production["DEFAULT_CODE_AUDIT"], "FT05A code audit"),
+                    (production["DEFAULT_TECHNICAL_AUDIT"],
+                     "FT05A technical audit")):
+                self.assertEqual(
+                    ft._validate_namespace_path(
+                        path, label, production["CANONICAL_OUTPUT_ROOT"],
+                        allow_ft_namespace=True),
+                    os.path.realpath(path))
+
+    def test_production_tracked_artifact_aliases_fail_before_side_effects(self):
+        production = self._output_constants
+        tracked = (
+            ("manifest_path", production["DEFAULT_MANIFEST"],
+             "FT05_B_feature_manifest"),
+            ("code_audit_path", production["DEFAULT_CODE_AUDIT"],
+             "FT05A code audit"),
+            ("technical_audit_path", production["DEFAULT_TECHNICAL_AUDIT"],
+             "FT05A technical audit"),
+        )
+        with mock.patch.object(ft, "DEFAULT_MANIFEST",
+                               production["DEFAULT_MANIFEST"]), \
+                mock.patch.object(ft, "DEFAULT_CODE_AUDIT",
+                                  production["DEFAULT_CODE_AUDIT"]), \
+                mock.patch.object(ft, "DEFAULT_TECHNICAL_AUDIT",
+                                  production["DEFAULT_TECHNICAL_AUDIT"]), \
+                mock.patch.object(ft, "DEFAULT_FEATURE_TABLE",
+                                  production["DEFAULT_FEATURE_TABLE"]):
+            for argument_name, canonical, label in tracked:
+                aliases = [
+                    os.path.relpath(canonical, ROOT),
+                    os.path.join(os.path.dirname(canonical), ".",
+                                 os.path.basename(canonical)),
+                    os.path.join(os.path.dirname(canonical), "..",
+                                 os.path.basename(os.path.dirname(canonical)),
+                                 os.path.basename(canonical)),
+                    canonical + os.sep,
+                    canonical + ".",
+                    canonical + " ",
+                    os.path.join(os.path.dirname(canonical),
+                                 "alternate_" + os.path.basename(canonical)),
+                ]
+                if os.name == "nt":
+                    aliases.extend((canonical.upper(),
+                                    canonical.replace("\\", "/")))
+                for alias in dict.fromkeys(
+                        value for value in aliases if value != canonical):
+                    kwargs = {
+                        "manifest_path": production["DEFAULT_MANIFEST"],
+                        "code_audit_path": production["DEFAULT_CODE_AUDIT"],
+                        "technical_audit_path": production[
+                            "DEFAULT_TECHNICAL_AUDIT"],
+                    }
+                    kwargs[argument_name] = alias
+                    calls = []
+                    before = set(os.listdir(self.out))
+                    with mock.patch.object(
+                            ft, "validate_ft05a_preflight",
+                            side_effect=AssertionError("preflight")), \
+                            mock.patch.object(
+                                ft, "_acquire_run_ownership",
+                                side_effect=AssertionError("owner")) as owner, \
+                            mock.patch.object(
+                                ft, "_load_w_original_asset",
+                                side_effect=AssertionError("W_Original")) as w_loader, \
+                            mock.patch.object(
+                                ft, "load_technical_cohort",
+                                side_effect=AssertionError("cohort")) as cohort_loader, \
+                            mock.patch.object(
+                                ft, "_write_json_exclusive",
+                                side_effect=AssertionError("owner writer")) as owner_writer, \
+                            mock.patch.object(
+                                ft, "_write_json_atomic",
+                                side_effect=AssertionError("output writer")) as output_writer, \
+                            mock.patch.object(
+                                ft, "_sha256_file",
+                                side_effect=AssertionError("hash")) as hasher:
+                        with self.assertRaises(ft.FT05AValidationError):
+                            ft.run_ft05a(
+                                self.cohort, "run-production-alias",
+                                output_root=self.out, processor=lambda record,
+                                contract: calls.append(record), **kwargs)
+                    self.assertEqual(calls, [])
+                    self.assertEqual(set(os.listdir(self.out)), before)
+                    for instrument in (owner, w_loader, cohort_loader,
+                                       owner_writer, output_writer, hasher):
+                        self.assertFalse(instrument.called)
+
     def test_symlinked_output_escape_is_rejected(self):
         target = tempfile.TemporaryDirectory(dir=OUTPUT_PARENT)
         alias = os.path.join(self.out, "output_escape_link")

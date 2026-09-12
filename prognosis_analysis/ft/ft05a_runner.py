@@ -291,6 +291,8 @@ def _validate_namespace_path(path, label, output_root, allow_ft_namespace=False)
     canonical_output = _canonical_output_root(output_root)
     if label == "FT05A output root":
         return _canonical_output_root(path)
+    if not isinstance(path, str):
+        raise FT05AValidationError("%s must be a path string" % label)
     if os.path.isabs(path):
         absolute = os.path.realpath(path)
     else:
@@ -307,12 +309,23 @@ def _validate_namespace_path(path, label, output_root, allow_ft_namespace=False)
         os.path.normcase(os.path.realpath(DEFAULT_TECHNICAL_AUDIT)),
         os.path.normcase(os.path.realpath(DEFAULT_FEATURE_TABLE)),
     }
+    normalized_absolute = os.path.normcase(absolute)
+    canonical_tracked_artifacts = {
+        os.path.normcase(os.path.realpath(DEFAULT_MANIFEST)),
+        os.path.normcase(os.path.realpath(DEFAULT_CODE_AUDIT)),
+        os.path.normcase(os.path.realpath(DEFAULT_TECHNICAL_AUDIT)),
+    }
+    if normalized_absolute in canonical_tracked_artifacts and \
+            path not in (DEFAULT_MANIFEST, DEFAULT_CODE_AUDIT,
+                         DEFAULT_TECHNICAL_AUDIT):
+        raise FT05AValidationError(
+            "%s must use the exact canonical tracked artifact path" % label)
     if os.path.normcase(output_root) == os.path.normcase(canonical_output) and \
-            in_output and os.path.normcase(absolute) not in canonical_artifacts:
+            in_output and normalized_absolute not in canonical_artifacts:
         raise FT05AValidationError(
             "%s must use the canonical FT05A artifact path" % label)
     if not in_output and not (allow_ft_namespace and
-                              (in_ft and absolute in canonical_artifacts)):
+                              (in_ft and normalized_absolute in canonical_artifacts)):
         raise FT05AValidationError("%s is outside the FT local namespace" % label)
     return absolute
 
