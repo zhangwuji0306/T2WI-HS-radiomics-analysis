@@ -2147,15 +2147,23 @@ def _validate_run_state_structure(state, expected, cohort=None):
     if not isinstance(state.get("failed_cases"), list):
         raise FT05AValidationError("FT05A run-state failure evidence is invalid")
     technical_audit_fields = {"technical_audit_path", "technical_audit_sha256"}
-    if state.get("status") == TECHNICAL_COMPLETE_PENDING_REVIEW:
-        if technical_audit_fields - set(state) or \
-                not isinstance(state.get("technical_audit_path"), str) or \
-                not _is_sha256(state.get("technical_audit_sha256")) or \
-                state.get("completed_case_count") != target_count or \
-                len(completed_keys) != target_count or state.get("failed_cases"):
+    technical_audit_present = technical_audit_fields.intersection(set(state))
+    if state.get("status") in (
+            TECHNICAL_COMPLETE_PENDING_REVIEW, "FINALIZING"):
+        if technical_audit_present and \
+                (technical_audit_present != technical_audit_fields or \
+                 not isinstance(state.get("technical_audit_path"), str) or \
+                 not state.get("technical_audit_path") or \
+                 not _is_sha256(state.get("technical_audit_sha256"))):
+            raise FT05AValidationError(
+                "FT05A technical-audit evidence is incomplete or invalid")
+        if state.get("status") == TECHNICAL_COMPLETE_PENDING_REVIEW and \
+                (technical_audit_present != technical_audit_fields or \
+                 state.get("completed_case_count") != target_count or \
+                 len(completed_keys) != target_count or state.get("failed_cases")):
             raise FT05AValidationError(
                 "FT05A pending technical-review state lacks complete case evidence")
-    elif technical_audit_fields.intersection(set(state)):
+    elif technical_audit_present:
         raise FT05AValidationError(
             "FT05A run state has unexpected technical-audit evidence")
     finalization = state.get("finalization")
@@ -2348,7 +2356,8 @@ def _validate_pending_technical_audit_migration(path, state, cohort, contract,
 
 
 def _load_or_create_state(path, expected, resume, code_audit=None, cohort=None,
-                          manifest_path=None, migration_validator=None):
+                          manifest_path=None, migration_validator=None,
+                          repair_finalization=False):
     if os.path.exists(path):
         state = _read_json(path, "FT05A run state")
         _validate_run_state_structure(state, expected, cohort=cohort)
@@ -2387,8 +2396,18 @@ def _load_or_create_state(path, expected, resume, code_audit=None, cohort=None,
             _write_json_atomic(path, migrated)
             return migrated
         if state.get("status") == "FINALIZING":
-            raise FT05AValidationError(
-                "FT05A finalization state cannot be migrated across code remediation")
+            if not repair_finalization:
+                raise FT05AValidationError(
+                    "FT05A finalization state cannot be migrated across code remediation")
+            if manifest_path is not None:
+                _refuse_existing_manifest(manifest_path, state)
+            _validate_current_code_audit_record(
+                code_audit, expected["identity_payload"]["code_audit_sha256"],
+                require_post_generation_scope=True)
+            # A legacy finalization repair is allowed to use the accepted
+            # current remediation audit, but it must retain the original
+            # generation identity and bindings for the completed artifacts.
+            return state
         if manifest_path is not None:
             _refuse_existing_manifest(manifest_path, state)
         _validate_current_code_audit_record(
@@ -2757,18 +2776,49 @@ def _repair_finalization(state, state_path, contract, cohort, w_asset,
     table, manifest, unused_checked, unused_checked_table = \
         _validate_finalization_artifacts(context, state, contract, cohort, w_asset)
     code_audit = _validate_code_audit(code_audit_path)
-    if code_audit.get("sha256") != \
-            state["identity_payload"].get("code_audit_sha256"):
-        raise FT05AValidationError("FT05A code audit is not bound to the run state")
+    original_code_audit_sha256 = state["identity_payload"].get(
+        "code_audit_sha256")
+    if code_audit.get("sha256") != original_code_audit_sha256:
+        _validate_current_code_audit_record(
+            code_audit, contract["code_audit"]["sha256"],
+            require_post_generation_scope=True)
     technical_audit = _validate_technical_audit(technical_audit_path)
     _validate_technical_audit_binding(
         technical_audit,
         _technical_audit_expected(
             state, cohort, contract, w_asset, code_audit))
-    if manifest.get("reviews") != {"technical_audit": technical_audit,
-                                    "code_audit": code_audit}:
+    state_technical_audit_fields = {
+        "technical_audit_path", "technical_audit_sha256"}
+    if state_technical_audit_fields.intersection(set(state)) and \
+            (state.get("technical_audit_path") != _relative(technical_audit_path) or \
+             state.get("technical_audit_sha256") != technical_audit.get("sha256")):
+        raise FT05AValidationError(
+            "FT05A finalization technical-audit path/hash binding is invalid")
+    reviews = manifest.get("reviews")
+    if not isinstance(reviews, dict) or \
+            reviews.get("technical_audit") != technical_audit:
         raise FT05AValidationError(
             "FT05A staged manifest audit bindings are inconsistent")
+    generation_code_audit = reviews.get("code_audit")
+    if code_audit.get("sha256") == original_code_audit_sha256:
+        if generation_code_audit != code_audit:
+            raise FT05AValidationError(
+                "FT05A staged manifest audit bindings are inconsistent")
+    elif not isinstance(generation_code_audit, dict) or \
+            generation_code_audit.get("path") != _relative(code_audit_path) or \
+            generation_code_audit.get("sha256") != original_code_audit_sha256 or \
+            generation_code_audit.get("status") != "accepted" or \
+            generation_code_audit.get("independent") is not True or \
+            generation_code_audit.get("verdict") not in (
+                "PASS", "PASS_WITH_FINDINGS"):
+        raise FT05AValidationError(
+            "FT05A original generation code-audit binding is invalid")
+    if isinstance(generation_code_audit, dict) and \
+            "runner_sha256" in generation_code_audit and \
+            generation_code_audit.get("runner_sha256") != \
+            (state.get("generation_binding") or {}).get("runner_sha256"):
+        raise FT05AValidationError(
+            "FT05A original generation runner binding is inconsistent")
     expected = _table_from_completed_cases(
         cohort, contract, w_asset, context["source_records"],
         context["transaction"]["completed_case_artifact_hashes"],
@@ -3200,7 +3250,8 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
         state = _load_or_create_state(
             state_path, expected, resume, code_audit=contract["code_audit"],
             cohort=cohort_frame, manifest_path=manifest_path,
-            migration_validator=validate_identity_migration)
+            migration_validator=validate_identity_migration,
+            repair_finalization=repair_finalization)
         if repair_finalization and state.get("status") != "FINALIZING":
             raise FT05AValidationError(
                 "FT05A finalization repair requires a FINALIZING run")
