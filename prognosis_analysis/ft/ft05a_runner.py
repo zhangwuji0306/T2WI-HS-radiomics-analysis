@@ -14,6 +14,7 @@ from __future__ import absolute_import
 import argparse
 import ast
 import csv
+import copy
 import hashlib
 import json
 import os
@@ -40,6 +41,12 @@ FT05A_STAGE = "FT05A"
 FT05A_SCHEMA_VERSION = "1.0"
 FT_LABEL = "exploratory_fullA_habitat_non_nested_validation"
 FT05A_CODE_PREP_CONTRACT_IDENTITY = "FT05A_code_prep_contract_v1"
+FT05A_IDENTITY_MIGRATION_REASON = (
+    "reviewed FT05A code/audit remediation continuation")
+IDENTITY_PAYLOAD_FIELDS = frozenset((
+    "artifact", "run_id", "ft04_lock_identity_sha256", "cohort_sha256",
+    "candidate_hashes", "w_original_order_sha256", "w_original_asset_path",
+    "w_original_asset_sha256", "code_audit_sha256", "output_root"))
 MINIMUM_ROI_SIZE = 10
 CANONICAL_OUTPUT_ROOT = os.path.abspath(os.path.join(
     _PROJECT_ROOT, "prognosis_analysis", "output", "ft_20260910_01a08bf3",
@@ -1703,22 +1710,203 @@ def _release_run_ownership(path, owner):
         pass
 
 
-def _load_or_create_state(path, expected, resume):
+def _is_sha256(value):
+    return bool(re.match(r"^[0-9a-f]{64}$", str(value or "")))
+
+
+def _validate_run_state_structure(state, expected, cohort=None):
+    """Validate persisted state before considering an identity migration."""
+    if not isinstance(state, dict):
+        raise FT05AValidationError("FT05A run state is not a mapping")
+    required = {
+        "schema_version", "artifact_id", "status", "run_id",
+        "run_identity_sha256", "identity_payload", "target_patient_count",
+        "target_patient_ids_hash", "completed_case_keys",
+        "completed_case_count", "completed_case_artifact_hashes",
+        "failed_cases", "pilot_case_keys", "finalization",
+        "created_at_epoch",
+    }
+    allowed = required | {
+        "identity_migration", "pilot_completed_at_epoch",
+        "feature_table_path", "feature_table_sha256", "manifest_path",
+        "manifest_sha256", "completed_at_epoch",
+    }
+    if set(state) - allowed or not required.issubset(set(state)):
+        raise FT05AValidationError("FT05A run state structure is malformed")
+    if state.get("schema_version") != FT05A_SCHEMA_VERSION or \
+            state.get("artifact_id") != "FT05A_run_state":
+        raise FT05AValidationError("FT05A run state schema is invalid")
+    if state.get("status") not in (
+            "RUNNING", "PILOT_COMPLETE", "FAILED", "FINALIZING",
+            "COMPLETED", "FROZEN"):
+        raise FT05AValidationError("FT05A run state status is invalid")
+    payload = state.get("identity_payload")
+    expected_payload = expected.get("identity_payload") \
+        if isinstance(expected, dict) else None
+    if not isinstance(payload, dict) or not isinstance(expected_payload, dict) or \
+            set(payload) != IDENTITY_PAYLOAD_FIELDS or \
+            set(expected_payload) != IDENTITY_PAYLOAD_FIELDS:
+        raise FT05AValidationError("FT05A run-state identity payload is malformed")
+    if not _is_sha256(expected.get("run_identity_sha256")) or \
+            expected.get("run_identity_sha256") != \
+            _sha256_text(_canonical_json(expected_payload)):
+        raise FT05AValidationError("FT05A expected identity digest is invalid")
+    if not isinstance(state.get("run_id"), str) or \
+            state.get("run_id") != payload.get("run_id"):
+        raise FT05AValidationError("FT05A run-state run ID is inconsistent")
+    if not _is_sha256(state.get("run_identity_sha256")) or \
+            state.get("run_identity_sha256") != \
+            _sha256_text(_canonical_json(payload)):
+        raise FT05AValidationError("FT05A run-state identity digest is invalid")
+    target_count = state.get("target_patient_count")
+    if not isinstance(target_count, int) or isinstance(target_count, bool) or \
+            target_count < 1:
+        raise FT05AValidationError("FT05A run-state patient count is invalid")
+    if not _is_sha256(state.get("target_patient_ids_hash")):
+        raise FT05AValidationError("FT05A run-state patient hash is invalid")
+    completed_keys = state.get("completed_case_keys")
+    artifact_hashes = state.get("completed_case_artifact_hashes")
+    if not isinstance(completed_keys, list) or \
+            not all(isinstance(key, str) for key in completed_keys) or \
+            not isinstance(artifact_hashes, dict) or \
+            len(completed_keys) != len(set(completed_keys)) or \
+            set(artifact_hashes) != set(completed_keys) or \
+            any(not _is_sha256(key) for key in completed_keys) or \
+            any(not _is_sha256(value) for value in artifact_hashes.values()) or \
+            state.get("completed_case_count") != len(completed_keys):
+        raise FT05AValidationError("FT05A run-state completion evidence is invalid")
+    pilot_keys = state.get("pilot_case_keys")
+    if not isinstance(pilot_keys, list) or \
+            not all(isinstance(key, str) for key in pilot_keys) or \
+            len(pilot_keys) != len(set(pilot_keys)) or \
+            any(not _is_sha256(key) for key in pilot_keys):
+        raise FT05AValidationError("FT05A run-state pilot evidence is invalid")
+    if not isinstance(state.get("failed_cases"), list):
+        raise FT05AValidationError("FT05A run-state failure evidence is invalid")
+    finalization = state.get("finalization")
+    if state.get("status") == "FINALIZING":
+        if not isinstance(finalization, dict):
+            raise FT05AValidationError("FT05A finalization state is malformed")
+    elif finalization is not None:
+        raise FT05AValidationError("FT05A run-state has an unexpected finalization")
+    created_at = state.get("created_at_epoch")
+    if not isinstance(created_at, (int, float)) or isinstance(created_at, bool) or \
+            not np.isfinite(float(created_at)):
+        raise FT05AValidationError("FT05A run-state creation time is invalid")
+    if "pilot_completed_at_epoch" in state:
+        pilot_completed_at = state.get("pilot_completed_at_epoch")
+        if not isinstance(pilot_completed_at, (int, float)) or \
+                isinstance(pilot_completed_at, bool) or \
+                not np.isfinite(float(pilot_completed_at)):
+            raise FT05AValidationError("FT05A pilot completion time is invalid")
+    completed_fields = {
+        "feature_table_path", "feature_table_sha256", "manifest_path",
+        "manifest_sha256", "completed_at_epoch",
+    }
+    if state.get("status") not in ("COMPLETED", "FROZEN") and \
+            completed_fields.intersection(set(state)):
+        raise FT05AValidationError(
+            "FT05A run state has unexpected completed-run evidence")
+    for key in ("feature_table_sha256", "manifest_sha256"):
+        if key in state and not _is_sha256(state.get(key)):
+            raise FT05AValidationError("FT05A completed artifact hash is invalid")
+    migration = state.get("identity_migration")
+    if migration is not None:
+        if not isinstance(migration, dict) or \
+                set(migration) != {"from_code_audit_sha256",
+                                   "to_code_audit_sha256", "reason"} or \
+                not _is_sha256(migration.get("from_code_audit_sha256")) or \
+                not _is_sha256(migration.get("to_code_audit_sha256")) or \
+                migration.get("from_code_audit_sha256") == \
+                migration.get("to_code_audit_sha256") or \
+                migration.get("reason") != FT05A_IDENTITY_MIGRATION_REASON:
+            raise FT05AValidationError("FT05A identity migration evidence is invalid")
+        if migration.get("to_code_audit_sha256") != \
+                payload.get("code_audit_sha256"):
+            raise FT05AValidationError("FT05A identity migration target is invalid")
+    if cohort is not None:
+        if target_count != len(cohort) or \
+                state.get("target_patient_ids_hash") != _sha256_text(
+                    "\n".join(cohort["patient_id"].astype(str))):
+            raise FT05AValidationError("FT05A run-state cohort evidence is invalid")
+        valid = {_case_identity(row) for _, row in cohort.iterrows()}
+        if any(key not in valid for key in completed_keys + pilot_keys):
+            raise FT05AValidationError("FT05A run-state case evidence is out of cohort")
+
+
+def _identity_differs_only_by_audit(existing_payload, expected_payload):
+    if not isinstance(existing_payload, dict) or \
+            not isinstance(expected_payload, dict) or \
+            set(existing_payload) != set(expected_payload):
+        return False
+    differences = [key for key in expected_payload
+                   if existing_payload.get(key) != expected_payload.get(key)]
+    return differences == ["code_audit_sha256"] and \
+        existing_payload.get("code_audit_sha256") != \
+        expected_payload.get("code_audit_sha256") and \
+        _is_sha256(existing_payload.get("code_audit_sha256")) and \
+        _is_sha256(expected_payload.get("code_audit_sha256"))
+
+
+def _validate_current_code_audit_record(code_audit, expected_hash):
+    if not isinstance(code_audit, dict) or \
+            code_audit.get("status") != "accepted" or \
+            code_audit.get("independent") is not True or \
+            code_audit.get("verdict") not in ("PASS", "PASS_WITH_FINDINGS") or \
+            code_audit.get("sha256") != expected_hash or \
+            not _is_sha256(code_audit.get("sha256")) or \
+            code_audit.get("path") != _relative(DEFAULT_CODE_AUDIT) or \
+            code_audit.get("runner_sha256") != _sha256_file(__file__) or \
+            not re.match(r"^[0-9a-f]{40}$",
+                         str(code_audit.get("reviewed_commit") or "")) or \
+            code_audit.get("contract_identity") != FT05A_CODE_PREP_CONTRACT_IDENTITY:
+        raise FT05AValidationError(
+            "FT05A identity migration requires the accepted current code audit")
+
+
+def _load_or_create_state(path, expected, resume, code_audit=None, cohort=None,
+                          manifest_path=None, migration_validator=None):
     if os.path.exists(path):
         state = _read_json(path, "FT05A run state")
-        if state.get("run_identity_sha256") != expected["run_identity_sha256"] or \
-                state.get("identity_payload") != expected["identity_payload"]:
-            raise FT05AValidationError("conflicting FT05A run identity")
+        _validate_run_state_structure(state, expected, cohort=cohort)
         if state.get("status") in ("COMPLETED", "FROZEN"):
             raise FT05AValidationError("completed FT05A run cannot be rerun")
         if not resume:
             raise FT05AValidationError("existing FT05A run state requires explicit resume")
-        if not isinstance(state.get("completed_case_artifact_hashes"), dict):
-            raise FT05AValidationError("FT05A run state lacks artifact hash bindings")
-        return state
+        if state.get("run_identity_sha256") == expected["run_identity_sha256"] and \
+                state.get("identity_payload") == expected["identity_payload"]:
+            return state
+        if not _identity_differs_only_by_audit(
+                state.get("identity_payload"), expected.get("identity_payload")):
+            raise FT05AValidationError("conflicting FT05A run identity")
+        if state.get("status") == "FINALIZING":
+            raise FT05AValidationError(
+                "FT05A finalization state cannot be migrated across code remediation")
+        if manifest_path is not None:
+            _refuse_existing_manifest(manifest_path, state)
+        _validate_current_code_audit_record(
+            code_audit, expected["identity_payload"]["code_audit_sha256"])
+        if migration_validator is None:
+            raise FT05AValidationError(
+                "FT05A identity migration requires completed-case validation")
+        migrated = copy.deepcopy(state)
+        migration_validator(copy.deepcopy(migrated))
+        old_audit_hash = state["identity_payload"]["code_audit_sha256"]
+        migrated["run_identity_sha256"] = expected["run_identity_sha256"]
+        migrated["identity_payload"] = copy.deepcopy(expected["identity_payload"])
+        migrated["identity_migration"] = OrderedDict((
+            ("from_code_audit_sha256", old_audit_hash),
+            ("to_code_audit_sha256",
+             expected["identity_payload"]["code_audit_sha256"]),
+            ("reason", FT05A_IDENTITY_MIGRATION_REASON),
+        ))
+        _write_json_atomic(path, migrated)
+        return migrated
     if _write_json_exclusive(path, expected):
         return expected
-    return _load_or_create_state(path, expected, resume)
+    return _load_or_create_state(
+        path, expected, resume, code_audit=code_audit, cohort=cohort,
+        manifest_path=manifest_path, migration_validator=migration_validator)
 
 
 def _refuse_existing_manifest(path, state=None):
@@ -2125,10 +2313,49 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
     state_path = os.path.join(output_root, "FT05A_run_state.json")
     expected = _initial_run_state(run_id, cohort_frame, contract["lock"],
                                   contract["code_audit"], output_root)
+
+    def validate_identity_migration(candidate):
+        """Validate completed evidence before changing the persisted identity."""
+        completed_before = list(candidate.get("completed_case_keys", []))
+        hashes_before = copy.deepcopy(
+            candidate.get("completed_case_artifact_hashes", {}))
+        pilot_before = list(candidate.get("pilot_case_keys", []))
+        case_root = os.path.join(output_root, "cases")
+        if not completed_before:
+            if os.path.isdir(case_root) and os.listdir(case_root):
+                raise FT05AValidationError(
+                    "FT05A migration found untracked case evidence")
+            return
+        if not os.path.isdir(case_root):
+            raise FT05AValidationError(
+                "FT05A migration cannot validate missing case namespace")
+        if any(not os.path.isfile(os.path.join(case_root, name))
+               for name in os.listdir(case_root)):
+            raise FT05AValidationError(
+                "FT05A migration found a non-file case artifact")
+        by_key = {_case_identity(row): str(row["patient_id"])
+                  for _, row in cohort_frame.iterrows()}
+        selected_ids = [by_key[key] for key in completed_before]
+        migration_w_asset = _load_w_original_asset(
+            contract["lock"], w_original_path,
+            selected_patient_ids=selected_ids)
+        checked = copy.deepcopy(candidate)
+        _reconcile_existing_cases(
+            checked, cohort_frame, contract, migration_w_asset, case_root)
+        if checked.get("completed_case_keys") != completed_before or \
+                checked.get("completed_case_count") != len(completed_before) or \
+                checked.get("completed_case_artifact_hashes") != hashes_before or \
+                checked.get("pilot_case_keys") != pilot_before:
+            raise FT05AValidationError(
+                "FT05A migration would change completed-case evidence")
+
     owner_path, owner = _acquire_run_ownership(
         output_root, expected["run_identity_sha256"])
     try:
-        state = _load_or_create_state(state_path, expected, resume)
+        state = _load_or_create_state(
+            state_path, expected, resume, code_audit=contract["code_audit"],
+            cohort=cohort_frame, manifest_path=manifest_path,
+            migration_validator=validate_identity_migration)
         _validate_state_case_keys(state, cohort_frame)
         _refuse_existing_manifest(manifest_path, state)
         if state.get("status") == "FINALIZING":

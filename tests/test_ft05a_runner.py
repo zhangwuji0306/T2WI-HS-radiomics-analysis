@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 
 import csv
+import copy
 import json
 import os
 import shutil
@@ -190,6 +191,28 @@ class FT05ARunnerTests(unittest.TestCase):
                 mock.patch.object(ft, "FORMAL_MODEL_LOCK",
                                   os.path.join(self.root, "formal_absent.json")):
             yield loader
+
+    def _strict_code_audit(self, audit_hash):
+        return {
+            "path": _relative(self.code_audit),
+            "sha256": audit_hash,
+            "status": "accepted",
+            "independent": True,
+            "verdict": "PASS",
+            "reviewed_commit": ft.ft04._git_head(),
+            "runner_sha256": ft._sha256_file(ft.__file__),
+            "contract_identity": ft.FT05A_CODE_PREP_CONTRACT_IDENTITY,
+        }
+
+    def _write_state_fixture(self, path, state):
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(state, handle, ensure_ascii=False, indent=2,
+                      sort_keys=True)
+            handle.write("\n")
+
+    def _read_bytes(self, path):
+        with open(path, "rb") as handle:
+            return handle.read()
 
     def test_static_audit_has_no_B_fit_or_reader_route(self):
         result = ft.static_validate()
@@ -518,6 +541,174 @@ class FT05ARunnerTests(unittest.TestCase):
         self.assertEqual(first_calls, ["B0"])
         self.assertEqual(second_calls, ["B1"])
         self.assertEqual(result["status"], "frozen")
+
+    def test_reviewed_audit_hash_only_migration_preserves_pilot_and_run_identity(self):
+        old_audit = self._strict_code_audit("a" * 64)
+        new_audit = self._strict_code_audit("b" * 64)
+        first_calls = []
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        self.contract["code_audit"] = old_audit
+        with self._patches():
+            ft.run_ft05a(
+                self.cohort, "run-audit-migration", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(first_calls), pilot_case_ids=["B0"])
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        pilot_state = ft._read_json(state_path)
+        pilot_key = pilot_state["completed_case_keys"][0]
+        pilot_hash = pilot_state["completed_case_artifact_hashes"][pilot_key]
+        pilot_keys = list(pilot_state["pilot_case_keys"])
+        old_payload = copy.deepcopy(pilot_state["identity_payload"])
+        old_run_identity = pilot_state["run_identity_sha256"]
+
+        second_calls = []
+        self.contract["code_audit"] = new_audit
+        with self._patches():
+            result = ft.run_ft05a(
+                self.cohort, "run-audit-migration", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(second_calls), resume=True)
+
+        final_state = ft._read_json(state_path)
+        self.assertEqual(result["status"], "frozen")
+        self.assertEqual(second_calls, ["B1"])
+        self.assertNotEqual(final_state["run_identity_sha256"], old_run_identity)
+        self.assertEqual(final_state["identity_migration"], {
+            "from_code_audit_sha256": "a" * 64,
+            "to_code_audit_sha256": "b" * 64,
+            "reason": ft.FT05A_IDENTITY_MIGRATION_REASON,
+        })
+        for key, value in old_payload.items():
+            if key == "code_audit_sha256":
+                continue
+            self.assertEqual(final_state["identity_payload"][key], value)
+        self.assertEqual(final_state["identity_payload"]["code_audit_sha256"],
+                         "b" * 64)
+        self.assertEqual(final_state["pilot_case_keys"], pilot_keys)
+        self.assertEqual(
+            final_state["completed_case_artifact_hashes"][pilot_key],
+            pilot_hash)
+        self.assertEqual(final_state["run_identity_sha256"],
+                         result["run_identity"])
+
+    def test_identity_migration_rejects_any_non_audit_identity_change(self):
+        cohort = ft.load_technical_cohort(
+            self.cohort, technical_source_roots=ft.ALLOWED_TECHNICAL_ROOTS,
+            accepted_w_path=self.lock["habitat_definition"][
+                "W_Original_asset"]["path"])
+        old_audit = self._strict_code_audit("a" * 64)
+        new_audit = self._strict_code_audit("b" * 64)
+        old_state = ft._initial_run_state(
+            "run-identity-fields", cohort, self.lock, old_audit, self.out)
+        old_state["status"] = "PILOT_COMPLETE"
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        self._write_state_fixture(state_path, old_state)
+        original = self._read_bytes(state_path)
+        new_expected = ft._initial_run_state(
+            "run-identity-fields", cohort, self.lock, new_audit, self.out)
+        changes = {
+            "artifact": "different-artifact",
+            "run_id": "different-run",
+            "ft04_lock_identity_sha256": "different-lock",
+            "cohort_sha256": "0" * 64,
+            "candidate_hashes": {"R_low": "different", "R_high": "different"},
+            "w_original_order_sha256": "0" * 64,
+            "w_original_asset_path": "different-asset.csv",
+            "w_original_asset_sha256": "0" * 64,
+            "output_root": "different-output",
+        }
+        for key, value in changes.items():
+            candidate = copy.deepcopy(new_expected)
+            candidate["identity_payload"][key] = value
+            candidate["run_identity_sha256"] = ft._sha256_text(
+                ft._canonical_json(candidate["identity_payload"]))
+            with self.assertRaises(ft.FT05AValidationError):
+                ft._load_or_create_state(
+                    state_path, candidate, True, code_audit=new_audit,
+                    cohort=cohort, migration_validator=lambda state: None)
+            self.assertEqual(self._read_bytes(state_path), original)
+
+    def test_identity_migration_rejects_completed_frozen_nonresume_unaccepted_and_manifest(self):
+        cohort = ft.load_technical_cohort(
+            self.cohort, technical_source_roots=ft.ALLOWED_TECHNICAL_ROOTS,
+            accepted_w_path=self.lock["habitat_definition"][
+                "W_Original_asset"]["path"])
+        old_audit = self._strict_code_audit("a" * 64)
+        new_audit = self._strict_code_audit("b" * 64)
+        expected_old = ft._initial_run_state(
+            "run-migration-rejections", cohort, self.lock, old_audit, self.out)
+        expected_new = ft._initial_run_state(
+            "run-migration-rejections", cohort, self.lock, new_audit, self.out)
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        for status in ("COMPLETED", "FROZEN"):
+            state = copy.deepcopy(expected_old)
+            state["status"] = status
+            self._write_state_fixture(state_path, state)
+            with self.assertRaises(ft.FT05AValidationError):
+                ft._load_or_create_state(
+                    state_path, expected_new, True, code_audit=new_audit,
+                    cohort=cohort, migration_validator=lambda value: None)
+
+        state = copy.deepcopy(expected_old)
+        state["status"] = "PILOT_COMPLETE"
+        self._write_state_fixture(state_path, state)
+        with self.assertRaises(ft.FT05AValidationError):
+            ft._load_or_create_state(
+                state_path, expected_new, False, code_audit=new_audit,
+                cohort=cohort, migration_validator=lambda value: None)
+
+        bad_audit = copy.deepcopy(new_audit)
+        bad_audit["independent"] = False
+        self._write_state_fixture(state_path, state)
+        with self.assertRaises(ft.FT05AValidationError):
+            ft._load_or_create_state(
+                state_path, expected_new, True, code_audit=bad_audit,
+                cohort=cohort, migration_validator=lambda value: None)
+
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with open(manifest_path, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump({"artifact_id": "FT05_B_feature_manifest",
+                       "status": "frozen"}, handle)
+        self._write_state_fixture(state_path, state)
+        with self.assertRaises(ft.FT05AValidationError):
+            ft._load_or_create_state(
+                state_path, expected_new, True, code_audit=new_audit,
+                cohort=cohort, manifest_path=manifest_path,
+                migration_validator=lambda value: None)
+
+    def test_identity_migration_state_write_is_atomic_and_preserves_original_on_failure(self):
+        cohort = ft.load_technical_cohort(
+            self.cohort, technical_source_roots=ft.ALLOWED_TECHNICAL_ROOTS,
+            accepted_w_path=self.lock["habitat_definition"][
+                "W_Original_asset"]["path"])
+        old_audit = self._strict_code_audit("a" * 64)
+        new_audit = self._strict_code_audit("b" * 64)
+        expected_old = ft._initial_run_state(
+            "run-migration-atomic", cohort, self.lock, old_audit, self.out)
+        expected_old["status"] = "PILOT_COMPLETE"
+        expected_new = ft._initial_run_state(
+            "run-migration-atomic", cohort, self.lock, new_audit, self.out)
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        self._write_state_fixture(state_path, expected_old)
+        original = self._read_bytes(state_path)
+        validator = mock.Mock()
+
+        def mutate_candidate(candidate):
+            candidate["pilot_case_keys"].append("0" * 64)
+
+        validator.side_effect = mutate_candidate
+        with mock.patch.object(ft, "_write_json_atomic",
+                               side_effect=IOError("synthetic atomic failure")):
+            with self.assertRaises(IOError):
+                ft._load_or_create_state(
+                    state_path, expected_new, True, code_audit=new_audit,
+                    cohort=cohort, migration_validator=validator)
+        validator.assert_called_once()
+        self.assertEqual(self._read_bytes(state_path), original)
+        self.assertFalse(any(name.startswith("FT05A_run_state.json.tmp.")
+                             for name in os.listdir(self.out)))
 
     def test_w_original_loader_rejects_malformed_nonfinite_and_duplicate_rows(self):
         valid = ["1.0"] * len(ft.W_ORIGINAL_FEATURE_NAMES)
