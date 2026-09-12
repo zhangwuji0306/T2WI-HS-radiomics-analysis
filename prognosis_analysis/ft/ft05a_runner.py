@@ -1773,6 +1773,8 @@ def _validate_run_state_structure(state, expected, cohort=None):
             set(artifact_hashes) != set(completed_keys) or \
             any(not _is_sha256(key) for key in completed_keys) or \
             any(not _is_sha256(value) for value in artifact_hashes.values()) or \
+            not isinstance(state.get("completed_case_count"), int) or \
+            isinstance(state.get("completed_case_count"), bool) or \
             state.get("completed_case_count") != len(completed_keys):
         raise FT05AValidationError("FT05A run-state completion evidence is invalid")
     pilot_keys = state.get("pilot_case_keys")
@@ -1781,6 +1783,17 @@ def _validate_run_state_structure(state, expected, cohort=None):
             len(pilot_keys) != len(set(pilot_keys)) or \
             any(not _is_sha256(key) for key in pilot_keys):
         raise FT05AValidationError("FT05A run-state pilot evidence is invalid")
+    if not set(pilot_keys).issubset(set(completed_keys)):
+        raise FT05AValidationError(
+            "FT05A pilot cases are not represented in completed cases")
+    if state.get("status") == "PILOT_COMPLETE":
+        if not pilot_keys or set(pilot_keys) != set(completed_keys) or \
+                "pilot_completed_at_epoch" not in state:
+            raise FT05AValidationError(
+                "FT05A pilot-complete state lacks complete case evidence")
+    if "pilot_completed_at_epoch" in state and not pilot_keys:
+        raise FT05AValidationError(
+            "FT05A pilot completion timestamp lacks pilot case evidence")
     if not isinstance(state.get("failed_cases"), list):
         raise FT05AValidationError("FT05A run-state failure evidence is invalid")
     finalization = state.get("finalization")
@@ -2322,10 +2335,8 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
         pilot_before = list(candidate.get("pilot_case_keys", []))
         case_root = os.path.join(output_root, "cases")
         if not completed_before:
-            if os.path.isdir(case_root) and os.listdir(case_root):
-                raise FT05AValidationError(
-                    "FT05A migration found untracked case evidence")
-            return
+            raise FT05AValidationError(
+                "FT05A identity migration requires completed case evidence")
         if not os.path.isdir(case_root):
             raise FT05AValidationError(
                 "FT05A migration cannot validate missing case namespace")
@@ -2333,12 +2344,25 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
                for name in os.listdir(case_root)):
             raise FT05AValidationError(
                 "FT05A migration found a non-file case artifact")
-        by_key = {_case_identity(row): str(row["patient_id"])
-                  for _, row in cohort_frame.iterrows()}
-        selected_ids = [by_key[key] for key in completed_before]
+        # Migration must establish the accepted asset binding from the full
+        # file before it can replace the persisted run identity.  Normal pilot
+        # loading still passes selected_patient_ids and retains its streaming
+        # subset behavior.
         migration_w_asset = _load_w_original_asset(
-            contract["lock"], w_original_path,
-            selected_patient_ids=selected_ids)
+            contract["lock"], w_original_path)
+        expected_w_binding = _w_original_binding_from_lock(contract["lock"])
+        if migration_w_asset.get("path") != expected_w_binding["path"] or \
+                migration_w_asset.get("sha256") != \
+                expected_w_binding["asset_sha256"] or \
+                migration_w_asset.get("feature_count") != 107 or \
+                migration_w_asset.get("order_sha256") != \
+                W_ORIGINAL_ORDER_SHA256:
+            raise FT05AValidationError(
+                "FT05A migration W_Original binding is inconsistent")
+        expected_w_ids = set(cohort_frame["patient_id"].astype(str))
+        if expected_w_ids - set(migration_w_asset.get("rows", {})):
+            raise FT05AValidationError(
+                "FT05A migration W_Original asset does not cover the cohort")
         checked = copy.deepcopy(candidate)
         _reconcile_existing_cases(
             checked, cohort_frame, contract, migration_w_asset, case_root)

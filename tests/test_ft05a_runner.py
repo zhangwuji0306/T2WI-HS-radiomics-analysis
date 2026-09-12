@@ -564,7 +564,30 @@ class FT05ARunnerTests(unittest.TestCase):
 
         second_calls = []
         self.contract["code_audit"] = new_audit
-        with self._patches():
+        events = []
+        real_loader = ft._load_w_original_asset
+        real_case_validator = ft._validate_case_artifact
+        real_state_writer = ft._write_json_atomic
+
+        def record_loader(lock, path_override=None, selected_patient_ids=None):
+            events.append(("load_w_original", selected_patient_ids))
+            return real_loader(lock, path_override,
+                               selected_patient_ids=selected_patient_ids)
+
+        def record_case_validation(*args, **kwargs):
+            events.append(("validate_case", args[0]))
+            return real_case_validator(*args, **kwargs)
+
+        def record_state_write(path, payload, *args, **kwargs):
+            events.append(("write", path))
+            return real_state_writer(path, payload, *args, **kwargs)
+
+        with self._patches() as loader, \
+                mock.patch.object(ft, "_validate_case_artifact",
+                                  side_effect=record_case_validation), \
+                mock.patch.object(ft, "_write_json_atomic",
+                                  side_effect=record_state_write):
+            loader.side_effect = record_loader
             result = ft.run_ft05a(
                 self.cohort, "run-audit-migration", output_root=self.out,
                 manifest_path=manifest_path, code_audit_path=self.code_audit,
@@ -592,6 +615,74 @@ class FT05ARunnerTests(unittest.TestCase):
             pilot_hash)
         self.assertEqual(final_state["run_identity_sha256"],
                          result["run_identity"])
+        self.assertEqual(events[0][0], "load_w_original")
+        self.assertIsNone(events[0][1])
+        first_state_write = next(index for index, event in enumerate(events)
+                                 if event[0] == "write" and
+                                 event[1].endswith("FT05A_run_state.json"))
+        self.assertTrue(any(event[0] == "validate_case"
+                            for event in events[:first_state_write]))
+        self.assertEqual(
+            [event[1] for event in events if event[0] == "load_w_original"],
+            [None, None])
+
+    def test_identity_migration_rejects_unselected_w_original_tamper_before_write(self):
+        old_audit = self._strict_code_audit("a" * 64)
+        new_audit = self._strict_code_audit("b" * 64)
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        self.contract["code_audit"] = old_audit
+        with self._patches():
+            ft.run_ft05a(
+                self.cohort, "run-unselected-w-tamper", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(), pilot_case_ids=["B0"])
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        original_state = self._read_bytes(state_path)
+        original_asset = self._read_bytes(self.w_path)
+        try:
+            with open(self.w_path, "wb") as handle:
+                handle.write(original_asset.replace(b",2.0", b",999.0", 1))
+            self.contract["code_audit"] = new_audit
+            real_loader = ft._load_w_original_asset
+            with self._patches() as loader:
+                loader.side_effect = real_loader
+                with self.assertRaises(ft.FT05AValidationError):
+                    ft.run_ft05a(
+                        self.cohort, "run-unselected-w-tamper",
+                        output_root=self.out, manifest_path=manifest_path,
+                        code_audit_path=self.code_audit,
+                        technical_audit_path=self.technical_audit,
+                        processor=self._processor(), resume=True)
+            self.assertEqual(self._read_bytes(state_path), original_state)
+        finally:
+            with open(self.w_path, "wb") as handle:
+                handle.write(original_asset)
+
+    def test_malformed_pilot_complete_migration_is_rejected_before_write(self):
+        cohort = ft.load_technical_cohort(
+            self.cohort, technical_source_roots=ft.ALLOWED_TECHNICAL_ROOTS,
+            accepted_w_path=self.lock["habitat_definition"][
+                "W_Original_asset"]["path"])
+        old_audit = self._strict_code_audit("a" * 64)
+        new_audit = self._strict_code_audit("b" * 64)
+        state = ft._initial_run_state(
+            "run-malformed-pilot", cohort, self.lock, old_audit, self.out)
+        state["status"] = "PILOT_COMPLETE"
+        state["pilot_case_keys"] = [ft._case_identity(cohort.iloc[0])]
+        state["pilot_completed_at_epoch"] = 1.0
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        self._write_state_fixture(state_path, state)
+        original = self._read_bytes(state_path)
+        expected = ft._initial_run_state(
+            "run-malformed-pilot", cohort, self.lock, new_audit, self.out)
+        validator = mock.Mock()
+        with self.assertRaises(ft.FT05AValidationError):
+            ft._load_or_create_state(
+                state_path, expected, True, code_audit=new_audit,
+                cohort=cohort, migration_validator=validator)
+        validator.assert_not_called()
+        self.assertEqual(self._read_bytes(state_path), original)
 
     def test_identity_migration_rejects_any_non_audit_identity_change(self):
         cohort = ft.load_technical_cohort(
@@ -602,7 +693,7 @@ class FT05ARunnerTests(unittest.TestCase):
         new_audit = self._strict_code_audit("b" * 64)
         old_state = ft._initial_run_state(
             "run-identity-fields", cohort, self.lock, old_audit, self.out)
-        old_state["status"] = "PILOT_COMPLETE"
+        old_state["status"] = "RUNNING"
         state_path = os.path.join(self.out, "FT05A_run_state.json")
         self._write_state_fixture(state_path, old_state)
         original = self._read_bytes(state_path)
@@ -687,7 +778,7 @@ class FT05ARunnerTests(unittest.TestCase):
         new_audit = self._strict_code_audit("b" * 64)
         expected_old = ft._initial_run_state(
             "run-migration-atomic", cohort, self.lock, old_audit, self.out)
-        expected_old["status"] = "PILOT_COMPLETE"
+        expected_old["status"] = "RUNNING"
         expected_new = ft._initial_run_state(
             "run-migration-atomic", cohort, self.lock, new_audit, self.out)
         state_path = os.path.join(self.out, "FT05A_run_state.json")
