@@ -1,33 +1,30 @@
-# FT05A Independent Pre-run Code Audit — Round 10
+# FT05A Independent Pre-run Code Audit — Round 11
 
 Independent review: true
 
-Reviewed FT05A implementation commit: `b831845d57277f20f115329fd6ea4f0796d1dcd0`
+Reviewed FT05A implementation commit: `7777498aa6135fb635814e2f86719bcdccae9384`
 
-FT05A runner SHA-256: `0f37da4c964beffafa1286f54199c267f186d2a9a4c620dcddb27dc270d95498`
+FT05A runner SHA-256: `a3c6e6b9f3b2598b36b99d944efce97b838191a922e15c3560904709425f9aa3`
 
 FT05A preparation contract identity: `FT05A_code_prep_contract_v1`
 
 ## Verdict
 
-Verdict: PASS_WITH_FINDINGS
+Verdict: PASS
 
 ## Scope and evidence
 
-- Reviewed the repository instructions, FT scheme and approved amendment, accepted FT00–FT04 records and lock, all FT05A contracts and prior audit state, the actual current Git history/diff, `prognosis_analysis/ft/ft05a_runner.py`, and `tests/test_ft05a_runner.py`.
-- The current implementation includes the full W_Original binding check before audit-identity migration: the migration path performs an unselected full-asset load at the exact FT04-bound path, verifies the expected full SHA-256, frozen feature count/order and reuse flags, verifies cohort coverage, and reconciles every completed artifact and source record before any migration state write.
-- The persisted non-completed state is validated before migration. The checks cover the exact state schema, identity digest, unchanged identity fields except `code_audit_sha256`, run/cohort/count/hash consistency, unique completed case keys and artifact hashes, pilot-key containment, status-specific `PILOT_COMPLETE` evidence, and rejection of zero-completion migration states. Completed artifacts are revalidated against the current source hashes, W_Original rows, processor evidence, flattened rows, schema and stored artifact hashes.
-- Migration writes only a copied state after all preconditions and post-migration structure checks pass, using the atomic state writer. The migration records the old/new audit hashes while preserving the run ID, completed artifacts, pilot set and one-time resume behavior. Completed, frozen, finalizing, non-resume, manifest-existing and other-identity-change cases remain fail-closed.
-- The current audit binding requires an independent accepted report, exact current runner SHA-256, exact reviewed implementation commit/ancestor with matching runner blob, report-only post-review Git changes, and the fixed preparation-contract identity. The FT05A entry point applies the exact canonical output/artifact namespace checks before preflight, source loading, W_Original loading, ownership or output writes.
-- Existing FT05A controls remain intact: technical-only columns and allowlisted roots, outcome/clinical path and column denylist, frozen A boundary and no B K-means fit, unchanged A/W03 PyRadiomics settings, exact candidate/order hashes, accepted W_Original path/hash/order/reuse binding, source uniqueness, structural absence and small-ROI states, exclusive ownership, pilot streaming/resume, atomic finalization/recovery, provenance and formal-directory isolation.
+- Reviewed the FT scheme, the current FT05A runner and tests, the accepted FT04 lock/review bindings, the current Git diff, and the canonical FT05A audit contract.
+- The runner treats `FT05A_code_audit.md` as the accepted independent pre-run code audit. It emits `FT05A_B_technical_generation_audit.md` only after all technical case artifacts and completion hashes are present, with `Status: generated_pending_review`, `Independent review: false`, and `Verdict: PENDING_REVIEW`.
+- The generated factual audit is bound to the run identity, cohort, completed-case evidence, FT04 lock, current code-audit hash, exact runner hash, accepted W_Original asset, frozen W_Original order, and canonical row schema. The same canonical report must be independently changed to an accepted PASS/PASS_WITH_FINDINGS review before manifest finalization.
+- `TECHNICAL_COMPLETE_PENDING_REVIEW` is a complete-case terminal hold for the technical generation stage. The manifest is not created in this state; resumption requires the same run identity and canonical audit path, validates completed case artifacts, and skips their processors. Code-identity migration is rejected after this hold.
+- Accepted technical-audit finalization rechecks identity/provenance/safety fields and the exact current runner hash, then validates the staged table and manifest before atomic installation. Interrupted finalization and corrupted staged/installed bytes fail closed; case failures persist `FAILED` without a frozen manifest.
+- Existing FT05A constraints remain enforced: the frozen full-A habitat boundary, direct projection without B K-means, exact A/W03 PyRadiomics settings, reuse-only W_Original, no B outcome access, no whole-tumor re-extraction, no duplicate extraction, formal-output isolation, technical namespace allowlisting, canonical artifacts, exclusive ownership, and one-time resume semantics.
+- FT04's downstream validator requires the canonical frozen manifest, complete technical table, accepted independent technical/code audits, frozen provenance, and all outcome-blind generation flags. No FT05B/FT06 implementation or outcome-unlock artifact was accessed in this review.
 
-## Blocking findings
+## Findings
 
-None.
-
-## Nonblocking finding
-
-One synthetic directory-symlink test was skipped because the Windows account lacks symbolic-link privilege. The exact lexical namespace gate, resolved-path/reparse checks, non-privileged alias coverage, and junction/reparse coverage remain passing; this limitation does not weaken the production fail-closed path.
+None blocking or nonblocking.
 
 ## Synthetic and regression validation
 
@@ -35,7 +32,7 @@ All Python execution used `tools/run_t2_radiomics.ps1` with the locked `t2_radio
 
 ```text
 tools/run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','tests.test_ft05a_runner','tests.test_ft04_runner','tests.test_ft03_runner','tests.test_ft02_runner','tests.test_w07_outer_splits')
-107 tests run; 107 passed; 0 failed; 1 skipped; exit code 0
+109 tests run; 109 passed; 0 failed; 1 skipped; exit code 0
 
 tools/run_t2_radiomics.ps1 -PythonArguments @('.\prognosis_analysis\ft\ft05a_runner.py','static-validate')
 pass: true; B_kmeans_fit: false; outcome_accessed: false; whole_tumor_reextraction: false; formal_directory_mixing: false
@@ -44,10 +41,10 @@ tools/run_t2_radiomics.ps1 -PythonArguments @('.\prognosis_analysis\ft\ft04_runn
 status: VALID; FT04 lock identity: 10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e
 ```
 
-The FT05A synthetic suite includes adversarial unselected W_Original tampering, malformed pilot completion, atomic migration failure, identity-field mutation, completed/frozen/non-resume rejection, migration artifact reconciliation, pilot resume without recomputation, exact output-root and canonical artifact alias rejection, source/manifest tampering, duplicate mappings, structural absence and small-ROI handling, ownership contention, finalization recovery/tampering, outcome isolation, formal-directory rejection and technical-manifest validation.
+The FT05A synthetic suite covers factual pending-audit emission, absence of a premature manifest, accepted-review resume without case recomputation, audit-field binding, run-state transitions, identity migration, atomic state writes, finalization recovery/tamper rejection, W_Original reuse, namespace isolation, outcome/path denial, and failure closure. The single skipped check is the Windows symbolic-link privilege-dependent case; non-privileged alias and junction coverage passed.
 
-No real B image, ROI, W_Original value, technical feature, clinical/outcome source, patient-level FT05A output or later FT05 module was read, generated or changed during this review.
+No real B image, ROI, W_Original value, technical feature, clinical/outcome source, patient-level FT05A output, FT05B artifact, or FT06 artifact was read, generated, or changed during this review.
 
 ## Downstream authorization
 
-The next Worker is authorized to resume only the same existing one-time FT05A run identity after the normal runtime preconditions are satisfied. This audit authorizes no FT05B outcome unlock and no FT06 execution.
+The next Worker is authorized to run or resume only the same one-time FT05A technical run under the accepted FT04 lock and this accepted pre-run code audit. After technical completion it must leave the factual audit in `generated_pending_review` and stop for an independent technical review. This authorization does not unlock B outcome access, FT05B, or FT06.
