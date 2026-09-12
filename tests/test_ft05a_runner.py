@@ -47,10 +47,27 @@ class FT05ARunnerTests(unittest.TestCase):
         if not os.path.isdir(ft.DEFAULT_TECHNICAL_SOURCE_ROOT):
             os.makedirs(ft.DEFAULT_TECHNICAL_SOURCE_ROOT)
         self.tmp = tempfile.TemporaryDirectory(dir=OUTPUT_PARENT)
+        self._output_constants = {
+            name: getattr(ft, name) for name in (
+                "DEFAULT_OUTPUT_ROOT", "DEFAULT_MANIFEST",
+                "DEFAULT_CODE_AUDIT", "DEFAULT_TECHNICAL_AUDIT",
+                "DEFAULT_RUN_STATE", "DEFAULT_CASE_ROOT",
+                "DEFAULT_FEATURE_TABLE")}
         self.source_tmp = tempfile.TemporaryDirectory(
             dir=ft.DEFAULT_TECHNICAL_SOURCE_ROOT)
         self.root = self.source_tmp.name
         self.out = self.tmp.name
+        # Keep the fixture synthetic while exercising the production rule that
+        # one invocation has exactly one canonical output root.
+        ft.DEFAULT_OUTPUT_ROOT = self.out
+        ft.DEFAULT_MANIFEST = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        ft.DEFAULT_CODE_AUDIT = os.path.join(self.out, "FT05A_code_audit.md")
+        ft.DEFAULT_TECHNICAL_AUDIT = os.path.join(
+            self.out, "FT05A_technical_audit.md")
+        ft.DEFAULT_RUN_STATE = os.path.join(self.out, "FT05A_run_state.json")
+        ft.DEFAULT_CASE_ROOT = os.path.join(self.out, "cases")
+        ft.DEFAULT_FEATURE_TABLE = os.path.join(
+            self.out, "FT05A_B_technical_features.csv")
         self.cohort = _technical_frame(self.root)
         self.w_path = os.path.join(self.root, "w_original.csv")
         w_rows = []
@@ -97,6 +114,8 @@ class FT05ARunnerTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
         self.source_tmp.cleanup()
+        for name, value in self._output_constants.items():
+            setattr(ft, name, value)
 
     def _w_asset(self):
         return {"path": self.lock["habitat_definition"]["W_Original_asset"]["path"],
@@ -446,6 +465,66 @@ class FT05ARunnerTests(unittest.TestCase):
                 ft._acquire_run_ownership(self.out, "synthetic-run-identity")
         finally:
             ft._release_run_ownership(owner_path, owner)
+
+    def test_descendant_output_invocation_is_rejected_before_processing(self):
+        first_calls = []
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with self._patches() as loader:
+            pilot = ft.run_ft05a(
+                self.cohort, "run-global-owner", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(first_calls), pilot_case_ids=["B0"])
+            self.assertEqual(pilot["status"], "PILOT_COMPLETE")
+            self.assertEqual(first_calls, ["B0"])
+            loader.reset_mock()
+            second_calls = []
+            descendant = os.path.join(self.out, "alternate_run_root")
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-global-owner", output_root=descendant,
+                    manifest_path=os.path.join(
+                        descendant, "FT05_B_feature_manifest.json"),
+                    code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(second_calls),
+                    pilot_case_ids=["B0"])
+            self.assertEqual(second_calls, [])
+            loader.assert_not_called()
+            self.assertFalse(os.path.exists(descendant))
+
+    def test_canonical_output_aliases_collapse_to_one_namespace(self):
+        canonical = os.path.realpath(ft.DEFAULT_OUTPUT_ROOT)
+        aliases = (
+            os.path.relpath(canonical, ROOT),
+            os.path.join(canonical, ".", "nested", ".."),
+            os.path.join(canonical, "..", os.path.basename(canonical)),
+        )
+        for alias in aliases:
+            self.assertEqual(
+                ft._validate_namespace_path(
+                    alias, "FT05A output root", alias), canonical)
+        if os.name == "nt":
+            self.assertEqual(
+                ft._validate_namespace_path(
+                    canonical.upper(), "FT05A output root", canonical.upper()),
+                canonical)
+
+    def test_symlinked_output_escape_is_rejected(self):
+        target = tempfile.TemporaryDirectory(dir=OUTPUT_PARENT)
+        alias = os.path.join(self.out, "output_escape_link")
+        try:
+            try:
+                os.symlink(target.name, alias, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest("synthetic directory symlink unavailable: %s" % exc)
+            with self.assertRaises(ft.FT05AValidationError):
+                ft._validate_namespace_path(
+                    alias, "FT05A output root", alias)
+        finally:
+            if os.path.lexists(alias):
+                os.unlink(alias)
+            target.cleanup()
 
     def test_pilot_hashes_only_selected_sources_and_resume_hashes_remaining(self):
         first_calls = []

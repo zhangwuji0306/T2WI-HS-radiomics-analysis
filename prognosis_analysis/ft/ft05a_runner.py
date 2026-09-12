@@ -278,25 +278,30 @@ def _validate_namespace_path(path, label, output_root, allow_ft_namespace=False)
         absolute = _absolute_project_path(path, label)
     if _contains_formal_path(absolute):
         raise FT05AValidationError("%s is in a formal namespace" % label)
-    output_root = os.path.realpath(output_root)
+    if os.path.isabs(output_root):
+        output_root = os.path.realpath(output_root)
+    else:
+        output_root = _absolute_project_path(output_root, "FT05A output root")
     canonical_output = os.path.realpath(DEFAULT_OUTPUT_ROOT)
     if label == "FT05A output root":
-        if not _is_contained(output_root, canonical_output):
-            raise FT05AValidationError("FT05A output root is outside the canonical FT05A namespace")
-        if _is_contained(output_root, DEFAULT_TECHNICAL_SOURCE_ROOT) or \
-                any(_is_contained(output_root, root) for root in DISALLOWED_ROOTS):
-            raise FT05AValidationError("FT05A output root is in a disallowed analysis namespace")
-        return output_root
+        # The run owner, state, cases, staging area, table, and manifest must
+        # all share one immutable namespace.  Returning the canonical spelling
+        # also collapses accepted path aliases to the same on-disk location.
+        if os.path.normcase(output_root) != os.path.normcase(canonical_output):
+            raise FT05AValidationError(
+                "FT05A output root must be the exact canonical FT05A run root")
+        return canonical_output
     ft_root = os.path.realpath(_HERE)
     in_output = _is_contained(absolute, output_root)
     in_ft = _is_contained(absolute, ft_root)
     canonical_artifacts = {
-        os.path.realpath(DEFAULT_MANIFEST),
-        os.path.realpath(DEFAULT_CODE_AUDIT),
-        os.path.realpath(DEFAULT_TECHNICAL_AUDIT),
+        os.path.normcase(os.path.realpath(DEFAULT_MANIFEST)),
+        os.path.normcase(os.path.realpath(DEFAULT_CODE_AUDIT)),
+        os.path.normcase(os.path.realpath(DEFAULT_TECHNICAL_AUDIT)),
+        os.path.normcase(os.path.realpath(DEFAULT_FEATURE_TABLE)),
     }
     if os.path.normcase(output_root) == os.path.normcase(canonical_output) and \
-            in_output and absolute not in canonical_artifacts:
+            in_output and os.path.normcase(absolute) not in canonical_artifacts:
         raise FT05AValidationError(
             "%s must use the canonical FT05A artifact path" % label)
     if not in_output and not (allow_ft_namespace and
