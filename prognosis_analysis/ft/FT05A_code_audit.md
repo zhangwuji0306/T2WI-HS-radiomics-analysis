@@ -1,10 +1,10 @@
-# FT05A Independent Pre-run Code Audit — Round 4
+# FT05A Independent Pre-run Code Audit — Round 5
 
 Independent review: true
 
-Reviewed FT05A implementation commit: `c8682c4d6f321ff17a1f02cab3fe555805eb4f92`
+Reviewed FT05A implementation commit: `a5351b7dfcd2721aed0fdca3b4430aa10788a736`
 
-FT05A runner SHA-256: `3d0f1c4df25c8998294fc87d3743e267786ce36427bf1ffd36561667aee75bcf`
+FT05A runner SHA-256: `7719ef56afae8e043c954076a1bce26371c17f8c25e7487f40d165e6fe0cd9a4`
 
 FT05A preparation contract identity: `FT05A_code_prep_contract_v1`
 
@@ -12,42 +12,46 @@ FT05A preparation contract identity: `FT05A_code_prep_contract_v1`
 
 Verdict: FAIL
 
-FT05A remains unauthorized to access real B technical assets. The round-3 remediation closes the two previously reported manifest-boundary defects, but the production runner still permits multiple independent run namespaces beneath the nominal FT05A output root. This defeats global one-time ownership and permits the same case to be extracted more than once.
+FT05A remains unauthorized to access real B technical assets. The round-4 duplicate-namespace defect is closed for descendant roots and resolved filesystem aliases, but the production validator accepts relative, dot-segment, parent-normalized, and case-variant spellings of the canonical output root. This conflicts with the round-5 requirement that every non-exact output-root spelling fail before ownership creation or extraction.
 
 ## Evidence
 
-- Reviewed the repository instructions, FT scheme and amendment, accepted FT00–FT04 records, all FT05A contracts and prior audits, remediation commit `c8682c4d6f321ff17a1f02cab3fe555805eb4f92`, and the current FT05A/FT04 implementation and tests.
-- Wrapper static validation passed with no clustering fit, outcome reader, whole-tumour re-extraction, or formal-directory mixing finding.
-- The combined FT05A, FT04, FT03, FT02, and W07 wrapper regression passed: 91 tests, 91 passed.
+- Reviewed the repository instructions, FT scheme and amendment, accepted FT00–FT04 records, all FT05A contracts and prior audits, remediation commit `a5351b7dfcd2721aed0fdca3b4430aa10788a736`, and the current FT05A/FT04 implementation and tests.
+- The locked wrapper environment matched the required Python 3.7.12, PyRadiomics 3.0.1, and SimpleITK 2.2.1 specification.
+- Wrapper static validation passed with no B clustering fit, outcome reader, whole-tumour re-extraction, or formal-directory mixing finding.
+- The combined FT05A, FT04, FT03, FT02, and W07 wrapper regression passed: 94 tests, 94 passed, with one platform-permission skip.
 - The canonical FT04 lock validated as `VALID` with lock identity `10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e`.
-- The canonical manifest validator rejected alternate W_Original provenance and duplicate persisted image/ROI paths, source keys, source hashes, case identities, and patient identities in the synthetic regression suite. It independently derives the accepted W_Original path, asset hash, 107-feature schema/order, and row values from the FT01/FT04 binding.
-- Synthetic regressions passed for audit binding, preflight-before-file-read, exact technical source roots, finalization recovery and tamper rejection, case-artifact/table/manifest binding, selected-source pilot reads and resume, structural absence, PyRadiomics minimum-ROI handling, outcome isolation, frozen A boundary, no B fit, unchanged A/W03 PyRadiomics settings, and technical-only output schema.
-- An independent synthetic adversarial probe supplied two distinct descendant output roots under the canonical FT05A directory and the same run identity/cohort. Both invocations completed a pilot for the same selected case, and the processor was called twice. No real B source or manifest was accessed.
+- The round-4 descendant-root attack now fails before processing: a second descendant invocation does not call the processor, does not load W_Original, and does not create the descendant namespace.
+- An independent synthetic path probe confirmed that a descendant root, a Windows junction alias to the canonical root, and a junction escape are rejected. The same probe confirmed that relative, `.`-segment, `..`-normalized, and case-variant spellings are accepted and returned as the canonical path.
 - No real B image, ROI, W_Original row, clinical source, outcome source, patient record, or real FT05 manifest was enumerated, opened, hashed, copied, or generated during this review.
 
 ## Mandatory checks
 
 | Check | Result | Evidence |
 |---|---|---|
-| Independent W_Original binding | PASS | The validator derives the binding from the canonical FT04 lock, cross-checks FT01, enforces exact path/hash/schema/order, and verifies every persisted W_Original row against the accepted asset. |
-| One-to-one persisted source mappings | PASS | Canonical validation rejects repeated or aliased image/ROI paths, source keys, source hashes, case identities, and patient identities and binds rows to source records in order. |
-| Fail-closed code-audit binding | PASS | The audit record is bound to the exact reviewed implementation commit, current runner bytes, independent-review marker, accepted verdict, and preparation-contract identity; intervening committed code paths and stale runner hashes are rejected. |
-| Preflight before B technical reads | PASS | Lock/review/code/config/static checks precede technical cohort loading and source hashing. |
-| Exact source and output roots | FAIL | Technical source reads are fixed to the canonical source root, but the output-root validator accepts arbitrary descendants of the canonical FT05A root instead of the single canonical run root. |
-| Finalization and artifact binding | PASS | Recovery constrains transaction paths and revalidates state, case artifacts, source records, table bytes, manifest bytes, W_Original, and completion evidence before installation or completion. |
-| Pilot selected-source reads and resume | PASS_WITH_FINDINGS | Within one state namespace, selected sources are read once and completed pilot cases are not recomputed; separate accepted descendant namespaces bypass that guarantee. |
-| Structural absence and technical-small-ROI states | PASS | The production processor records explicit unavailable states without imputation and applies the frozen 10-voxel PyRadiomics boundary. |
-| Duplicate and concurrent extraction prevention | FAIL | Ownership is scoped to the caller-selected output root. Two accepted descendant roots create separate owner/state/case namespaces and can process the same case twice. |
-| Technical-only schema and outcome isolation | PASS | Input/result/table schemas deny clinical/outcome fields, and the nine clinical predictors remain deferred to the authorized later join. |
-| Frozen A boundary, no B fit, unchanged PyRadiomics | PASS | The runner projects to the accepted A-full boundary, contains no clustering fit, and constructs the A/W03 PyRadiomics 3.0.1 settings without re-estimation. |
-| Accepted-state regression | PASS | The combined 91-test wrapper regression and FT04 production validation passed. |
+| Independent W_Original trust binding | PASS | The canonical validator derives the accepted path, SHA-256, 107-feature schema/order, and row values from the FT01/FT04 trust chain rather than from manifest assertions. |
+| One-to-one source and patient mappings | PASS | Cohort and manifest validation reject repeated patient identities, case identities, image/ROI paths, source keys, and source hashes. |
+| Fail-closed audit binding | PASS | The audit is bound to an explicit independent-review marker, accepted verdict, exact implementation ancestor, current runner bytes, and preparation-contract identity; intervening committed code changes are rejected. |
+| Preflight before technical reads | PASS | FT04 lock/review, code-audit, configuration, frozen-boundary, and static checks precede cohort loading and source hashing. |
+| Exact canonical output root | FAIL | `_validate_namespace_path` resolves and case-normalizes the caller input before comparison. Consequently, several non-exact spellings are accepted rather than rejected as required by the round-5 contract. |
+| One global owner/state/artifact/staging/table namespace | PASS | Descendant and resolved reparse aliases cannot create independent namespaces; accepted lexical aliases collapse to the same canonical namespace. Owner, state, cases, staging, table, and manifest are derived from that canonical path. |
+| Finalization and manifest/table provenance | PASS | Recovery constrains canonical transaction paths and revalidates state identity, case artifacts, source records, W_Original, table bytes, manifest bytes, and completion evidence before installation. |
+| Pilot/resume and duplicate extraction prevention | PASS | Within the single resolved namespace, selected pilot sources are read once, completed exact-hash cases are skipped, concurrent ownership is rejected, and completed runs cannot be rerun. |
+| Structural states and PyRadiomics minimum ROI | PASS | Structural absence and technical-small-ROI states are explicit, non-imputed, and preserve the frozen 10-voxel extraction boundary. |
+| Technical-only schema and outcome isolation | PASS | Input, result, and table boundaries reject clinical/outcome fields and paths; clinical predictors remain deferred to the later authorized join. |
+| Frozen A boundary, no B fit, unchanged PyRadiomics | PASS | Projection uses the accepted A-full boundary without B fitting and binds the unchanged A/W03 PyRadiomics configuration. |
+| Accepted-state regression | PASS | All 94 executed wrapper tests passed, and FT04 production validation remained valid. |
 
 ## Blocking finding
 
-`_validate_namespace_path` accepts any output root contained beneath `DEFAULT_OUTPUT_ROOT`. Run ownership, run state, case artifacts, staging, and the technical feature table are then derived from that caller-selected descendant. Consequently, the ownership file is not global to the canonical FT05A run. A synthetic probe used two descendant roots with the same run identity and technical cohort; both runs returned `PILOT_COMPLETE` and processed the same selected case independently. The same defect permits parallel full runs to perform duplicate extraction before competing for a manifest.
+The output-root gate does not enforce the exact caller spelling. It first resolves relative and dot-segment paths and then compares with `normcase(realpath(...))`. On Windows, this admits a relative project path, a trailing `.` path, a `nested/..` path, and an uppercase case variant of the canonical root. The focused regression explicitly expects these aliases to be accepted and collapsed.
 
-This violates the fixed-root, one-time generation, pilot continuity, and duplicate/concurrency requirements. The production interface must enforce one exact canonical output root, or otherwise place ownership and run identity in one immutable global namespace that cannot vary with caller input, before real-B technical execution can be authorized.
+Although these admitted aliases currently converge on one physical owner/state/artifact namespace and therefore do not reproduce the round-4 duplicate extraction, the round-5 contract expressly requires every relative or case-normalized alias to fail before ownership creation or extraction. The gate must require the literal absolute canonical root spelling before resolution, while retaining resolved-path checks for symlink/junction escapes.
+
+## Platform-permission judgment
+
+The directory-symlink regression was skipped because the current Windows account lacks symbolic-link privilege. This skip is not independently blocking: a non-privileged Windows junction was available and rejected, junction escape was rejected, descendant-root coverage passed, and the same resolved-path comparison fail-closes filesystem aliases that resolve away from the canonical root. The separate lexical-alias acceptance remains a confirmed blocking failure regardless of the symlink skip.
 
 ## Disposition
 
-The prior W_Original self-authorization and persisted source-aliasing findings are closed, and the remaining reviewed controls are intact. The output-root ownership bypass is blocking. Verdict `FAIL`; no real B technical execution is authorized.
+The round-4 independent-namespace bypass is closed, and all previously accepted technical, provenance, recovery, and isolation controls remain intact. Exact output-root admission is not compliant with the round-5 gate. Verdict `FAIL`; no real B technical execution is authorized.
