@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -231,6 +232,44 @@ class FT05ARunnerTests(unittest.TestCase):
         with open(path, "rb") as handle:
             return handle.read()
 
+    def _prepare_legacy_finalizing_scene(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        legacy_value = -1.5432835417340557e88
+        asset = self._w_asset()
+        asset["rows"]["B0"][ft.W_ORIGINAL_FEATURE_NAMES[0]] = legacy_value
+        with self._patches() as loader, mock.patch.object(
+                ft, "_recover_finalization", side_effect=RuntimeError("interrupted")):
+            loader.return_value = asset
+            with self.assertRaises(RuntimeError):
+                ft.run_ft05a(
+                    self.cohort, "run-legacy-finalization", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor())
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        state = ft._read_json(state_path)
+        stage_root = os.path.join(self.out, ".finalize")
+        stage_table = os.path.join(stage_root, "FT05A_B_technical_features.csv")
+        stage_manifest = os.path.join(stage_root, "FT05_B_feature_manifest.json")
+        table = pd.read_csv(stage_table, float_precision="round_trip")
+        legacy_raw = ft._legacy_default_csv_bytes(table)
+        with open(stage_table, "wb") as handle:
+            handle.write(legacy_raw)
+        table_hash = ft._sha256_file(stage_table)
+        manifest = ft._read_json(stage_manifest)
+        manifest["feature_table"]["sha256"] = table_hash
+        manifest["completion"]["table_sha256"] = table_hash
+        with open(stage_manifest, "wb") as handle:
+            handle.write(ft._json_bytes(manifest))
+        manifest_hash = ft._sha256_file(stage_manifest)
+        transaction = state["finalization"]
+        transaction["transaction_schema_version"] = \
+            ft.FT05A_LEGACY_FINALIZATION_SCHEMA_VERSION
+        transaction["table_sha256"] = table_hash
+        transaction["manifest_sha256"] = manifest_hash
+        self._write_state_fixture(state_path, state)
+        return asset, manifest_path, state_path, stage_table, stage_manifest
+
     def _create_legacy_pending_run(self, run_id="run-legacy-pending",
                                    old_code_audit_hash=None,
                                    old_runner_hash=None):
@@ -280,7 +319,10 @@ class FT05ARunnerTests(unittest.TestCase):
                     ft.FT05A_CODE_PREP_CONTRACT_IDENTITY))
         with open(self.code_audit, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
-        record = ft._validate_code_audit(self.code_audit)
+        with mock.patch.object(ft, "_git_current_blob_hash", return_value="blob"), \
+                mock.patch.object(ft, "_git_commit_blob_hash", return_value="blob"), \
+                mock.patch.object(ft, "_git_paths_after", return_value=[]):
+            record = ft._validate_code_audit(self.code_audit)
         self.assertEqual(record["reviewed_commit"], reviewed)
         for marker, replacement in (
                 ("FT05A runner SHA-256", "0" * 64),
@@ -1513,6 +1555,83 @@ class FT05ARunnerTests(unittest.TestCase):
                     technical_audit_path=self.technical_audit,
                     processor=self._processor(), resume=True)
         self.assertFalse(os.path.exists(manifest_path))
+
+
+    def test_technical_csv_float_serialization_round_trips_exactly(self):
+        values = [
+            0.1,
+            -123456.78901234567,
+            1.2345678901234567e-200,
+            -1.5432835417340557e88,
+            np.finfo(float).tiny,
+            np.finfo(float).max,
+            -0.0,
+        ]
+        frame = pd.DataFrame({"patient_id": ["B%d" % i for i in range(len(values))],
+                              "value": values})
+        path = os.path.join(self.out, "float_round_trip.csv")
+        with open(path, "wb") as handle:
+            handle.write(ft._technical_csv_bytes(frame))
+        parsed = pd.read_csv(path, float_precision="round_trip")
+        actual_bits = [struct.pack("!d", float(value))
+                       for value in parsed["value"]]
+        expected_bits = [struct.pack("!d", value) for value in values]
+        self.assertEqual(actual_bits, expected_bits)
+
+    def test_legacy_finalization_repair_is_explicit_and_does_not_process_cases(self):
+        asset, manifest_path, state_path, stage_table, stage_manifest = \
+            self._prepare_legacy_finalizing_scene()
+        calls = []
+        with self._patches() as loader:
+            loader.return_value = asset
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-legacy-finalization", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(calls), resume=True)
+            loader.assert_not_called()
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.exists(manifest_path))
+        self.assertFalse(os.path.exists(os.path.join(
+            self.out, "FT05A_B_technical_features.csv")))
+        with self._patches() as loader:
+            loader.return_value = asset
+            result = ft.run_ft05a(
+                self.cohort, "run-legacy-finalization", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(failure=AssertionError("recomputed")),
+                resume=True, repair_finalization=True)
+        self.assertEqual(result["status"], "frozen")
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.exists(stage_table))
+        self.assertFalse(os.path.exists(stage_manifest))
+        state = ft._read_json(state_path)
+        self.assertEqual(state["status"], "COMPLETED")
+        self.assertEqual(
+            ft._sha256_file(os.path.join(
+                self.out, "FT05A_B_technical_features.csv")),
+            result["feature_table"]["sha256"])
+
+    def test_legacy_finalization_repair_rejects_staged_tamper(self):
+        asset, manifest_path, state_path, stage_table, unused_stage_manifest = \
+            self._prepare_legacy_finalizing_scene()
+        with open(stage_table, "ab") as handle:
+            handle.write(b"tamper\n")
+        with self._patches() as loader:
+            loader.return_value = asset
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-legacy-finalization", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(failure=AssertionError("recomputed")),
+                    resume=True, repair_finalization=True)
+        self.assertFalse(os.path.exists(manifest_path))
+        self.assertFalse(os.path.exists(os.path.join(
+            self.out, "FT05A_B_technical_features.csv")))
+        self.assertEqual(ft._read_json(state_path)["status"], "FINALIZING")
 
     def test_resume_skips_completed_pilot_cases_without_recomputation(self):
         first_calls = []

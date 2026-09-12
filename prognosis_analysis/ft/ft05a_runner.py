@@ -16,6 +16,7 @@ import ast
 import csv
 import copy
 import hashlib
+import io
 import json
 import os
 import platform
@@ -39,6 +40,8 @@ import ft04_runner as ft04  # noqa: E402
 
 FT05A_STAGE = "FT05A"
 FT05A_SCHEMA_VERSION = "1.0"
+FT05A_FINALIZATION_SCHEMA_VERSION = "2"
+FT05A_LEGACY_FINALIZATION_SCHEMA_VERSION = "1"
 FT_LABEL = "exploratory_fullA_habitat_non_nested_validation"
 TECHNICAL_AUDIT_PENDING_STATUS = "generated_pending_review"
 TECHNICAL_AUDIT_PENDING_VERDICT = "PENDING_REVIEW"
@@ -188,12 +191,16 @@ def _read_json(path, label="JSON artifact"):
         raise FT05AValidationError("cannot read %s: %s" % (label, exc))
 
 
+def _json_bytes(payload):
+    return (json.dumps(_json_safe(payload), ensure_ascii=False, indent=2,
+                       sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+
+
 def _write_json_atomic(path, payload, refuse_existing=False):
     directory = os.path.dirname(os.path.abspath(path))
     if not os.path.isdir(directory):
         os.makedirs(directory)
-    raw = (json.dumps(_json_safe(payload), ensure_ascii=False, indent=2,
-                      sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+    raw = _json_bytes(payload)
     if refuse_existing and os.path.exists(path):
         with open(path, "rb") as handle:
             if handle.read() != raw:
@@ -222,6 +229,23 @@ def _write_text_atomic(path, text, refuse_existing=False):
                 raise FT05AValidationError(
                     "refusing to overwrite existing artifact: %s" % path)
         return
+    temporary = "%s.tmp.%s" % (path, uuid.uuid4().hex)
+    try:
+        with open(temporary, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
+def _write_bytes_atomic(path, raw):
+    """Write bytes through a flushed temporary file and one atomic replace."""
+    directory = os.path.dirname(os.path.abspath(path))
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
     temporary = "%s.tmp.%s" % (path, uuid.uuid4().hex)
     try:
         with open(temporary, "wb") as handle:
@@ -477,6 +501,15 @@ def load_technical_cohort(cohort, _preflight=None, technical_source_roots=None,
 
 def _canonical_frame_hash(frame):
     return _sha256_text(frame.to_csv(index=False, line_terminator="\n"))
+
+
+def _read_technical_feature_table(path):
+    """Read a technical table with pandas' correctly rounded float parser."""
+    try:
+        return pd.read_csv(path, float_precision="round_trip")
+    except (IOError, OSError, TypeError, ValueError) as exc:
+        raise FT05AValidationError(
+            "cannot read FT05A technical table: %s" % exc)
 
 
 def _w_original_header(path, binding):
@@ -1246,26 +1279,57 @@ def _validate_case_artifact(path, record, contract, w_values=None,
     return artifact
 
 
+def _csv_cell_text(value):
+    """Return one deterministic CSV cell without changing feature values."""
+    if value is None:
+        return ""
+    if isinstance(value, (float, np.floating)):
+        value = float(value)
+        if np.isnan(value):
+            return ""
+        if not np.isfinite(value):
+            raise FT05AValidationError(
+                "FT05A technical table contains a nonfinite float")
+        # Python's repr is the shortest decimal representation that round
+        # trips to the same IEEE-754 binary64 value.  It is deterministic in
+        # the locked Python runtime and covers ordinary, signed, scientific,
+        # and extreme finite values.
+        return repr(value)
+    if isinstance(value, (bool, np.bool_)):
+        return "1" if bool(value) else "0"
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    try:
+        if bool(pd.isna(value)):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
+def _technical_csv_bytes(frame):
+    """Serialize a technical feature frame with lossless deterministic floats."""
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(list(frame.columns))
+    for values in frame.itertuples(index=False, name=None):
+        writer.writerow([_csv_cell_text(value) for value in values])
+    return buffer.getvalue().encode("utf-8")
+
+
+def _legacy_default_csv_bytes(frame):
+    """Reproduce the retired pandas default serializer for repair admission only."""
+    return frame.to_csv(index=False, line_terminator="\n").encode("utf-8")
+
+
 def _write_csv_atomic(frame, path):
-    directory = os.path.dirname(os.path.abspath(path))
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
-    raw = frame.to_csv(index=False, line_terminator="\n").encode("utf-8")
+    raw = _technical_csv_bytes(frame)
     if os.path.exists(path):
         with open(path, "rb") as handle:
             if handle.read() != raw:
                 raise FT05AValidationError("refusing to overwrite canonical table with different bytes")
         return
-    temporary = "%s.tmp.%s" % (path, uuid.uuid4().hex)
-    try:
-        with open(temporary, "wb") as handle:
-            handle.write(raw)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.remove(temporary)
+    _write_bytes_atomic(path, raw)
 
 
 def _validate_technical_table_frame(table, table_record=None):
@@ -1363,10 +1427,7 @@ def validate_ft05a_technical_manifest(
     if _table_override is not None:
         table = _table_override.copy()
     else:
-        try:
-            table = pd.read_csv(table_path)
-        except (IOError, OSError, ValueError) as exc:
-            raise FT05AValidationError("cannot read FT05A technical table: %s" % exc)
+        table = _read_technical_feature_table(table_path)
     _validate_technical_table_frame(table, record)
 
     blocks = manifest.get("feature_blocks") or {}
@@ -2456,9 +2517,9 @@ def _finalization_source(staged_path, target_path, expected_hash, label):
     return candidates[0]
 
 
-def _assert_table_matches_cases(table, cohort, contract, w_asset, source_records,
+def _table_from_completed_cases(cohort, contract, w_asset, source_records,
                                 artifact_hashes, case_root):
-    expected_rows = []
+    rows = []
     for _, record in cohort.iterrows():
         key = _case_identity(record)
         artifact = _validate_case_artifact(
@@ -2466,8 +2527,17 @@ def _assert_table_matches_cases(table, cohort, contract, w_asset, source_records
             w_asset["rows"][str(record["patient_id"])],
             source_record=source_records[key],
             expected_artifact_sha256=artifact_hashes[key])
-        expected_rows.append(artifact["row"])
-    expected = pd.DataFrame(expected_rows, columns=_technical_feature_columns(True))
+        rows.append(artifact["row"])
+    table = pd.DataFrame(rows, columns=_technical_feature_columns(True))
+    if len(table) != len(cohort) or table["patient_id"].duplicated().any():
+        raise FT05AValidationError("canonical table completeness/uniqueness failed")
+    return _validate_technical_table_frame(table)
+
+
+def _assert_table_matches_cases(table, cohort, contract, w_asset, source_records,
+                                artifact_hashes, case_root):
+    expected = _table_from_completed_cases(
+        cohort, contract, w_asset, source_records, artifact_hashes, case_root)
     if len(expected) != len(table):
         raise FT05AValidationError("finalization table/case count mismatch")
     for index, column in enumerate(_technical_feature_columns(True)):
@@ -2487,6 +2557,299 @@ def _assert_table_matches_cases(table, cohort, contract, w_asset, source_records
                     "finalization table/case row binding mismatch")
 
 
+def _validate_finalization_context(state, contract, cohort, w_asset,
+                                   output_root, manifest_path,
+                                   transaction_schema_version,
+                                   require_canonical_absent=False):
+    """Validate all persisted finalization bindings before artifact writes."""
+    transaction = state.get("finalization") or {}
+    required = {
+        "transaction_schema_version", "run_identity_sha256", "cohort_sha256",
+        "staged_table_path", "staged_manifest_path", "table_path", "manifest_path",
+        "table_sha256", "manifest_sha256", "completed_case_count",
+        "completed_case_keys", "completed_case_artifact_hashes",
+        "case_completion_evidence_hash", "w_original_asset_path",
+        "w_original_asset_sha256", "w_original_order_sha256",
+    }
+    if state.get("status") != "FINALIZING" or set(transaction) != required or \
+            transaction.get("transaction_schema_version") != \
+            transaction_schema_version:
+        raise FT05AValidationError("FT05A finalization state is incomplete")
+    output_root = _validate_namespace_path(
+        output_root, "FT05A output root", output_root)
+    manifest_path = _validate_namespace_path(
+        manifest_path, "FT05_B_feature_manifest", output_root,
+        allow_ft_namespace=True)
+    canonical_table_path = os.path.realpath(
+        os.path.join(output_root, "FT05A_B_technical_features.csv"))
+    canonical_stage_root = os.path.realpath(os.path.join(output_root, ".finalize"))
+    if not _is_contained(canonical_stage_root, output_root):
+        raise FT05AValidationError("FT05 finalization stage escapes the FT05A namespace")
+    canonical_stage_table = os.path.join(
+        canonical_stage_root, "FT05A_B_technical_features.csv")
+    canonical_stage_manifest = os.path.join(
+        canonical_stage_root, "FT05_B_feature_manifest.json")
+    path_values = {}
+    for key, label in (("staged_table_path", "staged feature table"),
+                       ("staged_manifest_path", "staged manifest"),
+                       ("table_path", "final feature table"),
+                       ("manifest_path", "final manifest")):
+        path_values[key] = _absolute_project_path(transaction[key], label)
+    if os.path.realpath(path_values["staged_table_path"]) != \
+            os.path.realpath(canonical_stage_table) or \
+            os.path.realpath(path_values["staged_manifest_path"]) != \
+            os.path.realpath(canonical_stage_manifest) or \
+            os.path.realpath(path_values["table_path"]) != canonical_table_path or \
+            os.path.realpath(path_values["manifest_path"]) != \
+            os.path.realpath(manifest_path):
+        raise FT05AValidationError(
+            "FT05 finalization paths are outside the canonical transaction")
+    if os.path.isdir(canonical_stage_root):
+        allowed_stage_names = {
+            os.path.basename(canonical_stage_table),
+            os.path.basename(canonical_stage_manifest),
+        }
+        if set(os.listdir(canonical_stage_root)) - allowed_stage_names:
+            raise FT05AValidationError(
+                "FT05 finalization namespace contains unexpected files")
+    if any(not re.match(r"^[0-9a-f]{64}$", str(transaction[key]))
+           for key in ("table_sha256", "manifest_sha256", "run_identity_sha256",
+                       "cohort_sha256", "case_completion_evidence_hash",
+                       "w_original_asset_sha256")):
+        raise FT05AValidationError("FT05 finalization hashes are invalid")
+    if require_canonical_absent and \
+            (os.path.lexists(canonical_table_path) or
+             os.path.lexists(path_values["manifest_path"])):
+        raise FT05AValidationError(
+            "FT05 finalization repair requires absent canonical targets")
+
+    payload = state.get("identity_payload") or {}
+    expected_payload = {
+        "artifact": "FT05A_one_time_run",
+        "run_id": state.get("run_id"),
+        "ft04_lock_identity_sha256": contract["lock"][
+            "lock_identity_sha256"],
+        "cohort_sha256": _canonical_frame_hash(cohort),
+        "candidate_hashes": {"R_low": R_LOW_CANDIDATE_HASH,
+                              "R_high": R_HIGH_CANDIDATE_HASH},
+        "w_original_order_sha256": W_ORIGINAL_ORDER_SHA256,
+        "w_original_asset_path": w_asset.get("path"),
+        "w_original_asset_sha256": w_asset.get("sha256"),
+        "code_audit_sha256": payload.get("code_audit_sha256"),
+        "output_root": _relative(output_root),
+    }
+    if state.get("schema_version") != FT05A_SCHEMA_VERSION or \
+            state.get("artifact_id") != "FT05A_run_state" or \
+            payload != expected_payload or \
+            not _is_sha256(state.get("run_identity_sha256")) or \
+            state.get("run_identity_sha256") != _sha256_text(
+                _canonical_json(payload)) or \
+            transaction["run_identity_sha256"] != state.get("run_identity_sha256") or \
+            transaction["cohort_sha256"] != payload.get("cohort_sha256") or \
+            state.get("target_patient_count") != len(cohort) or \
+            state.get("target_patient_ids_hash") != _sha256_text(
+                "\n".join(cohort["patient_id"].astype(str))):
+        raise FT05AValidationError("FT05 finalization state identity is inconsistent")
+    _validate_state_case_keys(state, cohort)
+    expected_ordered_keys = [_case_identity(row) for _, row in cohort.iterrows()]
+    expected_keys = sorted(expected_ordered_keys)
+    if not isinstance(transaction.get("completed_case_count"), int) or \
+            isinstance(transaction.get("completed_case_count"), bool) or \
+            transaction["completed_case_keys"] != expected_keys or \
+            state.get("completed_case_keys") != expected_keys or \
+            transaction["completed_case_count"] != len(expected_keys) or \
+            int(state.get("completed_case_count", -1)) != len(expected_keys) or \
+            transaction["completed_case_artifact_hashes"] != \
+            state.get("completed_case_artifact_hashes") or \
+            set(transaction["completed_case_artifact_hashes"]) != set(expected_keys):
+        raise FT05AValidationError(
+            "FT05 finalization case-completion state is inconsistent")
+    if any(not re.match(r"^[0-9a-f]{64}$", str(value))
+           for value in transaction["completed_case_artifact_hashes"].values()):
+        raise FT05AValidationError("FT05 finalization artifact hashes are invalid")
+    evidence_hash = _sha256_text(_canonical_json(
+        transaction["completed_case_artifact_hashes"]))
+    if transaction["case_completion_evidence_hash"] != evidence_hash or \
+            state.get("finalization", {}).get("case_completion_evidence_hash") != \
+            evidence_hash:
+        raise FT05AValidationError(
+            "FT05 finalization completion evidence is inconsistent")
+    if transaction["w_original_asset_path"] != w_asset.get("path") or \
+            transaction["w_original_asset_sha256"] != w_asset.get("sha256") or \
+            transaction["w_original_order_sha256"] != W_ORIGINAL_ORDER_SHA256:
+        raise FT05AValidationError(
+            "FT05 finalization W_Original binding is inconsistent")
+
+    case_root = os.path.realpath(os.path.join(output_root, "cases"))
+    if not _is_contained(case_root, output_root):
+        raise FT05AValidationError(
+            "FT05 case namespace escapes the FT05A namespace")
+    completed, source_records = _reconcile_existing_cases(
+        state, cohort, contract, w_asset, case_root)
+    if sorted(completed) != expected_keys:
+        raise FT05AValidationError(
+            "FT05 finalization is missing completed case evidence")
+    staged_table = path_values["staged_table_path"]
+    staged_manifest = path_values["staged_manifest_path"]
+    table_source = _finalization_source(
+        staged_table, canonical_table_path, transaction["table_sha256"],
+        "feature table")
+    manifest_source = _finalization_source(
+        staged_manifest, path_values["manifest_path"],
+        transaction["manifest_sha256"], "manifest")
+    return {
+        "transaction": transaction,
+        "output_root": output_root,
+        "manifest_path": manifest_path,
+        "canonical_table_path": canonical_table_path,
+        "canonical_stage_root": canonical_stage_root,
+        "path_values": path_values,
+        "case_root": case_root,
+        "expected_ordered_keys": expected_ordered_keys,
+        "expected_keys": expected_keys,
+        "source_records": source_records,
+        "evidence_hash": evidence_hash,
+        "table_source": table_source,
+        "manifest_source": manifest_source,
+    }
+
+
+def _validate_finalization_artifacts(context, state, contract, cohort, w_asset):
+    table_source = context["table_source"]
+    manifest_source = context["manifest_source"]
+    table = _read_technical_feature_table(table_source)
+    _validate_technical_table_frame(table)
+    manifest = _read_json(manifest_source, "staged FT05 manifest")
+    checked, checked_table, _ = validate_ft05a_technical_manifest(
+        manifest, output_root=context["output_root"], _table_override=table,
+        _table_hash_path=table_source, _expected_w_asset=w_asset,
+        _expected_cohort=cohort, _expected_lock=contract["lock"])
+    expected_keys = context["expected_keys"]
+    expected_ordered_keys = context["expected_ordered_keys"]
+    source_records = context["source_records"]
+    transaction = context["transaction"]
+    if checked.get("run_identity") != state["run_identity_sha256"] or \
+            checked.get("feature_table", {}).get("path") != \
+            _relative(context["canonical_table_path"]) or \
+            checked.get("feature_table", {}).get("sha256") != \
+            transaction["table_sha256"] or \
+            checked.get("completion", {}).get("case_completion_evidence_hash") != \
+            context["evidence_hash"] or \
+            checked.get("completion", {}).get("table_sha256") != \
+            transaction["table_sha256"] or \
+            checked.get("completion", {}).get("completed_case_count") != \
+            len(expected_keys) or \
+            checked.get("source_records") != [source_records[key]
+                                               for key in expected_ordered_keys]:
+        raise FT05AValidationError(
+            "FT05 finalization table/manifest binding is inconsistent")
+    return table, manifest, checked, checked_table
+
+
+def _repair_finalization(state, state_path, contract, cohort, w_asset,
+                         output_root, manifest_path, technical_audit_path,
+                         code_audit_path):
+    """Admit and repair only the known legacy default-serializer transaction."""
+    context = _validate_finalization_context(
+        state, contract, cohort, w_asset, output_root, manifest_path,
+        FT05A_LEGACY_FINALIZATION_SCHEMA_VERSION,
+        require_canonical_absent=True)
+    table, manifest, unused_checked, unused_checked_table = \
+        _validate_finalization_artifacts(context, state, contract, cohort, w_asset)
+    code_audit = _validate_code_audit(code_audit_path)
+    if code_audit.get("sha256") != \
+            state["identity_payload"].get("code_audit_sha256"):
+        raise FT05AValidationError("FT05A code audit is not bound to the run state")
+    technical_audit = _validate_technical_audit(technical_audit_path)
+    _validate_technical_audit_binding(
+        technical_audit,
+        _technical_audit_expected(
+            state, cohort, contract, w_asset, code_audit))
+    if manifest.get("reviews") != {"technical_audit": technical_audit,
+                                    "code_audit": code_audit}:
+        raise FT05AValidationError(
+            "FT05A staged manifest audit bindings are inconsistent")
+    expected = _table_from_completed_cases(
+        cohort, contract, w_asset, context["source_records"],
+        context["transaction"]["completed_case_artifact_hashes"],
+        context["case_root"])
+    _assert_table_matches_cases(
+        table, cohort, contract, w_asset, context["source_records"],
+        context["transaction"]["completed_case_artifact_hashes"],
+        context["case_root"])
+    try:
+        with open(context["table_source"], "rb") as handle:
+            legacy_raw = handle.read()
+    except (IOError, OSError) as exc:
+        raise FT05AValidationError(
+            "cannot read legacy FT05A staged table: %s" % exc)
+    if legacy_raw != _legacy_default_csv_bytes(expected):
+        raise FT05AValidationError(
+            "FT05A staged table is not the known legacy default serialization")
+    try:
+        legacy_table = pd.read_csv(context["table_source"])
+    except (IOError, OSError, ValueError) as exc:
+        raise FT05AValidationError(
+            "cannot parse legacy FT05A staged table: %s" % exc)
+    try:
+        _assert_table_matches_cases(
+            legacy_table, cohort, contract, w_asset,
+            context["source_records"],
+            context["transaction"]["completed_case_artifact_hashes"],
+            context["case_root"])
+    except FT05AValidationError:
+        pass
+    else:
+        raise FT05AValidationError(
+            "FT05A staged table does not exhibit the known float precision failure")
+
+    repaired_table_raw = _technical_csv_bytes(expected)
+    repaired_table_hash = _sha256_bytes(repaired_table_raw)
+    temporary_table = os.path.join(
+        context["output_root"], ".ft05a_repair_table.%s.csv" % uuid.uuid4().hex)
+    _write_bytes_atomic(temporary_table, repaired_table_raw)
+    try:
+        repaired_table = _read_technical_feature_table(temporary_table)
+        _validate_technical_table_frame(repaired_table)
+        _assert_table_matches_cases(
+            repaired_table, cohort, contract, w_asset,
+            context["source_records"],
+            context["transaction"]["completed_case_artifact_hashes"],
+            context["case_root"])
+    finally:
+        if os.path.exists(temporary_table):
+            os.remove(temporary_table)
+
+    ordered_source_records = [
+        context["source_records"][key]
+        for key in context["expected_ordered_keys"]]
+    repaired_manifest = _build_manifest(
+        contract, cohort, expected, context["canonical_table_path"],
+        repaired_table_hash, state, w_asset, code_audit, technical_audit,
+        ordered_source_records)
+    _validate_technical_table_frame(
+        expected, repaired_manifest["feature_table"])
+    repaired_manifest_raw = _json_bytes(repaired_manifest)
+    repaired_manifest_hash = _sha256_bytes(repaired_manifest_raw)
+
+    repaired_transaction = copy.deepcopy(context["transaction"])
+    repaired_transaction["transaction_schema_version"] = \
+        FT05A_FINALIZATION_SCHEMA_VERSION
+    repaired_transaction["table_sha256"] = repaired_table_hash
+    repaired_transaction["manifest_sha256"] = repaired_manifest_hash
+    repaired_state = copy.deepcopy(state)
+    repaired_state["finalization"] = repaired_transaction
+    _write_bytes_atomic(
+        context["path_values"]["staged_table_path"], repaired_table_raw)
+    _write_bytes_atomic(
+        context["path_values"]["staged_manifest_path"], repaired_manifest_raw)
+    _update_state(state_path, repaired_state)
+    return _recover_finalization(
+        repaired_state, state_path, contract=contract, cohort=cohort,
+        w_asset=w_asset, output_root=context["output_root"],
+        manifest_path=context["manifest_path"])
+
+
 def _recover_finalization(state, state_path, contract=None, cohort=None,
                           w_asset=None, output_root=DEFAULT_OUTPUT_ROOT,
                           manifest_path=DEFAULT_MANIFEST):
@@ -2503,7 +2866,8 @@ def _recover_finalization(state, state_path, contract=None, cohort=None,
         "w_original_asset_sha256", "w_original_order_sha256",
     }
     if state.get("status") != "FINALIZING" or set(transaction) != required or \
-            transaction.get("transaction_schema_version") != "1":
+            transaction.get("transaction_schema_version") != \
+            FT05A_FINALIZATION_SCHEMA_VERSION:
         raise FT05AValidationError("FT05A finalization state is incomplete")
     output_root = _validate_namespace_path(
         output_root, "FT05A output root", output_root)
@@ -2611,10 +2975,7 @@ def _recover_finalization(state, state_path, contract=None, cohort=None,
     manifest_source = _finalization_source(
         staged_manifest, path_values["manifest_path"], transaction["manifest_sha256"],
         "manifest")
-    try:
-        table = pd.read_csv(table_source)
-    except (IOError, OSError, ValueError) as exc:
-        raise FT05AValidationError("cannot read staged FT05 technical table: %s" % exc)
+    table = _read_technical_feature_table(table_source)
     _validate_technical_table_frame(table)
     manifest = _read_json(manifest_source, "staged FT05 manifest")
     checked, checked_table, _ = validate_ft05a_technical_manifest(
@@ -2670,19 +3031,10 @@ def _finalize_manifest(contract, cohort, records, run_state, output_root,
         technical_audit,
         _technical_audit_expected(
             run_state, cohort, contract, w_asset, code_audit))
-    rows = []
-    for _, record in cohort.iterrows():
-        path = _case_result_path(os.path.join(output_root, "cases"), record)
-        key = _case_identity(record)
-        artifact = _validate_case_artifact(
-            path, record, contract, w_asset["rows"][str(record["patient_id"])],
-            source_record=records[key],
-            expected_artifact_sha256=run_state["completed_case_artifact_hashes"][key])
-        rows.append(artifact["row"])
-    table = pd.DataFrame(rows, columns=_technical_feature_columns(True))
-    if len(table) != len(cohort) or table["patient_id"].duplicated().any():
-        raise FT05AValidationError("canonical table completeness/uniqueness failed")
-    _validate_technical_table_frame(table)
+    table = _table_from_completed_cases(
+        cohort, contract, w_asset, records,
+        run_state["completed_case_artifact_hashes"],
+        os.path.join(output_root, "cases"))
     table_path = os.path.join(output_root, "FT05A_B_technical_features.csv")
     stage_root = os.path.join(output_root, ".finalize")
     if os.path.exists(stage_root):
@@ -2712,7 +3064,7 @@ def _finalize_manifest(contract, cohort, records, run_state, output_root,
     artifact_hashes = dict(run_state.get("completed_case_artifact_hashes", {}))
     completion_evidence_hash = _sha256_text(_canonical_json(artifact_hashes))
     transaction = OrderedDict((
-        ("transaction_schema_version", "1"),
+        ("transaction_schema_version", FT05A_FINALIZATION_SCHEMA_VERSION),
         ("run_identity_sha256", run_state["run_identity_sha256"]),
         ("cohort_sha256", run_state["identity_payload"]["cohort_sha256"]),
         ("staged_table_path", _relative(staged_table_path)),
@@ -2741,12 +3093,14 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
               manifest_path=DEFAULT_MANIFEST, code_audit_path=DEFAULT_CODE_AUDIT,
               technical_audit_path=DEFAULT_TECHNICAL_AUDIT, processor=None,
               resume=False, pilot_case_ids=None, w_original_path=None,
-              pilot_size=None):
+              pilot_size=None, repair_finalization=False):
     """Run or safely resume FT05A.
 
     ``pilot_case_ids`` is a non-overlapping technical pilot.  It records case
     completion in the same one-time state and never writes the frozen manifest
-    until a later full invocation resumes the same run identity.
+    until a later full invocation resumes the same run identity.  Legacy
+    finalization repair is available only through ``repair_finalization=True``
+    with an explicit resume.
     """
     output_root = _validate_namespace_path(output_root, "FT05A output root",
                                            output_root, allow_ft_namespace=False)
@@ -2780,6 +3134,12 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
     state_path = os.path.join(output_root, "FT05A_run_state.json")
     expected = _initial_run_state(run_id, cohort_frame, contract["lock"],
                                   contract["code_audit"], output_root)
+    if repair_finalization and not resume:
+        raise FT05AValidationError(
+            "FT05A finalization repair requires explicit resume")
+    if repair_finalization and not os.path.isfile(state_path):
+        raise FT05AValidationError(
+            "FT05A finalization repair requires an existing run state")
 
     def validate_identity_migration(candidate):
         """Validate completed evidence before changing the persisted identity."""
@@ -2841,6 +3201,9 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
             state_path, expected, resume, code_audit=contract["code_audit"],
             cohort=cohort_frame, manifest_path=manifest_path,
             migration_validator=validate_identity_migration)
+        if repair_finalization and state.get("status") != "FINALIZING":
+            raise FT05AValidationError(
+                "FT05A finalization repair requires a FINALIZING run")
         if state.get("status") == TECHNICAL_COMPLETE_PENDING_REVIEW and \
                 state.get("technical_audit_path") != _relative(technical_audit_path):
             raise FT05AValidationError(
@@ -2851,11 +3214,24 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
             if not resume:
                 raise FT05AValidationError(
                     "unfinished FT05A finalization requires explicit resume")
+            if not repair_finalization and \
+                    (state.get("finalization") or {}).get(
+                        "transaction_schema_version") != \
+                    FT05A_FINALIZATION_SCHEMA_VERSION:
+                raise FT05AValidationError(
+                    "legacy FT05A finalization requires explicit repair")
             recovery_w_asset = _load_w_original_asset(contract["lock"], w_original_path)
             if sorted(set(cohort_frame["patient_id"]) -
                        set(recovery_w_asset["rows"])):
                 raise FT05AValidationError(
                     "accepted W_Original asset does not cover the technical cohort")
+            if repair_finalization:
+                return _repair_finalization(
+                    state, state_path, contract=contract, cohort=cohort_frame,
+                    w_asset=recovery_w_asset, output_root=output_root,
+                    manifest_path=manifest_path,
+                    technical_audit_path=technical_audit_path,
+                    code_audit_path=code_audit_path)
             return _recover_finalization(
                 state, state_path, contract=contract, cohort=cohort_frame,
                 w_asset=recovery_w_asset, output_root=output_root,
@@ -3013,6 +3389,7 @@ def main():
     parser.add_argument("--code-audit", default=DEFAULT_CODE_AUDIT)
     parser.add_argument("--technical-audit", default=DEFAULT_TECHNICAL_AUDIT)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--repair-finalization", action="store_true")
     parser.add_argument("--pilot-size", type=int)
     args = parser.parse_args()
     if args.command == "static-validate":
@@ -3024,7 +3401,8 @@ def main():
         args.cohort, args.run_id, lock_path=args.lock, output_root=args.output_root,
         manifest_path=args.manifest, code_audit_path=args.code_audit,
         technical_audit_path=args.technical_audit, resume=args.resume,
-        pilot_size=args.pilot_size)
+        pilot_size=args.pilot_size,
+        repair_finalization=args.repair_finalization)
     payload = {"status": result.get("status", "COMPLETED"),
                "artifact_id": result.get("artifact_id"),
                "row_count": result.get("feature_table", {}).get("row_count")}
