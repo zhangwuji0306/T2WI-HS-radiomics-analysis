@@ -2,6 +2,7 @@ from __future__ import absolute_import
 
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -103,7 +104,13 @@ class FT05ARunnerTests(unittest.TestCase):
                 "order_sha256": ft.W_ORIGINAL_ORDER_SHA256,
                 "rows": {"B%d" % i: {name: float(i + 1)
                                       for name in ft.W_ORIGINAL_FEATURE_NAMES}
-                          for i in range(2)}}
+                           for i in range(2)}}
+
+    def _validate_manifest(self, manifest_path, expected_w_asset=True):
+        kwargs = {"output_root": self.out, "_expected_lock": self.lock}
+        if expected_w_asset:
+            kwargs["_expected_w_asset"] = self._w_asset()
+        return ft.validate_ft05a_technical_manifest(manifest_path, **kwargs)
 
     def _processor(self, calls=None, failure=None):
         def process(record, contract):
@@ -327,8 +334,7 @@ class FT05ARunnerTests(unittest.TestCase):
                 manifest_path=manifest_path, code_audit_path=self.code_audit,
                 technical_audit_path=self.technical_audit,
                 processor=self._processor())
-        checked, table, checked_path = ft.validate_ft05a_technical_manifest(
-            manifest_path, output_root=self.out)
+        checked, table, checked_path = self._validate_manifest(manifest_path)
         self.assertEqual(checked["artifact_id"], manifest["artifact_id"])
         self.assertEqual(list(table.columns), ft._technical_feature_columns(True))
         self.assertEqual(checked_path, ft._absolute_project_path(
@@ -351,7 +357,67 @@ class FT05ARunnerTests(unittest.TestCase):
             json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
         with self.assertRaises(ft.FT05AValidationError):
-            ft.validate_ft05a_technical_manifest(manifest_path, output_root=self.out)
+            self._validate_manifest(manifest_path)
+
+    def test_manifest_cannot_self_authorize_alternate_w_original_provenance(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with self._patches():
+            ft.run_ft05a(
+                self.cohort, "run-w-provenance", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor())
+        alternate = os.path.join(self.root, "w_original_alternate.csv")
+        shutil.copyfile(self.w_path, alternate)
+        manifest = ft._read_json(manifest_path)
+        alternate_relative = _relative(alternate)
+        w_record = manifest["feature_blocks"]["W_Original"]
+        w_record["asset_path"] = alternate_relative
+        w_record["asset_sha256"] = ft._sha256_file(alternate)
+        for source_record in manifest["source_records"]:
+            source_record["w_original_asset_path"] = alternate_relative
+            source_record["w_original_asset_sha256"] = w_record["asset_sha256"]
+        with open(manifest_path, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        with self.assertRaises(ft.FT05AValidationError):
+            self._validate_manifest(manifest_path, expected_w_asset=False)
+
+    def test_manifest_rejects_duplicate_persisted_source_mappings(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with self._patches():
+            ft.run_ft05a(
+                self.cohort, "run-duplicate-source-mapping", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor())
+        manifest = ft._read_json(manifest_path)
+        first = manifest["source_records"][0]
+        second = manifest["source_records"][1]
+        for key in ("image_path", "roi_path", "source_image_key", "source_roi_key",
+                    "image_sha256", "roi_sha256"):
+            second[key] = first[key]
+        second["case_identity_sha256"] = ft._case_identity({
+            "patient_id": second["patient_id"],
+            "image_path": second["image_path"],
+            "roi_path": second["roi_path"],
+            "source_image_key": second["source_image_key"],
+            "source_roi_key": second["source_roi_key"],
+        })
+        technical = manifest["technical_cohort"]
+        for key in ("image_path", "roi_path", "source_image_key", "source_roi_key"):
+            technical["ordered_rows"][1][key] = second[key]
+        ordered = pd.DataFrame(technical["ordered_rows"],
+                               columns=technical["source_frame_columns"])
+        technical["source_frame_sha256"] = ft._canonical_frame_hash(ordered)
+        technical["source_mapping_hash"] = ft._sha256_text("\n".join(
+            str(item["source_image_key"]) + "|" + str(item["source_roi_key"])
+            for item in manifest["source_records"]))
+        with open(manifest_path, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        with self.assertRaises(ft.FT05AValidationError):
+            self._validate_manifest(manifest_path)
 
     def test_pilot_w_original_loader_materializes_only_selected_rows(self):
         seen_hashes = []

@@ -703,6 +703,51 @@ def _load_locked_radiomics_config(lock):
     return config, dict(record)
 
 
+def _w_original_binding_from_lock(lock):
+    """Return the W_Original binding supplied by an accepted FT04 lock."""
+    binding = (lock.get("habitat_definition") or {}).get(
+        "W_Original_asset") or {}
+    required = {
+        "path", "asset_sha256", "feature_count", "order_sha256",
+        "reused_existing_asset", "reextracted",
+    }
+    if set(binding) != required or not isinstance(binding.get("path"), str) or \
+            not re.match(r"^[0-9a-f]{64}$", str(binding.get("asset_sha256"))) or \
+            binding.get("feature_count") != 107 or \
+            binding.get("order_sha256") != W_ORIGINAL_ORDER_SHA256 or \
+            binding.get("reused_existing_asset") is not True or \
+            binding.get("reextracted") is not False:
+        raise FT05AValidationError("accepted FT04 W_Original binding is invalid")
+    return OrderedDict((
+        ("path", binding["path"]),
+        ("asset_sha256", binding["asset_sha256"]),
+        ("feature_count", 107),
+        ("order_sha256", W_ORIGINAL_ORDER_SHA256),
+        ("reused_existing_asset", True),
+        ("reextracted", False),
+    ))
+
+
+def _load_canonical_w_original_lock():
+    """Load the canonical FT04 binding and cross-check its FT01 source."""
+    lock = _read_json(DEFAULT_LOCK, "FT04 model-freeze lock")
+    if lock.get("artifact_id") != "FT_model_freeze_lock" or \
+            lock.get("stage") != "FT04" or lock.get("status") != "FROZEN":
+        raise FT05AValidationError("canonical FT04 lock is not frozen")
+    if lock.get("lock_identity_sha256") != ft04._lock_identity(lock):
+        raise FT05AValidationError("canonical FT04 lock identity is invalid")
+    locked_binding = _w_original_binding_from_lock(lock)
+    try:
+        accepted_ft01 = ft04._accepted_w_original_binding()
+    except Exception as exc:
+        raise FT05AValidationError(
+            "accepted FT01 W_Original binding cannot be derived: %s" % exc)
+    if dict(locked_binding) != dict(accepted_ft01):
+        raise FT05AValidationError(
+            "FT04 W_Original binding does not match accepted FT01 asset")
+    return lock
+
+
 def _frozen_boundary_identity(lock):
     return ft04._frozen_a_boundary_identity(lock)
 
@@ -1004,7 +1049,7 @@ def _validate_technical_table_frame(table, table_record=None):
 def validate_ft05a_technical_manifest(
         manifest_or_path=DEFAULT_MANIFEST, output_root=DEFAULT_OUTPUT_ROOT,
         _table_override=None, _table_hash_path=None, _expected_w_asset=None,
-        _expected_cohort=None):
+        _expected_cohort=None, _expected_lock=None):
     """Validate the outcome-blind technical manifest before the later join.
 
     The private override arguments are used only while recovering an atomic
@@ -1020,6 +1065,11 @@ def validate_ft05a_technical_manifest(
         manifest = manifest_or_path
     else:
         raise FT05AValidationError("FT05 technical manifest must be a mapping or path")
+    trusted_lock = _expected_lock or _load_canonical_w_original_lock()
+    trusted_w_binding = _w_original_binding_from_lock(trusted_lock)
+    if manifest.get("ft04_lock_identity_sha256") != \
+            trusted_lock.get("lock_identity_sha256"):
+        raise FT05AValidationError("FT05 manifest is not bound to the accepted FT04 lock")
     if manifest.get("artifact_id") != "FT05_B_feature_manifest" or \
             manifest.get("schema_version") != FT05A_SCHEMA_VERSION or \
             manifest.get("status") != "frozen" or \
@@ -1066,17 +1116,15 @@ def validate_ft05a_technical_manifest(
             not isinstance(w_record.get("asset_path"), str) or \
             not re.match(r"^[0-9a-f]{64}$", str(w_record.get("asset_sha256", ""))):
         raise FT05AValidationError("FT05 technical W_Original contract is invalid")
+    if w_record.get("asset_path") != trusted_w_binding["path"] or \
+            w_record.get("asset_sha256") != trusted_w_binding["asset_sha256"]:
+        raise FT05AValidationError(
+            "FT05 W_Original provenance is not bound to the accepted FT04 asset")
     w_path = _validate_technical_path(
-        w_record["asset_path"], "FT05 W_Original asset",
-        exact_paths=(w_record["asset_path"],))
+        trusted_w_binding["path"], "FT05 W_Original asset",
+        exact_paths=(trusted_w_binding["path"],))
     if _expected_w_asset is None:
-        w_lock = {"habitat_definition": {"W_Original_asset": {
-            "path": w_record["asset_path"],
-            "asset_sha256": w_record["asset_sha256"],
-            "feature_count": 107,
-            "order_sha256": W_ORIGINAL_ORDER_SHA256,
-            "reused_existing_asset": True, "reextracted": False}}}
-        w_asset = _load_w_original_asset(w_lock)
+        w_asset = _load_w_original_asset(trusted_lock)
     else:
         w_asset = _expected_w_asset
         if not isinstance(w_asset, dict) or \
@@ -1086,7 +1134,8 @@ def validate_ft05a_technical_manifest(
                 w_asset.get("feature_count") != 107:
             raise FT05AValidationError("FT05 W_Original asset binding is invalid")
     if w_asset.get("path") != _relative(w_path) or \
-            w_asset.get("sha256") != w_record.get("asset_sha256"):
+            w_asset.get("sha256") != trusted_w_binding["asset_sha256"] or \
+            w_record.get("asset_sha256") != trusted_w_binding["asset_sha256"]:
         raise FT05AValidationError("FT05 W_Original asset binding is invalid")
 
     source_records = manifest.get("source_records")
@@ -1098,6 +1147,12 @@ def validate_ft05a_technical_manifest(
         raise FT05AValidationError("FT05 technical source-record completeness is invalid")
     source_keys = set()
     source_patients = []
+    seen_image_paths = set()
+    seen_roi_paths = set()
+    seen_image_keys = set()
+    seen_roi_keys = set()
+    seen_image_hashes = set()
+    seen_roi_hashes = set()
     for index, source_record in enumerate(source_records):
         if not isinstance(source_record, dict) or any(
                 key not in source_record for key in required):
@@ -1111,6 +1166,11 @@ def validate_ft05a_technical_manifest(
             raise FT05AValidationError("FT05 technical source-record hash is invalid")
         if str(source_record["split"]).upper() != "B":
             raise FT05AValidationError("FT05 source record contains a non-B row")
+        patient_id = str(source_record["patient_id"]).strip()
+        source_image_key = str(source_record["source_image_key"]).strip()
+        source_roi_key = str(source_record["source_roi_key"]).strip()
+        if not patient_id or not source_image_key or not source_roi_key:
+            raise FT05AValidationError("FT05 source-record mapping is blank")
         image_path = _validate_technical_path(
             source_record["image_path"], "FT05 source image",
             allowed_roots=ALLOWED_TECHNICAL_ROOTS)
@@ -1121,16 +1181,33 @@ def validate_ft05a_technical_manifest(
                 _sha256_file(image_path) != source_record["image_sha256"] or \
                 _sha256_file(roi_path) != source_record["roi_sha256"]:
             raise FT05AValidationError("FT05 technical source file binding is invalid")
+        image_path_key = os.path.normcase(os.path.realpath(image_path))
+        roi_path_key = os.path.normcase(os.path.realpath(roi_path))
+        image_hash = str(source_record["image_sha256"])
+        roi_hash = str(source_record["roi_sha256"])
+        if image_path_key in seen_image_paths or roi_path_key in seen_roi_paths or \
+                image_path_key in seen_roi_paths or roi_path_key in seen_image_paths or \
+                source_image_key in seen_image_keys or source_roi_key in seen_roi_keys or \
+                image_hash in seen_image_hashes or roi_hash in seen_roi_hashes:
+            raise FT05AValidationError(
+                "FT05 source records contain duplicate or aliased mappings")
+        seen_image_paths.add(image_path_key)
+        seen_roi_paths.add(roi_path_key)
+        seen_image_keys.add(source_image_key)
+        seen_roi_keys.add(source_roi_key)
+        seen_image_hashes.add(image_hash)
+        seen_roi_hashes.add(roi_hash)
         if _validate_technical_path(
                 source_record["w_original_asset_path"], "FT05 source W_Original asset",
-                exact_paths=(w_record["asset_path"],)) != w_path or \
-                source_record["w_original_asset_sha256"] != w_record["asset_sha256"]:
+                exact_paths=(trusted_w_binding["path"],)) != w_path or \
+                source_record["w_original_asset_path"] != trusted_w_binding["path"] or \
+                source_record["w_original_asset_sha256"] != trusted_w_binding["asset_sha256"]:
             raise FT05AValidationError("FT05 source W_Original asset binding is invalid")
-        case_record = {"patient_id": str(source_record["patient_id"]),
+        case_record = {"patient_id": patient_id,
                        "image_path": str(source_record["image_path"]),
                        "roi_path": str(source_record["roi_path"]),
-                       "source_image_key": str(source_record["source_image_key"]),
-                       "source_roi_key": str(source_record["source_roi_key"])}
+                       "source_image_key": source_image_key,
+                       "source_roi_key": source_roi_key}
         if _case_identity(case_record) != case_key:
             raise FT05AValidationError("FT05 source case identity is forged")
         row = table.iloc[index]
@@ -1862,7 +1939,7 @@ def _recover_finalization(state, state_path, contract=None, cohort=None,
     checked, checked_table, _ = validate_ft05a_technical_manifest(
         manifest, output_root=output_root, _table_override=table,
         _table_hash_path=table_source, _expected_w_asset=w_asset,
-        _expected_cohort=cohort)
+        _expected_cohort=cohort, _expected_lock=contract["lock"])
     if checked.get("run_identity") != state["run_identity_sha256"] or \
             checked.get("feature_table", {}).get("path") != _relative(canonical_table_path) or \
             checked.get("feature_table", {}).get("sha256") != transaction["table_sha256"] or \
@@ -1881,7 +1958,8 @@ def _recover_finalization(state, state_path, contract=None, cohort=None,
                          transaction["manifest_sha256"], "manifest")
     manifest, _, _ = validate_ft05a_technical_manifest(
         path_values["manifest_path"], output_root=output_root,
-        _expected_w_asset=w_asset, _expected_cohort=cohort)
+        _expected_w_asset=w_asset, _expected_cohort=cohort,
+        _expected_lock=contract["lock"])
     state["status"] = "COMPLETED"
     state["feature_table_path"] = _relative(canonical_table_path)
     state["feature_table_sha256"] = transaction["table_sha256"]
