@@ -1,13 +1,8 @@
 # FT05A B Technical Generation Audit
 
-Status: generated_pending_review
-Independent review: false
-Verdict: PENDING_REVIEW
-
-This is factual runtime evidence emitted by the FT05A runner. It is not an
-independent review and does not authorize FT05B or FT06. An independent
-Reviewer must inspect the completed technical artifacts and update this same
-canonical report before the frozen feature manifest can be created.
+Status: accepted
+Independent review: true
+Verdict: PASS
 
 FT05A run identity SHA-256: `718f357176f704f42027669b47041d24b33e9116b010bceac07b574be84c00bd`
 FT05A cohort SHA-256: `642830a817c6c3e71845c32f9be64ab98514adc372d070570bba86f34ae5ba53`
@@ -25,3 +20,16 @@ Outcome accessed: false
 B K-means fit: false
 W_Original reused: true
 Repeat extraction: false
+
+## Independent review evidence
+
+- The accepted FT04 lock, frozen A-full boundary, W03/PyRadiomics provenance, candidate hashes, and current independent FT05A code audit were validated successfully.
+- The technical cohort contains 163 B cases and only the allowlisted technical source columns. Its canonical frame hash matches the run and audit bindings.
+- The run state is `TECHNICAL_COMPLETE_PENDING_REVIEW` with 163 completed cases. All 163 case artifacts and their bound image/ROI source records were reconciled successfully; case hashes and completion evidence match the persisted state.
+- The accepted W_Original asset contains 107 frozen features, covers all 163 technical cases, and matches the bound asset and feature-order hashes. Every case row matches its bound W_Original row and the canonical row schema.
+- Static safety validation passed with no B K-means, outcome reader, whole-tumour re-extraction, repeat extraction, or formal-directory mixing findings. The B outcome state remains locked, and no canonical manifest, technical feature table, formal model lock, FT05B, or FT06 artifact is present.
+- The generation-time runner and code-audit hashes above remain unchanged in the factual binding. The current reviewed runner is bound to implementation commit `db92fb4278572a8baa9133564031fbcccc36b941`; the only post-review path is the canonical FT05A audit namespace, with the exact allowlist marker retained.
+
+## Downstream authorization
+
+The next Worker may resume only the same FT05A run identity and atomically generate the canonical `FT05_B_feature_manifest.json` and `FT05A_B_technical_features.csv` after validating this accepted audit. This authorization does not unlock B outcomes, FT05B, or FT06.
