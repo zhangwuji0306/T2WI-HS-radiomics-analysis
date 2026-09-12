@@ -4,6 +4,7 @@ import csv
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -89,7 +90,7 @@ class FT05ARunnerTests(unittest.TestCase):
             with open(path, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write("Independent reviewer\nverdict: PASS\n")
         self.lock = {
-            "lock_identity_sha256": "lock-identity",
+            "lock_identity_sha256": "f" * 64,
             "b_access": {"state": "locked", "b_data_read": False,
                           "b_outcome_read": False},
             "prediction_contract": {"expected_model_input_hashes": {
@@ -202,6 +203,8 @@ class FT05ARunnerTests(unittest.TestCase):
             "reviewed_commit": ft.ft04._git_head(),
             "runner_sha256": ft._sha256_file(ft.__file__),
             "contract_identity": ft.FT05A_CODE_PREP_CONTRACT_IDENTITY,
+            "post_generation_change_scope":
+                ft.FT05A_POST_GENERATION_CHANGE_SCOPE_ALLOWLIST_ONLY,
         }
 
     @contextmanager
@@ -227,6 +230,38 @@ class FT05ARunnerTests(unittest.TestCase):
     def _read_bytes(self, path):
         with open(path, "rb") as handle:
             return handle.read()
+
+    def _create_legacy_pending_run(self, run_id="run-legacy-pending",
+                                   old_code_audit_hash=None,
+                                   old_runner_hash=None):
+        old_code_audit_hash = old_code_audit_hash or ("a" * 64)
+        old_runner_hash = old_runner_hash or ("b" * 64)
+        self.contract["code_audit"] = self._strict_code_audit(
+            old_code_audit_hash)
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        os.remove(self.technical_audit)
+        with self._runtime_patches_without_technical_audit():
+            pending = ft.run_ft05a(
+                self.cohort, run_id, output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor())
+        self.assertEqual(pending["status"],
+                         ft.TECHNICAL_COMPLETE_PENDING_REVIEW)
+        audit_text = self._read_bytes(self.technical_audit).decode("utf-8")
+        audit_text = audit_text.replace(
+            "FT05A runner SHA-256: `%s`" % ft._sha256_file(ft.__file__),
+            "FT05A runner SHA-256: `%s`" % old_runner_hash)
+        with open(self.technical_audit, "w", encoding="utf-8",
+                  newline="\n") as handle:
+            handle.write(audit_text)
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        state = ft._read_json(state_path)
+        state.pop("generation_binding", None)
+        state["technical_audit_sha256"] = ft._sha256_file(
+            self.technical_audit)
+        self._write_state_fixture(state_path, state)
+        return state, audit_text, manifest_path
 
     def test_static_audit_has_no_B_fit_or_reader_route(self):
         result = ft.static_validate()
@@ -547,6 +582,159 @@ class FT05ARunnerTests(unittest.TestCase):
         self.assertNotIn("technical_audit_path", state)
         self.assertNotIn("technical_audit_sha256", state)
         self._validate_manifest(manifest_path)
+
+    def test_legacy_pending_state_migrates_binding_without_processor_calls(self):
+        original_state, original_audit, manifest_path = \
+            self._create_legacy_pending_run()
+        old_run_identity = original_state["run_identity_sha256"]
+        old_code_audit = original_state["identity_payload"]["code_audit_sha256"]
+        new_audit = self._strict_code_audit("c" * 64)
+        self.contract["code_audit"] = new_audit
+        calls = []
+        with self._runtime_patches_without_technical_audit():
+            result = ft.run_ft05a(
+                self.cohort, "run-legacy-pending", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(calls), resume=True)
+        self.assertEqual(result["status"],
+                         ft.TECHNICAL_COMPLETE_PENDING_REVIEW)
+        self.assertEqual(calls, [])
+        state = ft._read_json(os.path.join(self.out, "FT05A_run_state.json"))
+        self.assertEqual(state["run_identity_sha256"], old_run_identity)
+        self.assertEqual(state["identity_payload"]["code_audit_sha256"],
+                         old_code_audit)
+        self.assertEqual(state["generation_binding"]["runner_sha256"],
+                         "b" * 64)
+        self.assertEqual(state["generation_binding"]["code_audit_sha256"],
+                         old_code_audit)
+        self.assertEqual(self._read_bytes(self.technical_audit),
+                         original_audit.encode("utf-8"))
+        self.assertFalse(os.path.exists(manifest_path))
+
+    def test_legacy_pending_acceptance_generates_manifest_without_reextraction(self):
+        state, audit_text, manifest_path = self._create_legacy_pending_run(
+            run_id="run-legacy-accepted")
+        old_run_identity = state["run_identity_sha256"]
+        old_code_audit = state["identity_payload"]["code_audit_sha256"]
+        accepted_text = audit_text.replace(
+            "Status: generated_pending_review", "Status: accepted")
+        accepted_text = accepted_text.replace(
+            "Independent review: false", "Independent review: true")
+        accepted_text = accepted_text.replace(
+            "Verdict: PENDING_REVIEW", "Verdict: PASS")
+        with open(self.technical_audit, "w", encoding="utf-8",
+                  newline="\n") as handle:
+            handle.write(accepted_text)
+        new_audit = self._strict_code_audit("d" * 64)
+        self.contract["code_audit"] = new_audit
+        calls = []
+        with self._runtime_patches_without_technical_audit():
+            manifest = ft.run_ft05a(
+                self.cohort, "run-legacy-accepted", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(calls), resume=True)
+        self.assertEqual(manifest["status"], "frozen")
+        self.assertEqual(calls, [])
+        self.assertEqual(manifest["run_identity"], old_run_identity)
+        self.assertEqual(
+            manifest["reviews"]["technical_audit"]["runner_sha256"],
+            "b" * 64)
+        self.assertEqual(
+            manifest["reviews"]["technical_audit"]["code_audit_sha256"],
+            old_code_audit)
+        self.assertEqual(manifest["reviews"]["code_audit"]["sha256"],
+                         "d" * 64)
+        self.assertTrue(os.path.exists(manifest_path))
+
+    def test_pending_migration_requires_exact_allowlist_marker(self):
+        _, _, manifest_path = self._create_legacy_pending_run(
+            run_id="run-marker-required")
+        for marker in (None, "source and audit changes"):
+            with self.subTest(marker=marker):
+                current = self._strict_code_audit("e" * 64)
+                current["post_generation_change_scope"] = marker
+                self.contract["code_audit"] = current
+                calls = []
+                original_state = self._read_bytes(os.path.join(
+                    self.out, "FT05A_run_state.json"))
+                with self._runtime_patches_without_technical_audit():
+                    with self.assertRaises(ft.FT05AValidationError):
+                        ft.run_ft05a(
+                            self.cohort, "run-marker-required",
+                            output_root=self.out, manifest_path=manifest_path,
+                            code_audit_path=self.code_audit,
+                            technical_audit_path=self.technical_audit,
+                            processor=self._processor(calls), resume=True)
+                self.assertEqual(calls, [])
+                self.assertEqual(self._read_bytes(os.path.join(
+                    self.out, "FT05A_run_state.json")), original_state)
+
+    def test_pending_migration_rejects_tampered_generation_binding(self):
+        _, _, manifest_path = self._create_legacy_pending_run(
+            run_id="run-binding-tamper")
+        current = self._strict_code_audit("f" * 64)
+        self.contract["code_audit"] = current
+        with self._runtime_patches_without_technical_audit():
+            ft.run_ft05a(
+                self.cohort, "run-binding-tamper", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(), resume=True)
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        state = ft._read_json(state_path)
+        state["generation_binding"]["runner_sha256"] = "0" * 64
+        self._write_state_fixture(state_path, state)
+        calls = []
+        with self._runtime_patches_without_technical_audit():
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-binding-tamper", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(calls), resume=True)
+        self.assertEqual(calls, [])
+
+    def test_pending_migration_rejects_tampered_technical_audit_fields(self):
+        _, original_audit, manifest_path = self._create_legacy_pending_run(
+            run_id="run-technical-audit-tamper")
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        original_state = self._read_bytes(state_path)
+        current = self._strict_code_audit("1" * 64)
+        self.contract["code_audit"] = current
+        replacements = {
+            "FT05A run identity SHA-256": "0" * 64,
+            "FT05A cohort SHA-256": "0" * 64,
+            "FT05A case-completion evidence SHA-256": "0" * 64,
+            "FT04 lock identity SHA-256": "0" * 64,
+            "FT05A code-audit SHA-256": "0" * 64,
+            "FT05A runner SHA-256": "0" * 64,
+            "W_Original asset SHA-256": "0" * 64,
+            "W_Original order SHA-256": "0" * 64,
+            "FT05A row-schema SHA-256": "0" * 64,
+        }
+        for label, replacement in replacements.items():
+            with self.subTest(label=label):
+                tampered = re.sub(
+                    r"(?m)^(\s*%s\s*:\s*`?)[0-9a-f]{64}(`?\s*)$" %
+                    re.escape(label), r"\g<1>%s\g<2>" % replacement,
+                    original_audit)
+                with open(self.technical_audit, "w", encoding="utf-8",
+                          newline="\n") as handle:
+                    handle.write(tampered)
+                with self._runtime_patches_without_technical_audit():
+                    with self.assertRaises(ft.FT05AValidationError):
+                        ft.run_ft05a(
+                            self.cohort, "run-technical-audit-tamper",
+                            output_root=self.out, manifest_path=manifest_path,
+                            code_audit_path=self.code_audit,
+                            technical_audit_path=self.technical_audit,
+                            processor=self._processor(), resume=True)
+                with open(self.technical_audit, "w", encoding="utf-8",
+                          newline="\n") as handle:
+                    handle.write(original_audit)
+                self.assertEqual(self._read_bytes(state_path), original_state)
 
     def test_actual_technical_manifest_passes_canonical_technical_validator(self):
         manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")

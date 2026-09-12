@@ -46,10 +46,20 @@ TECHNICAL_COMPLETE_PENDING_REVIEW = "TECHNICAL_COMPLETE_PENDING_REVIEW"
 FT05A_CODE_PREP_CONTRACT_IDENTITY = "FT05A_code_prep_contract_v1"
 FT05A_IDENTITY_MIGRATION_REASON = (
     "reviewed FT05A code/audit remediation continuation")
+FT05A_POST_GENERATION_CHANGE_SCOPE_LABEL = (
+    "FT05A post-generation change scope")
+FT05A_POST_GENERATION_CHANGE_SCOPE_ALLOWLIST_ONLY = (
+    "canonical audit-namespace allowlist only")
 IDENTITY_PAYLOAD_FIELDS = frozenset((
     "artifact", "run_id", "ft04_lock_identity_sha256", "cohort_sha256",
     "candidate_hashes", "w_original_order_sha256", "w_original_asset_path",
     "w_original_asset_sha256", "code_audit_sha256", "output_root"))
+GENERATION_BINDING_FIELDS = frozenset((
+    "run_identity_sha256", "cohort_sha256", "case_completion_evidence_hash",
+    "technical_case_count", "ft04_lock_identity_sha256",
+    "code_audit_sha256", "runner_sha256", "w_original_asset_path",
+    "w_original_asset_sha256", "w_original_order_sha256",
+    "row_schema_sha256", "technical_audit_sha256"))
 MINIMUM_ROI_SIZE = 10
 CANONICAL_OUTPUT_ROOT = os.path.abspath(os.path.join(
     _PROJECT_ROOT, "prognosis_analysis", "output", "ft_20260910_01a08bf3",
@@ -625,6 +635,13 @@ def _audit_marker(text, label):
     return match.group(1).strip()
 
 
+def _optional_audit_marker(text, label):
+    pattern = r"(?im)^\s*%s\s*[:：]\s*`?([^`\r\n]+?)`?\s*$" % \
+        re.escape(label)
+    match = re.search(pattern, text)
+    return match.group(1).strip() if match else None
+
+
 def _technical_audit_fields(text):
     fields = {
         "status": _audit_marker(text, "Status").lower(),
@@ -718,12 +735,15 @@ def _validate_code_audit(path):
             FT05A_CODE_PREP_CONTRACT_IDENTITY:
         raise FT05AValidationError(
             "FT05A code audit is not bound to the exact preparation contract")
+    post_generation_scope = _optional_audit_marker(
+        text, FT05A_POST_GENERATION_CHANGE_SCOPE_LABEL)
     return {"path": _relative(path), "sha256": _sha256_file(path),
             "status": "accepted", "independent": True,
             "verdict": "PASS" if re.search(r"(?im)^\s*verdict\s*[:：]\s*PASS\s*$", text) else "PASS_WITH_FINDINGS",
             "reviewed_commit": reviewed_match.group(1),
             "runner_sha256": runner_match.group(1),
-            "contract_identity": contract_match.group(1).strip()}
+            "contract_identity": contract_match.group(1).strip(),
+            "post_generation_change_scope": post_generation_scope}
 
 
 def _validate_technical_audit(path):
@@ -743,9 +763,6 @@ def _validate_technical_audit(path):
             fields["repeat_extraction"] != "false":
         raise FT05AValidationError(
             "FT05A technical audit safety evidence is invalid")
-    if fields["runner_sha256"] != _sha256_file(__file__):
-        raise FT05AValidationError(
-            "FT05A technical audit is bound to a different runner")
     return {"path": _relative(path), "sha256": _sha256_file(path),
             "status": "accepted", "independent": True,
             "verdict": fields["verdict"],
@@ -762,8 +779,55 @@ def _validate_technical_audit(path):
             "row_schema_sha256": fields["row_schema_sha256"]}
 
 
+def _new_generation_binding(run_state, cohort, contract, w_asset,
+                            code_audit, technical_audit_sha256=None):
+    """Build the immutable provenance binding for one technical generation."""
+    return OrderedDict((
+        ("run_identity_sha256", run_state["run_identity_sha256"]),
+        ("cohort_sha256", run_state["identity_payload"]["cohort_sha256"]),
+        ("case_completion_evidence_hash", _sha256_text(_canonical_json(
+            run_state.get("completed_case_artifact_hashes", {})))),
+        ("technical_case_count", int(len(cohort))),
+        ("ft04_lock_identity_sha256", contract["lock"][
+            "lock_identity_sha256"]),
+        ("code_audit_sha256", run_state["identity_payload"][
+            "code_audit_sha256"]),
+        ("runner_sha256", _sha256_file(__file__)),
+        ("w_original_asset_path", w_asset["path"]),
+        ("w_original_asset_sha256", w_asset["sha256"]),
+        ("w_original_order_sha256", W_ORIGINAL_ORDER_SHA256),
+        ("row_schema_sha256", _row_schema_hash()),
+        ("technical_audit_sha256", technical_audit_sha256),
+    ))
+
+
+def _generation_binding_from_audit_fields(fields, w_asset):
+    """Convert factual technical-audit fields into a persisted binding."""
+    return OrderedDict((
+        ("run_identity_sha256", fields["run_identity_sha256"]),
+        ("cohort_sha256", fields["cohort_sha256"]),
+        ("case_completion_evidence_hash",
+         fields["case_completion_evidence_hash"]),
+        ("technical_case_count", fields["technical_case_count"]),
+        ("ft04_lock_identity_sha256", fields["ft04_lock_identity_sha256"]),
+        ("code_audit_sha256", fields["code_audit_sha256"]),
+        ("runner_sha256", fields["runner_sha256"]),
+        ("w_original_asset_path", w_asset["path"]),
+        ("w_original_asset_sha256", fields["w_original_asset_sha256"]),
+        ("w_original_order_sha256", fields["w_original_order_sha256"]),
+        ("row_schema_sha256", fields["row_schema_sha256"]),
+        ("technical_audit_sha256", None),
+    ))
+
+
 def _technical_audit_expected(run_state, cohort, contract, w_asset,
                               code_audit):
+    binding = run_state.get("generation_binding")
+    if isinstance(binding, dict):
+        expected = dict(binding)
+        expected["case_completion_evidence_hash"] = _sha256_text(
+            _canonical_json(run_state.get("completed_case_artifact_hashes", {})))
+        return expected
     return {
         "run_identity_sha256": run_state["run_identity_sha256"],
         "cohort_sha256": run_state["identity_payload"]["cohort_sha256"],
@@ -772,7 +836,8 @@ def _technical_audit_expected(run_state, cohort, contract, w_asset,
         "technical_case_count": int(len(cohort)),
         "ft04_lock_identity_sha256": contract["lock"][
             "lock_identity_sha256"],
-        "code_audit_sha256": code_audit["sha256"],
+        "code_audit_sha256": run_state["identity_payload"][
+            "code_audit_sha256"],
         "runner_sha256": _sha256_file(__file__),
         "w_original_asset_sha256": w_asset["sha256"],
         "w_original_order_sha256": W_ORIGINAL_ORDER_SHA256,
@@ -1952,7 +2017,7 @@ def _validate_run_state_structure(state, expected, cohort=None):
         "identity_migration", "pilot_completed_at_epoch",
         "feature_table_path", "feature_table_sha256", "manifest_path",
         "manifest_sha256", "completed_at_epoch", "technical_audit_path",
-        "technical_audit_sha256",
+        "technical_audit_sha256", "generation_binding",
     }
     if set(state) - allowed or not required.issubset(set(state)):
         raise FT05AValidationError("FT05A run state structure is malformed")
@@ -2073,6 +2138,44 @@ def _validate_run_state_structure(state, expected, cohort=None):
         if migration.get("to_code_audit_sha256") != \
                 payload.get("code_audit_sha256"):
             raise FT05AValidationError("FT05A identity migration target is invalid")
+    generation_binding = state.get("generation_binding")
+    if generation_binding is not None:
+        if not isinstance(generation_binding, dict) or \
+                set(generation_binding) != GENERATION_BINDING_FIELDS:
+            raise FT05AValidationError(
+                "FT05A generation binding is malformed")
+        for key in ("run_identity_sha256", "cohort_sha256",
+                    "case_completion_evidence_hash",
+                    "ft04_lock_identity_sha256", "code_audit_sha256",
+                    "runner_sha256", "w_original_asset_sha256",
+                    "w_original_order_sha256", "row_schema_sha256"):
+            if not _is_sha256(generation_binding.get(key)):
+                raise FT05AValidationError(
+                    "FT05A generation binding hash is invalid: %s" % key)
+        if not isinstance(generation_binding.get("technical_case_count"), int) or \
+                isinstance(generation_binding.get("technical_case_count"), bool) or \
+                generation_binding.get("technical_case_count") < 1 or \
+                not isinstance(generation_binding.get("w_original_asset_path"), str) or \
+                not generation_binding.get("w_original_asset_path"):
+            raise FT05AValidationError("FT05A generation binding values are invalid")
+        if generation_binding.get("technical_audit_sha256") is not None and \
+                not _is_sha256(generation_binding.get("technical_audit_sha256")):
+            raise FT05AValidationError(
+                "FT05A generation technical-audit hash is invalid")
+        if generation_binding.get("run_identity_sha256") != \
+                state.get("run_identity_sha256") or \
+                generation_binding.get("cohort_sha256") != \
+                payload.get("cohort_sha256") or \
+                generation_binding.get("code_audit_sha256") != \
+                payload.get("code_audit_sha256") or \
+                generation_binding.get("technical_case_count") != target_count:
+            raise FT05AValidationError(
+                "FT05A generation binding does not match run state")
+        if generation_binding.get("case_completion_evidence_hash") != \
+                _sha256_text(_canonical_json(
+                    state.get("completed_case_artifact_hashes", {}))):
+            raise FT05AValidationError(
+                "FT05A generation completion evidence is inconsistent")
     if cohort is not None:
         if target_count != len(cohort) or \
                 state.get("target_patient_ids_hash") != _sha256_text(
@@ -2097,7 +2200,8 @@ def _identity_differs_only_by_audit(existing_payload, expected_payload):
         _is_sha256(expected_payload.get("code_audit_sha256"))
 
 
-def _validate_current_code_audit_record(code_audit, expected_hash):
+def _validate_current_code_audit_record(code_audit, expected_hash,
+                                        require_post_generation_scope=False):
     if not isinstance(code_audit, dict) or \
             code_audit.get("status") != "accepted" or \
             code_audit.get("independent") is not True or \
@@ -2111,6 +2215,75 @@ def _validate_current_code_audit_record(code_audit, expected_hash):
             code_audit.get("contract_identity") != FT05A_CODE_PREP_CONTRACT_IDENTITY:
         raise FT05AValidationError(
             "FT05A identity migration requires the accepted current code audit")
+    if require_post_generation_scope and \
+            code_audit.get("post_generation_change_scope") != \
+            FT05A_POST_GENERATION_CHANGE_SCOPE_ALLOWLIST_ONLY:
+        raise FT05AValidationError(
+            "FT05A identity migration requires the exact post-generation allowlist marker")
+
+
+def _validate_pending_technical_audit_migration(path, state, cohort, contract,
+                                                w_asset):
+    """Validate the original factual audit before a pending-state migration."""
+    if state.get("technical_audit_path") != _relative(path) or \
+            not _is_sha256(state.get("technical_audit_sha256")):
+        raise FT05AValidationError(
+            "FT05A pending technical-audit path/hash binding is invalid")
+    actual_hash = _sha256_file(path) if os.path.isfile(path) else None
+    if actual_hash is None:
+        raise FT05AValidationError(
+            "FT05A pending technical audit is missing")
+    fields = _technical_audit_fields(
+        _read_text(path, "FT05A pending technical audit"))
+    expected = {
+        "run_identity_sha256": state["run_identity_sha256"],
+        "cohort_sha256": state["identity_payload"]["cohort_sha256"],
+        "case_completion_evidence_hash": _sha256_text(_canonical_json(
+            state.get("completed_case_artifact_hashes", {}))),
+        "technical_case_count": int(len(cohort)),
+        "ft04_lock_identity_sha256": contract["lock"][
+            "lock_identity_sha256"],
+        "code_audit_sha256": state["identity_payload"][
+            "code_audit_sha256"],
+        "runner_sha256": fields["runner_sha256"],
+        "w_original_asset_sha256": w_asset["sha256"],
+        "w_original_order_sha256": W_ORIGINAL_ORDER_SHA256,
+        "row_schema_sha256": _row_schema_hash(),
+    }
+    if fields["status"] == TECHNICAL_AUDIT_PENDING_STATUS and \
+            fields["independent"] == "false" and \
+            fields["verdict"] == TECHNICAL_AUDIT_PENDING_VERDICT:
+        if actual_hash != state["technical_audit_sha256"]:
+            raise FT05AValidationError(
+                "FT05A pending technical-audit hash changed before independent review")
+        _validate_generated_technical_audit(path, expected)
+    elif fields["status"] == "accepted" and \
+            fields["independent"] == "true" and \
+            fields["verdict"] in ("PASS", "PASS_WITH_FINDINGS"):
+        accepted = _validate_technical_audit(path)
+        _validate_technical_audit_binding(accepted, expected)
+    else:
+        raise FT05AValidationError(
+            "FT05A pending technical audit has an invalid review state")
+
+    existing_binding = state.get("generation_binding")
+    if existing_binding is not None:
+        for key, value in expected.items():
+            if existing_binding.get(key) != value:
+                raise FT05AValidationError(
+                    "FT05A generation binding differs from the technical audit")
+        if existing_binding.get("w_original_asset_path") != w_asset["path"] or \
+                existing_binding.get("technical_audit_sha256") != \
+                state["technical_audit_sha256"]:
+            raise FT05AValidationError(
+                "FT05A generation technical-audit binding is inconsistent")
+    generation_binding = _generation_binding_from_audit_fields(fields, w_asset)
+    generation_binding["technical_audit_sha256"] = state[
+        "technical_audit_sha256"]
+    candidate_binding = existing_binding or generation_binding
+    if existing_binding is None:
+        state["generation_binding"] = candidate_binding
+    return fields
 
 
 def _load_or_create_state(path, expected, resume, code_audit=None, cohort=None,
@@ -2129,8 +2302,29 @@ def _load_or_create_state(path, expected, resume, code_audit=None, cohort=None,
                 state.get("identity_payload"), expected.get("identity_payload")):
             raise FT05AValidationError("conflicting FT05A run identity")
         if state.get("status") == TECHNICAL_COMPLETE_PENDING_REVIEW:
-            raise FT05AValidationError(
-                "FT05A technical-complete state cannot migrate code identity")
+            if manifest_path is not None:
+                _refuse_existing_manifest(manifest_path, state)
+            _validate_current_code_audit_record(
+                code_audit, expected["identity_payload"]["code_audit_sha256"],
+                require_post_generation_scope=True)
+            if migration_validator is None:
+                raise FT05AValidationError(
+                    "FT05A pending-state migration requires completed-case validation")
+            migrated = copy.deepcopy(state)
+            migration_validator(migrated)
+            # A pending technical run keeps its original run identity and
+            # generation identity.  Only the separately accepted current code
+            # audit authorizes continuation; it never rewrites the factual
+            # generation audit binding.
+            if migrated.get("run_identity_sha256") != state.get(
+                    "run_identity_sha256") or \
+                    migrated.get("identity_payload") != state.get(
+                        "identity_payload"):
+                raise FT05AValidationError(
+                    "FT05A pending-state migration changed the original identity")
+            _validate_run_state_structure(migrated, expected, cohort=cohort)
+            _write_json_atomic(path, migrated)
+            return migrated
         if state.get("status") == "FINALIZING":
             raise FT05AValidationError(
                 "FT05A finalization state cannot be migrated across code remediation")
@@ -2351,15 +2545,29 @@ def _recover_finalization(state, state_path, contract=None, cohort=None,
                        "w_original_asset_sha256")):
         raise FT05AValidationError("FT05 finalization hashes are invalid")
 
-    expected_state = _initial_run_state(
-        state.get("run_id"), cohort, contract["lock"], contract["code_audit"],
-        output_root)
+    payload = state.get("identity_payload") or {}
+    expected_payload = {
+        "artifact": "FT05A_one_time_run",
+        "run_id": state.get("run_id"),
+        "ft04_lock_identity_sha256": contract["lock"][
+            "lock_identity_sha256"],
+        "cohort_sha256": _canonical_frame_hash(cohort),
+        "candidate_hashes": {"R_low": R_LOW_CANDIDATE_HASH,
+                              "R_high": R_HIGH_CANDIDATE_HASH},
+        "w_original_order_sha256": W_ORIGINAL_ORDER_SHA256,
+        "w_original_asset_path": w_asset.get("path"),
+        "w_original_asset_sha256": w_asset.get("sha256"),
+        "code_audit_sha256": payload.get("code_audit_sha256"),
+        "output_root": _relative(output_root),
+    }
     if state.get("schema_version") != FT05A_SCHEMA_VERSION or \
             state.get("artifact_id") != "FT05A_run_state" or \
-            state.get("run_identity_sha256") != expected_state["run_identity_sha256"] or \
-            state.get("identity_payload") != expected_state["identity_payload"] or \
+            payload != expected_payload or \
+            not _is_sha256(state.get("run_identity_sha256")) or \
+            state.get("run_identity_sha256") != _sha256_text(
+                _canonical_json(payload)) or \
             transaction["run_identity_sha256"] != state.get("run_identity_sha256") or \
-            transaction["cohort_sha256"] != expected_state["identity_payload"]["cohort_sha256"] or \
+            transaction["cohort_sha256"] != payload.get("cohort_sha256") or \
             state.get("target_patient_count") != len(cohort) or \
             state.get("target_patient_ids_hash") != _sha256_text(
                 "\n".join(cohort["patient_id"].astype(str))):
@@ -2610,6 +2818,10 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
             raise FT05AValidationError(
                 "FT05A migration W_Original asset does not cover the cohort")
         checked = copy.deepcopy(candidate)
+        if checked.get("status") == TECHNICAL_COMPLETE_PENDING_REVIEW:
+            _validate_pending_technical_audit_migration(
+                technical_audit_path, checked, cohort_frame, contract,
+                migration_w_asset)
         _reconcile_existing_cases(
             checked, cohort_frame, contract, migration_w_asset, case_root)
         if checked.get("completed_case_keys") != completed_before or \
@@ -2618,6 +2830,9 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
                 checked.get("pilot_case_keys") != pilot_before:
             raise FT05AValidationError(
                 "FT05A migration would change completed-case evidence")
+        if checked.get("generation_binding") is not None:
+            candidate["generation_binding"] = copy.deepcopy(
+                checked["generation_binding"])
 
     owner_path, owner = _acquire_run_ownership(
         output_root, expected["run_identity_sha256"])
@@ -2742,10 +2957,29 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
                 "FT05A cannot finalize with incomplete case completion")
         if set(source_record_map) != set(completed):
             raise FT05AValidationError("FT05A source-record completion is incomplete")
+        if state.get("generation_binding") is None:
+            state["generation_binding"] = _new_generation_binding(
+                state, cohort_frame, contract, w_asset, contract["code_audit"])
+        else:
+            binding = state["generation_binding"]
+            if binding.get("w_original_asset_path") != w_asset["path"] or \
+                    binding.get("w_original_asset_sha256") != w_asset["sha256"] or \
+                    binding.get("w_original_order_sha256") != W_ORIGINAL_ORDER_SHA256 or \
+                    binding.get("row_schema_sha256") != _row_schema_hash() or \
+                    binding.get("technical_case_count") != len(cohort_frame):
+                raise FT05AValidationError(
+                    "FT05A generation binding does not match accepted technical inputs")
         technical_audit = _ensure_technical_generation_audit(
             technical_audit_path, state, cohort_frame, contract, w_asset,
             contract["code_audit"])
         if technical_audit["status"] != "accepted":
+            if state["generation_binding"].get("technical_audit_sha256") is not None and \
+                    state["generation_binding"]["technical_audit_sha256"] != \
+                    technical_audit["sha256"]:
+                raise FT05AValidationError(
+                    "FT05A pending technical-audit hash changed")
+            state["generation_binding"]["technical_audit_sha256"] = \
+                technical_audit["sha256"]
             state["status"] = TECHNICAL_COMPLETE_PENDING_REVIEW
             state["technical_audit_path"] = _relative(technical_audit_path)
             state["technical_audit_sha256"] = technical_audit["sha256"]
@@ -2756,6 +2990,9 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
                 "technical_audit": technical_audit,
                 "completed_case_count": int(state["completed_case_count"]),
             }
+        if state["generation_binding"].get("technical_audit_sha256") is None:
+            state["generation_binding"]["technical_audit_sha256"] = \
+                technical_audit["sha256"]
         manifest = _finalize_manifest(
             contract, cohort_frame, source_record_map, state, output_root,
             manifest_path, technical_audit_path, code_audit_path, w_asset,
