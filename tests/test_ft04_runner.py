@@ -5,10 +5,12 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from unittest import mock
 
 import numpy as np
@@ -34,6 +36,29 @@ class FT04RunnerTests(unittest.TestCase):
     def _lock(self):
         return ft04.validate_ft_model_freeze_lock(self._lock_path())
 
+    def _temporary_lock_with_digest(self, mutate=None):
+        temp = tempfile.TemporaryDirectory(
+            dir=os.path.join(ROOT, "prognosis_analysis", "output"))
+        lock_path = os.path.join(temp.name, "FT_model_freeze_lock.json")
+        digest_path = os.path.join(temp.name, "FT04_lock_sha256.json")
+        lock = json.loads(json.dumps(self._lock()))
+        lock["provenance"]["git_binding"]["current_file_bindings"][
+            "ft04_lock"]["digest_attestation_path"] = ft04._relative(digest_path)
+        if mutate is not None:
+            mutate(lock)
+        lock["lock_identity_sha256"] = ft04._lock_identity(lock)
+        self._write_json(lock_path, lock)
+        self._write_json(digest_path, {
+            "schema_version": "1.0",
+            "artifact_id": "FT04_lock_sha256_attestation",
+            "status": "canonical",
+            "hash_algorithm": "SHA-256",
+            "lock_path": ft04._relative(lock_path),
+            "lock_sha256": ft04._sha256_file(lock_path),
+            "self_referential": False,
+        })
+        return temp, lock_path, digest_path
+
     def _write_json(self, path, payload):
         with open(path, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2,
@@ -55,11 +80,11 @@ class FT04RunnerTests(unittest.TestCase):
         frame["patient_id"] = ["B%03d" % index for index in range(len(frame))]
         frame["split"] = "B"
         feature_frame = frame.drop(columns=["DFS_time", "DFS_event"])
+        feature_frame = feature_frame[
+            ft04._canonical_b_feature_columns() + ["split"]]
         table_path = os.path.join(root, "features.csv")
         feature_frame.to_csv(table_path, index=False)
-        w_path = os.path.join(root, "W_Original_reused_asset.bin")
-        with open(w_path, "wb") as handle:
-            handle.write(b"synthetic W_Original asset")
+        w_binding = lock["habitat_definition"]["W_Original_asset"]
         ft04_review_path = os.path.join(root, "FT04_review.md")
         runner_sha = lock["provenance"]["git_binding"]["current_file_bindings"][
             "ft04_runner"]["sha256"]
@@ -70,8 +95,13 @@ class FT04RunnerTests(unittest.TestCase):
                 "`accepted for downstream use`\n\n"
                 "Independent review: true\n"
                 "FT04 lock identity SHA-256: `%s`\n"
-                "FT04 runner SHA-256: `%s`\n" % (
-                    lock["lock_identity_sha256"], runner_sha))
+                "FT04 lock file SHA-256: `%s`\n"
+                "FT04 runner SHA-256: `%s`\n"
+                "FT04 reviewed remediation commit: `%s`\n" % (
+                    lock["lock_identity_sha256"],
+                    ft04._sha256_file(os.path.join(
+                        FT_ROOT, "FT_model_freeze_lock.json")),
+                    runner_sha, ft04._git_head()))
         technical_review_path = os.path.join(
             root, "FT05A_B_technical_generation_audit.md")
         code_review_path = os.path.join(root, "FT05A_code_audit.md")
@@ -118,8 +148,8 @@ class FT04RunnerTests(unittest.TestCase):
                     "order_sha256": ft04.ft02.W_ORIGINAL_ORDER_SHA256,
                     "reused_existing_asset": True,
                     "reextracted": False,
-                    "asset_path": ft04._relative(w_path),
-                    "asset_sha256": ft04._sha256_file(w_path),
+                    "asset_path": w_binding["path"],
+                    "asset_sha256": w_binding["asset_sha256"],
                 },
             },
             "frozen_a_full_boundary": {
@@ -176,14 +206,25 @@ class FT04RunnerTests(unittest.TestCase):
             "ft04_lock_identity_sha256": lock["lock_identity_sha256"],
             "ft05_manifest_sha256": ft04._sha256_file(manifest_path),
         })
-        patches = mock.patch.multiple(
+        original_sha256_file = ft04._sha256_file
+        w_asset_path = ft04._absolute(w_binding["path"])
+        def sha256_without_opening_w_asset(path):
+            if os.path.normcase(os.path.abspath(path)) == \
+                    os.path.normcase(os.path.abspath(w_asset_path)):
+                return w_binding["asset_sha256"]
+            return original_sha256_file(path)
+        patches = ExitStack()
+        patches.enter_context(mock.patch.multiple(
             ft04,
             FT04_REVIEW=ft04_review_path,
             FT05_MANIFEST=manifest_path,
             FT_B_UNLOCK=unlock_path,
             FT05A_TECHNICAL_AUDIT=technical_review_path,
-            FT05A_CODE_AUDIT=code_review_path)
-        return temp, patches, feature_frame, manifest_path, unlock_path, manifest
+            FT05A_CODE_AUDIT=code_review_path))
+        patches.enter_context(mock.patch.object(
+            ft04, "_sha256_file", side_effect=sha256_without_opening_w_asset))
+        return temp, patches, \
+            feature_frame, manifest_path, unlock_path, manifest
 
     def test_full_fit_state_serialization_and_replay(self):
         state, model, prep, frame, original_risk = ft04._fit_full_model(
@@ -237,6 +278,12 @@ class FT04RunnerTests(unittest.TestCase):
         self.assertEqual(
             binding["current_file_bindings"]["ft04_runner"]["sha256"],
             ft04._sha256_file(os.path.join(FT_ROOT, "ft04_runner.py")))
+        self.assertEqual(
+            binding["current_file_bindings"]["ft04_lock"]["hash_type"],
+            "exact_serialized_file_sha256")
+        self.assertEqual(
+            binding["current_file_bindings"]["ft04_lock"]["digest_attestation_path"],
+            "prognosis_analysis/ft/FT04_lock_sha256.json")
 
     def test_lock_rejects_invalid_git_commit_binding(self):
         lock = self._lock()
@@ -267,10 +314,60 @@ class FT04RunnerTests(unittest.TestCase):
             with self.assertRaises(ft04.FT04ValidationError):
                 ft04.validate_ft_model_freeze_lock(copy_path)
 
+    def test_lock_requires_exact_digest_and_rejects_mutated_serialized_bytes(self):
+        temp, copy_path, digest_path = self._temporary_lock_with_digest()
+        try:
+            with mock.patch.object(ft04, "FT04_LOCK_DIGEST", digest_path):
+                ft04.validate_ft_model_freeze_lock(copy_path)
+                with open(copy_path, "ab") as handle:
+                    handle.write(b" ")
+                with self.assertRaises(ft04.FT04ValidationError):
+                    ft04.validate_ft_model_freeze_lock(copy_path)
+        finally:
+            temp.cleanup()
+
+    def test_lock_rejects_injected_embedded_lock_hash_even_with_matching_digest(self):
+        def inject_hash(lock):
+            lock["provenance"]["git_binding"]["current_file_bindings"][
+                "ft04_lock"]["lock_sha256"] = "0" * 64
+        temp, copy_path, digest_path = self._temporary_lock_with_digest(inject_hash)
+        try:
+            with mock.patch.object(ft04, "FT04_LOCK_DIGEST", digest_path):
+                with self.assertRaises(ft04.FT04ValidationError):
+                    ft04.validate_ft_model_freeze_lock(copy_path)
+        finally:
+            temp.cleanup()
+
     def test_missing_or_forged_ft04_review_fails_closed(self):
         lock = self._lock()
         with self.assertRaises(ft04.FT04ValidationError):
             ft04._validate_ft04_review(lock)
+
+    def test_accepted_review_must_attest_current_lock_and_reviewed_commit(self):
+        lock = self._lock()
+        for replacement in (
+                "FT04 lock file SHA-256: `0000000000000000000000000000000000000000000000000000000000000000`\n",
+                "",
+                "FT04 reviewed remediation commit: 0000000000000000000000000000000000000000\n"):
+            temp, patches, frame, manifest_path, unused_unlock, unused_manifest = \
+                self._downstream_fixtures(lock)
+            try:
+                review_path = os.path.join(temp.name, "FT04_review.md")
+                with open(review_path, "r", encoding="utf-8") as handle:
+                    text = handle.read()
+                if replacement.startswith("FT04 lock file"):
+                    text = re.sub(r"FT04 lock file SHA-256:.*\n", replacement, text)
+                elif not replacement:
+                    text = re.sub(r"FT04 lock file SHA-256:.*\n", "", text)
+                else:
+                    text = re.sub(r"FT04 reviewed remediation commit:.*\n", replacement, text)
+                with open(review_path, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(text)
+                with patches:
+                    with self.assertRaises(ft04.FT04ValidationError):
+                        ft04.predict_b_from_frozen(frame, "M0")
+            finally:
+                temp.cleanup()
 
     def test_prediction_requires_complete_canonical_manifest_and_review(self):
         lock = self._lock()
@@ -286,6 +383,95 @@ class FT04RunnerTests(unittest.TestCase):
                     ft04.predict_b_from_frozen(frame, "M0")
         finally:
             temp.cleanup()
+
+    def test_prediction_loads_the_canonical_table_when_frame_is_omitted(self):
+        lock = self._lock()
+        temp, patches, unused_frame, unused_manifest_path, unused_unlock, unused_manifest = \
+            self._downstream_fixtures(lock)
+        try:
+            with patches:
+                prediction = ft04.predict_b_from_frozen(None, "M0")
+                self.assertEqual(len(prediction), 8)
+        finally:
+            temp.cleanup()
+
+    def test_forged_caller_frame_is_rejected_against_canonical_table(self):
+        lock = self._lock()
+        for mutation in ("value", "row", "columns", "extra", "missing"):
+            temp, patches, frame, unused_manifest_path, unused_unlock, unused_manifest = \
+                self._downstream_fixtures(lock)
+            try:
+                forged = frame.copy()
+                if mutation == "value":
+                    forged.loc[0, "年龄"] = float(forged.loc[0, "年龄"]) + 1.0
+                elif mutation == "row":
+                    forged = forged.iloc[::-1].reset_index(drop=True)
+                elif mutation == "columns":
+                    forged = forged[list(forged.columns)[::-1]]
+                elif mutation == "extra":
+                    forged["forged_extra"] = 1.0
+                else:
+                    forged = forged.drop(columns=["年龄"])
+                with patches:
+                    with self.assertRaises(ft04.FT04ValidationError):
+                        ft04.predict_b_from_frozen(forged, "M0")
+            finally:
+                temp.cleanup()
+
+    def test_feature_table_hash_row_column_value_and_finite_checks_fail_closed(self):
+        lock = self._lock()
+        for mutation in ("hash", "row", "columns", "value", "nonfinite"):
+            temp, patches, frame, manifest_path, unused_unlock, manifest = \
+                self._downstream_fixtures(lock)
+            try:
+                table_path = ft04._absolute(manifest["feature_table"]["path"])
+                table = pd.read_csv(table_path)
+                if mutation == "hash":
+                    table.loc[0, "年龄"] = float(table.loc[0, "年龄"]) + 1.0
+                    table.to_csv(table_path, index=False)
+                elif mutation == "row":
+                    manifest["feature_table"]["row_count"] += 1
+                elif mutation == "columns":
+                    table = table[list(table.columns)[::-1]]
+                    table.to_csv(table_path, index=False)
+                    manifest["feature_table"]["sha256"] = ft04._sha256_file(table_path)
+                elif mutation == "value":
+                    table.loc[0, "年龄"] = float(table.loc[0, "年龄"]) + 1.0
+                    table.to_csv(table_path, index=False)
+                    manifest["feature_table"]["sha256"] = ft04._sha256_file(table_path)
+                else:
+                    table.loc[0, "年龄"] = np.inf
+                    table.to_csv(table_path, index=False)
+                    manifest["feature_table"]["sha256"] = ft04._sha256_file(table_path)
+                self._write_manifest(manifest_path, manifest)
+                with patches:
+                    with self.assertRaises(ft04.FT04ValidationError):
+                        ft04.predict_b_from_frozen(frame, "M0")
+            finally:
+                temp.cleanup()
+
+    def test_arbitrary_and_self_reported_w_original_assets_are_rejected(self):
+        lock = self._lock()
+        for mode in ("arbitrary", "self_reported_hash"):
+            temp, patches, frame, manifest_path, unused_unlock, manifest = \
+                self._downstream_fixtures(lock)
+            try:
+                if mode == "arbitrary":
+                    forged_path = os.path.join(temp.name, "forged_w_original.bin")
+                    with open(forged_path, "wb") as handle:
+                        handle.write(b"forged W_Original")
+                    manifest["feature_blocks"]["W_Original"]["asset_path"] = \
+                        ft04._relative(forged_path)
+                    manifest["feature_blocks"]["W_Original"]["asset_sha256"] = \
+                        ft04._sha256_file(forged_path)
+                else:
+                    manifest["feature_blocks"]["W_Original"]["asset_sha256"] = "0" * 64
+                self._write_manifest(manifest_path, manifest)
+                with patches:
+                    with self.assertRaises(ft04.FT04ValidationError):
+                        ft04.predict_b_from_frozen(frame, "M0")
+            finally:
+                temp.cleanup()
 
     def test_alternate_manifest_and_unlock_paths_are_rejected(self):
         lock = self._lock()
