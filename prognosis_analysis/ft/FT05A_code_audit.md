@@ -1,50 +1,37 @@
-# FT05A Independent Pre-run Code Audit — Round 7
+# FT05A Independent Pre-run Code Audit — Round 8
 
 Independent review: true
 
-Reviewed FT05A implementation commit: `fa725c88ac2e6b82726902fac48cd6bb5369b39c`
+Reviewed FT05A implementation commit: `ab77eb3085b3eac4c899bfd116c360d8fb152ab5`
 
-FT05A runner SHA-256: `475b3f86bd2ccd9966f1fee6fb2d4a73f7bc4f9d93a690418a5857ea4913310e`
+FT05A runner SHA-256: `32d133122f6c2714177705a0283374e2d38167ae4b45ace1dbae95a7d3ddbd54`
 
 FT05A preparation contract identity: `FT05A_code_prep_contract_v1`
 
 ## Verdict
 
-Verdict: PASS
+Verdict: FAIL
 
 ## Scope and evidence
 
-- Reviewed the repository instructions, FT scheme and approved amendment, accepted FT00–FT04 artifacts, prior FT05A contracts and audits, the round-6 remediation, current `prognosis_analysis/ft/ft05a_runner.py`, current `tests/test_ft05a_runner.py`, and implementation commit `fa725c8`.
-- The production defaults for `FT05_B_feature_manifest.json`, `FT05A_code_audit.md`, and `FT05A_B_technical_generation_audit.md` each pass `_validate_namespace_path` on Windows and resolve to their canonical tracked locations.
-- The namespace validator uses `normcase(realpath(...))` for both the candidate and trusted canonical-artifact sets. Exact tracked-path admission additionally requires the caller's literal spelling to equal the canonical constant; the output root requires the single literal absolute canonical spelling.
-- An independent round-7 synthetic probe accepted the three exact tracked paths and rejected relative, dot-segment, parent-normalized, descendant, case, slash, trailing-dot, trailing-space, and extended-path aliases before preflight, ownership, W_Original loading, cohort loading, state/output writers, or hashing. Existing junction/reparse coverage rejected an output-root alias before processing.
-- FT05A wrapper regression: 33 tests passed, with one Windows symbolic-link privilege skip and no failures.
-- FT04, FT03, FT02, and W07 wrapper regression: 65 tests passed with no failures.
-- FT05A static validation returned no B clustering fit, outcome reader, whole-tumour re-extraction, formal-directory mixing, or other static finding.
-- FT04 lock validation returned `VALID` with lock identity `10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e`.
-- No production FT05A manifest, technical feature table, run state, or FT05B unlock was accessed or created. No B image/ROI, B outcome or clinical table, patient-level output, or real FT05A technical artifact was read or written during this review.
+- The reviewed commit is limited to `prognosis_analysis/ft/ft05a_runner.py` and `tests/test_ft05a_runner.py`. No real B image, ROI, W_Original value, outcome, clinical/prognostic data, patient-level output, or real FT05A run artifact was accessed or changed during this review.
+- The pilot and full W_Original paths now call the same physical-record CSV parser and the same `_canonical_w_original_value` conversion. Accepted B/R1 rows are filtered identically, while malformed rows, nonfinite values, duplicate accepted rows, missing selected rows, duplicate headers, and incomplete row schemas fail closed. The canonical feature order is preserved through `W_ORIGINAL_FEATURE_NAMES` and the row hash uses the same ordered representation.
+- The focused synthetic suite passed: `36` tests, `1` platform-permission skip, `0` failures, through `tools/run_t2_radiomics.ps1` in `t2_radiomics`.
+- The accepted-state synthetic suite passed: `101` tests, `1` platform-permission skip, `0` failures, through `tools/run_t2_radiomics.ps1` in `t2_radiomics`.
+- Static validation returned `pass: true` with no findings for B clustering fit, outcome access, whole-tumour re-extraction, or formal-directory mixing.
+- FT04 lock validation returned `status: VALID` with lock identity `10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e`.
+- The existing path, audit binding, frozen A boundary, PyRadiomics, W_Original trust, source uniqueness, ownership, finalization, technical-only schema, outcome blindness, and no-B-fitting controls remain present in the reviewed implementation. The new synthetic equivalence and unchanged-contract resume tests pass.
 
-## Mandatory control assessment
+## Blocking finding
 
-| Control | Assessment |
-|---|---|
-| Production canonical tracked paths | Exact manifest, code-audit, and technical-audit defaults pass the Windows namespace gate. |
-| Normalized representation | Candidate and trusted artifact membership use the same `normcase(realpath(...))` representation; raw literal comparison is retained only for exact tracked-path admission. |
-| Exact-path and pre-side-effect rejection | Relative, dot, parent, descendant, case, slash, trailing-dot/space, extended, alternate, and reparse aliases fail closed before preflight and technical side effects. |
-| FT04 prerequisite and binding | Frozen FT04 lock, serialized-lock digest, accepted FT04 review, current FT05A code binding, and preparation-contract identity remain enforced. |
-| Outcome blindness and no B fitting | Technical input/result deny-lists, static checks, and the default processor prevent outcome access, B clustering fitting, and feedback from B results. |
-| Frozen A boundary and PyRadiomics | Preflight binds the accepted full-A habitat/SLIC definition, candidate hashes, unchanged A/W03 PyRadiomics configuration, and minimum-ROI rule; processing projects B cases onto that boundary. |
-| W_Original trust and source uniqueness | W_Original path/hash/order/reuse binding is derived from FT04/FT01 trust records; source paths, hashes, keys, case identities, patients, and persisted rows are one-to-one validated. |
-| One-time ownership, pilot, and resume | The canonical owner/state namespace, immutable case artifacts, pilot selection, resume identity, and completed-run refusal prevent duplicate extraction or recomputation. |
-| Finalization and provenance | Interrupted finalization recovery revalidates transaction paths, hashes, case evidence, W_Original bindings, table/manifest equality, and completion state before installation. |
-| Structural/technical states | Structural absence, small-ROI technical unavailability, and available blocks are explicit and consistently serialized; undefined features cannot be treated as available. |
-| Formal-directory isolation | Technical source and output allowlists reject formal/A/FT03/FT04/W08/L9 namespaces and path traversal. |
-| Accepted-state regression | The focused and upstream synthetic suites pass; no regression was detected in the previously accepted FT05A controls. |
+The production resume path cannot continue the existing pilot run after this reviewed code remediation. `_initial_run_state` includes `code_audit_sha256` in `identity_payload`, and `_load_or_create_state` requires both the stored `run_identity_sha256` and the complete stored `identity_payload` to equal newly computed values. The mandatory canonical audit report must be updated to bind commit `ab77eb3` and the new runner hash, which changes `code_audit_sha256`; therefore the pre-remediation pilot state fails the run-identity equality check and is rejected as a conflicting run before completed-case reconciliation. The added resume test keeps the mocked audit identity unchanged and does not cover this code-change transition.
 
-## Nonblocking platform finding
+Completed pilot cases must remain immutable and must not be recomputed or overwritten. Until the continuation path is remediated and independently reviewed, the existing run cannot be safely resumed under the current implementation.
 
-The synthetic directory-symlink test was skipped because the Windows account lacks symbolic-link privilege. This is nonblocking: the equivalent Windows junction/reparse path test passed, and the production validator retains both exact lexical admission and resolved-path containment checks.
+## FT05A-only remediation plan
 
-## Downstream authorization
+Add a fail-closed reviewed-remediation continuation path that accepts the existing logical run only when its run ID, cohort, frozen FT04 lock, accepted W_Original binding, canonical output namespace, and every completed case artifact/source/row hash match. Bind the current reviewed implementation and audit atomically for continuation without recomputing or overwriting completed cases. Add a synthetic regression for a pre-remediation pilot state resumed under the current parser, plus rejection tests for changed cohort/lock/W_Original bindings and tampered completed artifacts. No real B processing or later FT module is authorized while this finding remains open.
 
-FT05A is authorized for the next contract-defined real-B technical-generation step only. The authorization is limited to one outcome-blind first extraction after FT04 freeze, with the existing W_Original asset reused, no B outcome access, no B fitting or optimization, and no FT05B/FT06 execution in this audit.
+## Downstream decision
+
+No downstream authorization. The same-run FT05A resume is not authorized, and this audit does not authorize FT05B or FT06.
