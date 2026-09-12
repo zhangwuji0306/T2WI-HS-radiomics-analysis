@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 
+import json
 import os
 import tempfile
 import unittest
@@ -13,7 +14,8 @@ from prognosis_analysis.ft import ft05a_runner as ft
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUTPUT_PARENT = os.path.join(ROOT, "prognosis_analysis", "output")
+OUTPUT_PARENT = os.path.join(
+    ROOT, "prognosis_analysis", "output", "ft_20260910_01a08bf3", "FT05A")
 
 
 def _relative(path):
@@ -41,9 +43,13 @@ class FT05ARunnerTests(unittest.TestCase):
     def setUp(self):
         if not os.path.isdir(OUTPUT_PARENT):
             os.makedirs(OUTPUT_PARENT)
+        if not os.path.isdir(ft.DEFAULT_TECHNICAL_SOURCE_ROOT):
+            os.makedirs(ft.DEFAULT_TECHNICAL_SOURCE_ROOT)
         self.tmp = tempfile.TemporaryDirectory(dir=OUTPUT_PARENT)
-        self.root = self.tmp.name
-        self.out = os.path.join(self.root, "FT05A")
+        self.source_tmp = tempfile.TemporaryDirectory(
+            dir=ft.DEFAULT_TECHNICAL_SOURCE_ROOT)
+        self.root = self.source_tmp.name
+        self.out = self.tmp.name
         self.cohort = _technical_frame(self.root)
         self.code_audit = os.path.join(self.out, "FT05A_code_audit.md")
         self.technical_audit = os.path.join(self.out, "FT05A_technical_audit.md")
@@ -81,10 +87,11 @@ class FT05ARunnerTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+        self.source_tmp.cleanup()
 
     def _w_asset(self):
         return {"path": self.lock["habitat_definition"]["W_Original_asset"]["path"],
-                "sha256": "w-hash", "feature_count": 107,
+                "sha256": "a" * 64, "feature_count": 107,
                 "order_sha256": ft.W_ORIGINAL_ORDER_SHA256,
                 "rows": {"B%d" % i: {name: float(i + 1)
                                       for name in ft.W_ORIGINAL_FEATURE_NAMES}
@@ -121,6 +128,14 @@ class FT05ARunnerTests(unittest.TestCase):
                                return_value=self.contract), \
                 mock.patch.object(ft, "_load_w_original_asset",
                                   return_value=self._w_asset()) as loader, \
+                mock.patch.object(ft, "_validate_code_audit",
+                                  return_value=self.contract["code_audit"]), \
+                mock.patch.object(ft, "_validate_technical_audit",
+                                  return_value={"path": _relative(self.technical_audit),
+                                                "sha256": ft._sha256_file(self.technical_audit),
+                                                "status": "accepted",
+                                                "independent": True,
+                                                "verdict": "PASS"}), \
                 mock.patch.object(ft, "_frozen_boundary_identity",
                                   return_value="boundary-id"), \
                 mock.patch.object(ft, "FORMAL_MODEL_LOCK",
@@ -133,6 +148,82 @@ class FT05ARunnerTests(unittest.TestCase):
         self.assertFalse(result["B_kmeans_fit"])
         self.assertFalse(result["outcome_accessed"])
         self.assertFalse(result["whole_tumor_reextraction"])
+
+    def test_code_audit_is_bound_to_runner_commit_and_contract(self):
+        reviewed = ft.ft04._git_head()
+        text = ("Independent review: true\nVerdict: PASS\n"
+                "Reviewed implementation commit: `%s`\n"
+                "FT05A runner SHA-256: `%s`\n"
+                "FT05A preparation contract identity: `%s`\n" % (
+                    reviewed, ft._sha256_file(ft.__file__),
+                    ft.FT05A_CODE_PREP_CONTRACT_IDENTITY))
+        with open(self.code_audit, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        record = ft._validate_code_audit(self.code_audit)
+        self.assertEqual(record["reviewed_commit"], reviewed)
+        for marker, replacement in (
+                ("FT05A runner SHA-256", "0" * 64),
+                ("FT05A preparation contract identity", "forged-contract")):
+            with open(self.code_audit, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text.replace(
+                    text.split(marker + ": ")[1].split("\n")[0], replacement))
+            with self.assertRaises(ft.FT05AValidationError):
+                ft._validate_code_audit(self.code_audit)
+
+    def test_technical_cohort_file_requires_preflight_token(self):
+        cohort_path = os.path.join(self.root, "cohort.csv")
+        self.cohort.to_csv(cohort_path, index=False)
+        with self.assertRaises(ft.FT05AValidationError):
+            ft.load_technical_cohort(_relative(cohort_path))
+
+    def test_resolved_disallowed_namespaces_and_noncanonical_output_fail_closed(self):
+        disallowed = (
+            os.path.join(ROOT, "habitat_analysis", "output", "synthetic.bin"),
+            os.path.join(ROOT, "prognosis_analysis", "output", "ft_20260910_01a08bf3", "FT03", "synthetic.bin"),
+            os.path.join(ROOT, "prognosis_analysis", "output", "ft_20260910_01a08bf3", "FT04", "synthetic.bin"),
+            os.path.join(ROOT, "prognosis_analysis", "output", "w08_nested_cv", "synthetic.bin"),
+            os.path.join(ROOT, "prognosis_analysis", "output", "ft_20260910_01a08bf3", "L9", "synthetic.bin"),
+        )
+        for path in disallowed:
+            with self.assertRaises(ft.FT05AValidationError):
+                ft._validate_technical_path(_relative(path), "synthetic source")
+        with self.assertRaises(ft.FT05AValidationError):
+            ft._validate_namespace_path(
+                os.path.join(ROOT, "prognosis_analysis", "output", "other"),
+                "FT05A output root", os.path.join(ROOT, "prognosis_analysis", "output", "other"))
+
+    def test_structural_absence_and_minimum_roi_boundary_are_frozen(self):
+        class Extractor(object):
+            def __init__(self):
+                self.calls = 0
+
+            def execute(self, image, mask, label=1):
+                self.calls += 1
+                return dict((name, 1.0) for name in ft.R_LOW_FEATURE_NAMES)
+
+        extractor = Extractor()
+        empty, defined, available, state = ft._extract_habitat_features(
+            extractor, None, np.zeros(9, dtype=np.uint8),
+            ft.R_LOW_FEATURE_NAMES, "R_low")
+        self.assertFalse(defined)
+        self.assertFalse(available)
+        self.assertEqual(state, "structurally_absent")
+        self.assertTrue(all(value is None for value in empty.values()))
+        small, defined, available, state = ft._extract_habitat_features(
+            extractor, None, np.ones(9, dtype=np.uint8),
+            ft.R_LOW_FEATURE_NAMES, "R_low")
+        self.assertTrue(defined)
+        self.assertFalse(available)
+        self.assertEqual(state, "technical_small_roi")
+        self.assertEqual(extractor.calls, 0)
+        full, defined, available, state = ft._extract_habitat_features(
+            extractor, None, np.ones(ft.MINIMUM_ROI_SIZE, dtype=np.uint8),
+            ft.R_LOW_FEATURE_NAMES, "R_low")
+        self.assertTrue(defined)
+        self.assertTrue(available)
+        self.assertEqual(state, "available")
+        self.assertEqual(extractor.calls, 1)
+        self.assertEqual(full[ft.R_LOW_FEATURE_NAMES[0]], 1.0)
 
     def test_outcome_and_clinical_columns_fail_closed(self):
         for column in ("DFS_event", "DFS_time", "outcome", "clinical_status",
@@ -195,6 +286,119 @@ class FT05ARunnerTests(unittest.TestCase):
         self.assertEqual(state["completed_case_count"], 2)
         self.assertTrue(all(column not in manifest["feature_table"]["columns"]
                             for column in ("DFS_time", "DFS_event", "clinical_status")))
+
+    def test_actual_technical_manifest_passes_canonical_technical_validator(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with self._patches():
+            manifest = ft.run_ft05a(
+                self.cohort, "run-downstream-technical", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor())
+        checked, table, checked_path = ft.validate_ft05a_technical_manifest(
+            manifest_path, output_root=self.out)
+        self.assertEqual(checked["artifact_id"], manifest["artifact_id"])
+        self.assertEqual(list(table.columns), ft._technical_feature_columns(True))
+        self.assertEqual(checked_path, ft._absolute_project_path(
+            manifest["feature_table"]["path"], "technical table"))
+        self.assertNotIn("年龄", table.columns)
+
+    def test_exclusive_owner_rejects_concurrent_start(self):
+        owner_path, owner = ft._acquire_run_ownership(
+            self.out, "synthetic-run-identity")
+        try:
+            with self.assertRaises(ft.FT05AValidationError):
+                ft._acquire_run_ownership(self.out, "synthetic-run-identity")
+        finally:
+            ft._release_run_ownership(owner_path, owner)
+
+    def test_pilot_hashes_only_selected_sources_and_resume_hashes_remaining(self):
+        first_calls = []
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        seen = []
+        original_sha = ft._sha256_file
+
+        def record_sha(path):
+            if os.path.realpath(path).startswith(
+                    os.path.realpath(ft.DEFAULT_TECHNICAL_SOURCE_ROOT)):
+                seen.append(os.path.realpath(path))
+            return original_sha(path)
+
+        with self._patches(), mock.patch.object(ft, "_sha256_file",
+                                                side_effect=record_sha):
+            ft.run_ft05a(
+                self.cohort, "run-pilot-boundary", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(first_calls), pilot_case_ids=["B0"])
+        expected_pilot = {
+            os.path.realpath(os.path.join(self.root, "image_0.bin")),
+            os.path.realpath(os.path.join(self.root, "roi_0.bin")),
+        }
+        self.assertEqual(set(seen), expected_pilot)
+        second_calls = []
+        seen[:] = []
+        with self._patches(), mock.patch.object(ft, "_sha256_file",
+                                                side_effect=record_sha):
+            ft.run_ft05a(
+                self.cohort, "run-pilot-boundary", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(second_calls), resume=True)
+        expected_all = set()
+        for index in range(2):
+            expected_all.add(os.path.realpath(os.path.join(self.root, "image_%d.bin" % index)))
+            expected_all.add(os.path.realpath(os.path.join(self.root, "roi_%d.bin" % index)))
+        self.assertEqual(set(seen), expected_all)
+        self.assertEqual(second_calls, ["B1"])
+
+    def test_tampered_completed_artifact_is_rejected_on_resume(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with self._patches():
+            ft.run_ft05a(
+                self.cohort, "run-tamper", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(), pilot_case_ids=["B0"])
+        state = ft._read_json(os.path.join(self.out, "FT05A_run_state.json"))
+        key = state["completed_case_keys"][0]
+        artifact_path = os.path.join(self.out, "cases", key + ".json")
+        artifact = ft._read_json(artifact_path)
+        artifact["row"]["W__" + ft.W_ORIGINAL_FEATURE_NAMES[0]] = 999.0
+        with open(artifact_path, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(artifact, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        with self._patches():
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-tamper", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(failure=AssertionError("recomputed")),
+                    resume=True)
+
+    def test_finalization_recovers_after_interrupted_state_transition(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with self._patches(), mock.patch.object(
+                ft, "_recover_finalization", side_effect=RuntimeError("interrupted")):
+            with self.assertRaises(RuntimeError):
+                ft.run_ft05a(
+                    self.cohort, "run-finalize-recovery", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor())
+        state = ft._read_json(os.path.join(self.out, "FT05A_run_state.json"))
+        self.assertEqual(state["status"], "FINALIZING")
+        with self._patches():
+            manifest = ft.run_ft05a(
+                self.cohort, "run-finalize-recovery", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(failure=AssertionError("recomputed")),
+                resume=True)
+        self.assertEqual(manifest["status"], "frozen")
+        self.assertEqual(ft._read_json(os.path.join(
+            self.out, "FT05A_run_state.json"))["status"], "COMPLETED")
 
     def test_resume_skips_completed_pilot_cases_without_recomputation(self):
         first_calls = []

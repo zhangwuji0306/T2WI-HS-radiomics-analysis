@@ -355,8 +355,12 @@ class FT04RunnerTests(unittest.TestCase):
 
     def test_missing_or_forged_ft04_review_fails_closed(self):
         lock = self._lock()
-        with self.assertRaises(ft04.FT04ValidationError):
-            ft04._validate_ft04_review(lock)
+        with tempfile.TemporaryDirectory(
+                dir=os.path.join(ROOT, "prognosis_analysis", "output")) as tmp:
+            missing_review = os.path.join(tmp, "missing_FT04_review.md")
+            with mock.patch.object(ft04, "FT04_REVIEW", missing_review):
+                with self.assertRaises(ft04.FT04ValidationError):
+                    ft04._validate_ft04_review(lock)
 
     def test_accepted_review_must_attest_current_lock_and_reviewed_commit(self):
         lock = self._lock()
