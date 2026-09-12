@@ -3,6 +3,7 @@ from __future__ import absolute_import
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -49,7 +50,7 @@ class FT05ARunnerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(dir=OUTPUT_PARENT)
         self._output_constants = {
             name: getattr(ft, name) for name in (
-                "DEFAULT_OUTPUT_ROOT", "DEFAULT_MANIFEST",
+                "CANONICAL_OUTPUT_ROOT", "DEFAULT_OUTPUT_ROOT", "DEFAULT_MANIFEST",
                 "DEFAULT_CODE_AUDIT", "DEFAULT_TECHNICAL_AUDIT",
                 "DEFAULT_RUN_STATE", "DEFAULT_CASE_ROOT",
                 "DEFAULT_FEATURE_TABLE")}
@@ -59,6 +60,7 @@ class FT05ARunnerTests(unittest.TestCase):
         self.out = self.tmp.name
         # Keep the fixture synthetic while exercising the production rule that
         # one invocation has exactly one canonical output root.
+        ft.CANONICAL_OUTPUT_ROOT = self.out
         ft.DEFAULT_OUTPUT_ROOT = self.out
         ft.DEFAULT_MANIFEST = os.path.join(self.out, "FT05_B_feature_manifest.json")
         ft.DEFAULT_CODE_AUDIT = os.path.join(self.out, "FT05A_code_audit.md")
@@ -493,22 +495,49 @@ class FT05ARunnerTests(unittest.TestCase):
             loader.assert_not_called()
             self.assertFalse(os.path.exists(descendant))
 
-    def test_canonical_output_aliases_collapse_to_one_namespace(self):
-        canonical = os.path.realpath(ft.DEFAULT_OUTPUT_ROOT)
-        aliases = (
+    def test_nonexact_output_root_spellings_fail_before_side_effects(self):
+        canonical = ft.CANONICAL_OUTPUT_ROOT
+        aliases = [
             os.path.relpath(canonical, ROOT),
             os.path.join(canonical, ".", "nested", ".."),
             os.path.join(canonical, "..", os.path.basename(canonical)),
-        )
-        for alias in aliases:
-            self.assertEqual(
-                ft._validate_namespace_path(
-                    alias, "FT05A output root", alias), canonical)
+            canonical + os.sep,
+        ]
+        aliases.append(canonical.upper())
         if os.name == "nt":
-            self.assertEqual(
-                ft._validate_namespace_path(
-                    canonical.upper(), "FT05A output root", canonical.upper()),
-                canonical)
+            aliases.extend((canonical.replace("\\", "/"),
+                            canonical + ".", canonical + " "))
+        for alias in aliases:
+            calls = []
+            with mock.patch.object(ft, "_acquire_run_ownership",
+                                   side_effect=AssertionError("owner")), \
+                    mock.patch.object(ft, "_load_w_original_asset",
+                                      side_effect=AssertionError("W_Original")), \
+                    mock.patch.object(ft, "load_technical_cohort",
+                                      side_effect=AssertionError("cohort")), \
+                    mock.patch.object(ft, "_write_json_exclusive",
+                                      side_effect=AssertionError("owner writer")), \
+                    mock.patch.object(ft, "_write_json_atomic",
+                                      side_effect=AssertionError("output writer")), \
+                    mock.patch.object(ft, "_sha256_file",
+                                      side_effect=AssertionError("hash")):
+                with self.assertRaises(ft.FT05AValidationError):
+                    ft.run_ft05a(
+                        self.cohort, "run-nonexact-root", output_root=alias,
+                        manifest_path=self.code_audit,
+                        code_audit_path=self.code_audit,
+                        technical_audit_path=self.technical_audit,
+                        processor=lambda record, contract: calls.append(record))
+            self.assertEqual(calls, [])
+            self.assertFalse(os.path.exists(os.path.join(
+                os.path.dirname(canonical), "FT05A_run_owner.json")))
+
+    def test_exact_canonical_output_root_is_accepted(self):
+        self.assertEqual(
+            ft._validate_namespace_path(
+                ft.CANONICAL_OUTPUT_ROOT, "FT05A output root",
+                ft.CANONICAL_OUTPUT_ROOT),
+            ft.CANONICAL_OUTPUT_ROOT)
 
     def test_symlinked_output_escape_is_rejected(self):
         target = tempfile.TemporaryDirectory(dir=OUTPUT_PARENT)
@@ -524,6 +553,37 @@ class FT05ARunnerTests(unittest.TestCase):
         finally:
             if os.path.lexists(alias):
                 os.unlink(alias)
+            target.cleanup()
+
+    def test_junction_output_alias_is_rejected_before_processing(self):
+        if os.name != "nt":
+            self.skipTest("Windows junction test")
+        target = tempfile.TemporaryDirectory(dir=OUTPUT_PARENT)
+        alias = os.path.join(OUTPUT_PARENT, "synthetic_ft05a_junction_alias")
+        try:
+            result = subprocess.run(
+                ["cmd.exe", "/c", "mklink", "/J", alias, target.name],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode != 0:
+                self.skipTest("synthetic directory junction unavailable")
+            calls = []
+            with mock.patch.object(ft, "_acquire_run_ownership",
+                                   side_effect=AssertionError("owner")), \
+                    mock.patch.object(ft, "_load_w_original_asset",
+                                      side_effect=AssertionError("W_Original")), \
+                    mock.patch.object(ft, "load_technical_cohort",
+                                      side_effect=AssertionError("cohort")):
+                with self.assertRaises(ft.FT05AValidationError):
+                    ft.run_ft05a(
+                        self.cohort, "run-junction-alias", output_root=alias,
+                        manifest_path=self.code_audit,
+                        code_audit_path=self.code_audit,
+                        technical_audit_path=self.technical_audit,
+                        processor=lambda record, contract: calls.append(record))
+            self.assertEqual(calls, [])
+        finally:
+            if os.path.lexists(alias):
+                os.rmdir(alias)
             target.cleanup()
 
     def test_pilot_hashes_only_selected_sources_and_resume_hashes_remaining(self):

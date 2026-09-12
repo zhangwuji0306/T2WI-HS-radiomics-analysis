@@ -41,9 +41,10 @@ FT05A_SCHEMA_VERSION = "1.0"
 FT_LABEL = "exploratory_fullA_habitat_non_nested_validation"
 FT05A_CODE_PREP_CONTRACT_IDENTITY = "FT05A_code_prep_contract_v1"
 MINIMUM_ROI_SIZE = 10
-DEFAULT_OUTPUT_ROOT = os.path.join(
+CANONICAL_OUTPUT_ROOT = os.path.abspath(os.path.join(
     _PROJECT_ROOT, "prognosis_analysis", "output", "ft_20260910_01a08bf3",
-    "FT05A")
+    "FT05A"))
+DEFAULT_OUTPUT_ROOT = CANONICAL_OUTPUT_ROOT
 DEFAULT_TECHNICAL_SOURCE_ROOT = os.path.join(DEFAULT_OUTPUT_ROOT, "sources")
 DEFAULT_MANIFEST = os.path.join(_HERE, "FT05_B_feature_manifest.json")
 DEFAULT_TECHNICAL_AUDIT = os.path.join(
@@ -271,26 +272,32 @@ def _validate_technical_path(value, label, allowed_roots=None,
     return path
 
 
+def _canonical_output_root(output_root):
+    if not isinstance(output_root, str) or not os.path.isabs(output_root):
+        raise FT05AValidationError(
+            "FT05A output root must be the exact absolute canonical spelling")
+    if output_root != CANONICAL_OUTPUT_ROOT:
+        raise FT05AValidationError(
+            "FT05A output root must be the exact canonical FT05A run root")
+    resolved = os.path.realpath(output_root)
+    canonical_resolved = os.path.realpath(CANONICAL_OUTPUT_ROOT)
+    if os.path.normcase(resolved) != os.path.normcase(canonical_resolved):
+        raise FT05AValidationError(
+            "FT05A output root resolves outside the canonical FT05A run root")
+    return CANONICAL_OUTPUT_ROOT
+
+
 def _validate_namespace_path(path, label, output_root, allow_ft_namespace=False):
+    canonical_output = _canonical_output_root(output_root)
+    if label == "FT05A output root":
+        return _canonical_output_root(path)
     if os.path.isabs(path):
         absolute = os.path.realpath(path)
     else:
         absolute = _absolute_project_path(path, label)
     if _contains_formal_path(absolute):
         raise FT05AValidationError("%s is in a formal namespace" % label)
-    if os.path.isabs(output_root):
-        output_root = os.path.realpath(output_root)
-    else:
-        output_root = _absolute_project_path(output_root, "FT05A output root")
-    canonical_output = os.path.realpath(DEFAULT_OUTPUT_ROOT)
-    if label == "FT05A output root":
-        # The run owner, state, cases, staging area, table, and manifest must
-        # all share one immutable namespace.  Returning the canonical spelling
-        # also collapses accepted path aliases to the same on-disk location.
-        if os.path.normcase(output_root) != os.path.normcase(canonical_output):
-            raise FT05AValidationError(
-                "FT05A output root must be the exact canonical FT05A run root")
-        return canonical_output
+    output_root = os.path.realpath(canonical_output)
     ft_root = os.path.realpath(_HERE)
     in_output = _is_contained(absolute, output_root)
     in_ft = _is_contained(absolute, ft_root)
@@ -2094,7 +2101,7 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
             raise FT05AValidationError(
                 "pilot_size must be within the technical cohort")
         pilot_case_ids = list(cohort_frame["patient_id"].astype(str).head(pilot_size))
-    output_root = os.path.realpath(output_root)
+    output_root = os.path.realpath(CANONICAL_OUTPUT_ROOT)
     state_path = os.path.join(output_root, "FT05A_run_state.json")
     expected = _initial_run_state(run_id, cohort_frame, contract["lock"],
                                   contract["code_audit"], output_root)
