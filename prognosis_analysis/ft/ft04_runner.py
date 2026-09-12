@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 from collections import OrderedDict
@@ -48,10 +49,24 @@ DEFAULT_OUTPUT_ROOT = os.path.join(
 DEFAULT_STATE_ROOT = os.path.join(DEFAULT_OUTPUT_ROOT, "model_states")
 DEFAULT_LOCK = os.path.join(_HERE, "FT_model_freeze_lock.json")
 DEFAULT_AUDIT = os.path.join(_HERE, "FT04_refit_and_freeze_audit.md")
+FT04_REVIEW = os.path.join(_HERE, "FT04_review.md")
 FT05_MANIFEST = os.path.join(_HERE, "FT05_B_feature_manifest.json")
-FT05B_UNLOCK = os.path.join(_HERE, "FT05B_outcome_unlock.json")
+FT_B_UNLOCK = os.path.join(_HERE, "FT_B_unlock.json")
+FT05A_TECHNICAL_AUDIT = os.path.join(
+    _HERE, "FT05A_B_technical_generation_audit.md")
+FT05A_CODE_AUDIT = os.path.join(_HERE, "FT05A_code_audit.md")
 FORMAL_MODEL_LOCK = os.path.join(
     _PROJECT_ROOT, "prognosis_analysis", "model_freeze_lock.json")
+
+# This is the immutable first-round FT04 implementation commit.  The final
+# remediation commit is intentionally not embedded in the lock: doing so
+# would make the lock assert a hash for the commit that contains the lock.
+FT04_IMPLEMENTATION_SOURCE_COMMIT = (
+    "8bc0bb0c3fee67b1c81c35cef1aec30ca22a812d")
+R_LOW_CANDIDATE_HASH = (
+    "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0")
+R_HIGH_CANDIDATE_HASH = (
+    "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce")
 
 
 class FT04ValidationError(ValueError):
@@ -137,6 +152,55 @@ def _git_head():
         return None
 
 
+def _git_text(arguments):
+    try:
+        return subprocess.check_output(
+            ["git"] + list(arguments), cwd=_PROJECT_ROOT,
+            stderr=subprocess.STDOUT).decode("ascii").strip()
+    except (OSError, subprocess.CalledProcessError, UnicodeError):
+        return None
+
+
+def _git_commit_resolves(commit):
+    if not isinstance(commit, str) or not re.match(r"^[0-9a-f]{40}$", commit):
+        return False
+    resolved = _git_text(["rev-parse", "%s^{commit}" % commit])
+    return resolved == commit
+
+
+def _git_commit_is_ancestor(commit):
+    head = _git_head()
+    if not head or not _git_commit_resolves(commit):
+        return False
+    try:
+        subprocess.check_call(
+            ["git", "merge-base", "--is-ancestor", commit, head],
+            cwd=_PROJECT_ROOT, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+        return True
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
+def _git_commit_has_path(commit, relative_path):
+    if not _git_commit_resolves(commit):
+        return False
+    if not isinstance(relative_path, str) or os.path.isabs(relative_path):
+        return False
+    value = _git_text(["cat-file", "-e", "%s:%s" %
+                       (commit, relative_path)])
+    return value == ""
+
+
+def _validate_git_commit_binding(commit, role, paths):
+    if not _git_commit_resolves(commit):
+        raise FT04ValidationError("%s does not resolve to a Git commit" % role)
+    if not _git_commit_is_ancestor(commit):
+        raise FT04ValidationError("%s is not an ancestor of the current branch" % role)
+    if not paths or any(not _git_commit_has_path(commit, path) for path in paths):
+        raise FT04ValidationError("%s does not contain its declared FT04 files" % role)
+
+
 def _file_record(path, required=True):
     if not os.path.isfile(path):
         if required:
@@ -162,6 +226,12 @@ def _source_records(frame_paths=None):
         ("ft04_runner", os.path.join(_HERE, "ft04_runner.py")),
         ("ft_scheme", os.path.join(_PROJECT_ROOT, "T2WI-HS 生境预后快速验证（FT）方案书.md")),
         ("environment", os.path.join(_PROJECT_ROOT, "environment.yml")),
+        ("w03_radiomics_protocol", os.path.join(
+            _PROJECT_ROOT, "prognosis_analysis", "W03_habitat_radiomics_protocol.md")),
+        ("w03_radiomics_config", os.path.join(
+            _PROJECT_ROOT, "prognosis_analysis", "configs", "w03_habitat_radiomics.json")),
+        ("radiomics_parameter_file", os.path.join(
+            _PROJECT_ROOT, "feature_extract", "configs", "radiomics_params.yaml")),
         ("w07_split", os.path.join(_PROJECT_ROOT, "prognosis_analysis", "output", "outer_splits_A.csv")),
         ("habitat_freeze_lock", os.path.join(_PROJECT_ROOT, "habitat_analysis", "freeze_lock.json")),
         ("w03_candidate_freeze", os.path.join(
@@ -492,6 +562,70 @@ def _formal_lock_state():
     return _file_record(FORMAL_MODEL_LOCK, required=False)
 
 
+def _frozen_a_boundary_identity(lock):
+    payload = OrderedDict((
+        ("definition", lock.get("habitat_definition")),
+        ("full_A_habitat", lock.get("cohort", {}).get("full_A_habitat")),
+        ("source_hashes", OrderedDict((
+            (key, lock.get("provenance", {}).get("sources", {}).get(
+                key, {}).get("sha256"))
+            for key in ("ft01_asset_manifest", "habitat_freeze_lock",
+                        "w03_candidate_freeze")
+        ))),
+    ))
+    return _sha256_text(_canonical_json(payload))
+
+
+def _pyradiomics_provenance(source_records):
+    return OrderedDict((
+        ("scope", "identical_A_and_W03_configuration_and_provenance"),
+        ("configuration_path", source_records["w03_radiomics_config"]["path"]),
+        ("configuration_sha256", source_records["w03_radiomics_config"]["sha256"]),
+        ("protocol_path", source_records["w03_radiomics_protocol"]["path"]),
+        ("protocol_sha256", source_records["w03_radiomics_protocol"]["sha256"]),
+        ("parameter_file_path", source_records["radiomics_parameter_file"]["path"]),
+        ("parameter_file_sha256", source_records["radiomics_parameter_file"]["sha256"]),
+    ))
+
+
+def _git_binding(source_records, attestation_parent):
+    runner_path = source_records["ft04_runner"]["path"]
+    lock_path = _relative(DEFAULT_LOCK)
+    return OrderedDict((
+        ("implementation_source_commit", FT04_IMPLEMENTATION_SOURCE_COMMIT),
+        ("implementation_source_role",
+         "immutable first-round FT04 implementation/source commit; it contains the reviewed FT04 runner and lock version"),
+        ("implementation_source_paths", [
+            "prognosis_analysis/ft/ft04_runner.py",
+            "prognosis_analysis/ft/FT_model_freeze_lock.json",
+        ]),
+        ("attestation_parent_commit", attestation_parent),
+        ("attestation_parent_role",
+         "pre-remediation parent of the local commit that records the final FT04 lock and audit; this parent is not claimed to contain the remediation"),
+        ("attestation_parent_paths", [
+            "prognosis_analysis/ft/ft04_runner.py",
+            "prognosis_analysis/ft/FT_model_freeze_lock.json",
+        ]),
+        ("final_attestation_commit", OrderedDict((
+            ("hash_embedded", False),
+            ("role", "local child commit recording the final FT04 lock and audit"),
+            ("reason_not_embedded", "embedding it would make the lock self-referential"),
+            ("parent_commit", attestation_parent),
+        ))),
+        ("current_file_bindings", OrderedDict((
+            ("ft04_runner", OrderedDict((
+                ("path", runner_path),
+                ("sha256", source_records["ft04_runner"]["sha256"]),
+            ))),
+            ("ft04_lock", OrderedDict((
+                ("path", lock_path),
+                ("hash_type", "top_level_lock_identity_sha256"),
+                ("sha256_embedded", False),
+            ))),
+        ))),
+    ))
+
+
 def _build_lock(frame, source_records, state_summaries, started_seconds,
                 formal_state, input_sources):
     split, population = ft02.load_frozen_w07_repeat1()
@@ -525,7 +659,9 @@ def _build_lock(frame, source_records, state_summaries, started_seconds,
             ("K", 2),
             ("n_init", 100),
             ("R_low", 49),
+            ("R_low_candidate_hash", R_LOW_CANDIDATE_HASH),
             ("R_high", 10),
+            ("R_high_candidate_hash", R_HIGH_CANDIDATE_HASH),
             ("W_Original", 107),
             ("W_Original_order_sha256", ft02.W_ORIGINAL_ORDER_SHA256),
             ("no_refit", True),
@@ -562,17 +698,18 @@ def _build_lock(frame, source_records, state_summaries, started_seconds,
             ("b_data_read", False),
             ("b_feature_manifest", "prognosis_analysis/ft/FT05_B_feature_manifest.json"),
             ("b_feature_manifest_required_status", "frozen"),
-            ("b_outcome_unlock", "prognosis_analysis/ft/FT05B_outcome_unlock.json"),
+            ("b_outcome_unlock", "prognosis_analysis/ft/FT_B_unlock.json"),
             ("b_outcome_read", False),
             ("ft05a_authorized_only_after_independent_ft04_acceptance", True),
             ("ft05a_executed", False),
             ("ft06_executed", False),
         ))),
         ("provenance", OrderedDict((
-            ("code_commit", _git_head()),
+            ("git_binding", _git_binding(source_records, _git_head())),
             ("wrapper", "tools/run_t2_radiomics.ps1"),
             ("environment", _environment_fingerprint()),
             ("environment_file_sha256", source_records["environment"]["sha256"]),
+            ("pyradiomics", _pyradiomics_provenance(source_records)),
             ("sources", source_records),
             ("input_sources", input_sources),
             ("ft04_runtime_seconds", round(float(started_seconds), 3)),
@@ -601,7 +738,10 @@ def _build_lock(frame, source_records, state_summaries, started_seconds,
     return lock
 
 
-def _write_audit(lock, path):
+def _write_audit(lock, path, lock_path=DEFAULT_LOCK):
+    git_binding = lock["provenance"]["git_binding"]
+    runner_binding = git_binding["current_file_bindings"]["ft04_runner"]
+    lock_file_sha256 = _sha256_file(lock_path)
     lines = [
         "# FT04 Refit and Freeze Audit",
         "",
@@ -630,12 +770,29 @@ def _write_audit(lock, path):
         "",
         "## Provenance and boundaries",
         "",
-        "- Frozen habitat: `K=2`, `n_init=100`, `R_low=49`, `R_high=10`, `W_Original=107`.",
+        "- Frozen habitat: `K=2`, `n_init=100`, `R_low=49` (candidate hash `%s`), `R_high=10` (candidate hash `%s`), `W_Original=107` (order hash `%s`)." % (
+            R_LOW_CANDIDATE_HASH, R_HIGH_CANDIDATE_HASH,
+            ft02.W_ORIGINAL_ORDER_SHA256),
         "- Frozen split binding: W07 repeat 1, five folds, seed `12345`; split regeneration is `false`.",
         "- Endpoint: DFS; prediction horizons: 36 and 60 months.",
         "- B state: locked; FT05A, FT05B, and FT06: not executed.",
         "- Formal lock: `prognosis_analysis/model_freeze_lock.json` unchanged.",
+        "- Immutable implementation/source commit: `%s`; it contains the first-round reviewed FT04 runner and lock version. It is distinct from the remediation attestation." % git_binding["implementation_source_commit"],
+        "- Attestation parent commit: `%s`; it contains the pre-remediation FT04 files and is not claimed to contain the remediation." % git_binding["attestation_parent_commit"],
+        "- The final local attestation commit is the child that records the remediation lock and this audit. Its hash is intentionally not embedded in the lock, avoiding a self-referential commit claim." ,
+        "- Current FT04 runner SHA-256: `%s`; serialized FT04 lock file SHA-256: `%s`; lock payload identity SHA-256: `%s`." % (
+            runner_binding["sha256"], lock_file_sha256,
+            lock["lock_identity_sha256"]),
+        "- PyRadiomics configuration/provenance is bound to the accepted A/W03 files by SHA-256 in `provenance.pyradiomics`.",
+        "- B prediction is fail-closed on the canonical `FT05_B_feature_manifest.json`, an accepted independent FT04 review bound to the current lock/code, and the complete FT05A table/block/provenance/review contract.",
+        "- B outcome evaluation additionally requires the canonical `FT_B_unlock.json`; prediction-only loading does not read or require B outcomes.",
         "- Runtime wrapper: `tools/run_t2_radiomics.ps1`; pre-run long-task estimate: `%d` minutes based on accepted FT03 runtime evidence; no periodic worker polling." % PRE_RUN_ESTIMATE_MINUTES,
+        "",
+        "## Validation",
+        "",
+        "- The seven existing FT04 model states reload in `t2_radiomics` and reproduce their frozen risk/survival outputs; their hashes are preserved.",
+        "- `tests/test_ft04_runner.py`: 15 synthetic/contract tests passed, including canonical-path, Git-binding, review-gate, complete-manifest, hash/provenance, outcome-unlock, tamper, and formal-lock negative coverage.",
+        "- FT04 plus accepted FT03/FT02/W07 wrapper regression suite: 56 tests passed.",
         "",
         "## Deliverables",
         "",
@@ -689,7 +846,7 @@ def run_ft04(output_root=DEFAULT_OUTPUT_ROOT, lock_path=DEFAULT_LOCK,
     lock["lock_identity_sha256"] = _lock_identity(lock)
     _write_json(lock_path, lock)
     validate_ft_model_freeze_lock(lock_path)
-    _write_audit(lock, audit_path)
+    _write_audit(lock, audit_path, lock_path)
     return lock
 
 
@@ -731,11 +888,13 @@ def finalize_ft04_from_existing_states(output_root=DEFAULT_OUTPUT_ROOT,
     lock["lock_identity_sha256"] = _lock_identity(lock)
     _write_json(lock_path, lock)
     validate_ft_model_freeze_lock(lock_path)
-    _write_audit(lock, audit_path)
+    _write_audit(lock, audit_path, lock_path)
     return lock
 
 
 def _validate_source_records(records):
+    if not isinstance(records, dict) or not records:
+        raise FT04ValidationError("FT04 provenance source records are missing")
     for label, record in records.items():
         if not record.get("exists"):
             raise FT04ValidationError("bound source is missing: %s" % label)
@@ -744,8 +903,336 @@ def _validate_source_records(records):
             raise FT04ValidationError("bound source hash mismatch: %s" % label)
 
 
+def _validate_candidate_contract(lock):
+    habitat = lock.get("habitat_definition") or {}
+    expected = {
+        "K": 2,
+        "n_init": 100,
+        "R_low": 49,
+        "R_low_candidate_hash": R_LOW_CANDIDATE_HASH,
+        "R_high": 10,
+        "R_high_candidate_hash": R_HIGH_CANDIDATE_HASH,
+        "W_Original": 107,
+        "W_Original_order_sha256": ft02.W_ORIGINAL_ORDER_SHA256,
+        "no_refit": True,
+    }
+    for key, value in expected.items():
+        if habitat.get(key) != value:
+            raise FT04ValidationError("FT04 frozen habitat contract mismatch: %s" % key)
+
+
+def _validate_git_binding(lock):
+    provenance = lock.get("provenance") or {}
+    if "code_commit" in provenance:
+        raise FT04ValidationError("legacy non-specific code_commit binding is forbidden")
+    binding = provenance.get("git_binding") or {}
+    implementation = binding.get("implementation_source_commit")
+    attestation_parent = binding.get("attestation_parent_commit")
+    _validate_git_commit_binding(
+        implementation, "implementation source commit",
+        binding.get("implementation_source_paths"))
+    _validate_git_commit_binding(
+        attestation_parent, "attestation parent commit",
+        binding.get("attestation_parent_paths"))
+    if implementation == attestation_parent:
+        raise FT04ValidationError("implementation and attestation commits are not distinct")
+    source_paths = binding.get("implementation_source_paths")
+    parent_paths = binding.get("attestation_parent_paths")
+    expected_paths = [
+        "prognosis_analysis/ft/ft04_runner.py",
+        "prognosis_analysis/ft/FT_model_freeze_lock.json",
+    ]
+    if source_paths != expected_paths or parent_paths != expected_paths:
+        raise FT04ValidationError("FT04 Git role paths are incomplete")
+    final_attestation = binding.get("final_attestation_commit") or {}
+    if final_attestation.get("hash_embedded") is not False or \
+            final_attestation.get("parent_commit") != attestation_parent:
+        raise FT04ValidationError("FT04 attestation binding is circular or incomplete")
+    current_files = binding.get("current_file_bindings") or {}
+    runner = current_files.get("ft04_runner") or {}
+    lock_file = current_files.get("ft04_lock") or {}
+    if runner.get("path") != "prognosis_analysis/ft/ft04_runner.py" or \
+            not re.match(r"^[0-9a-f]{64}$", str(runner.get("sha256", ""))):
+        raise FT04ValidationError("current FT04 runner file binding is invalid")
+    current_runner = _absolute(runner["path"])
+    if _sha256_file(current_runner) != runner["sha256"]:
+        raise FT04ValidationError("current FT04 runner file SHA-256 mismatch")
+    source_runner = provenance.get("sources", {}).get("ft04_runner", {})
+    if source_runner.get("sha256") != runner.get("sha256"):
+        raise FT04ValidationError("FT04 runner source and Git bindings disagree")
+    if lock_file.get("path") != _relative(DEFAULT_LOCK) or \
+            lock_file.get("hash_type") != "top_level_lock_identity_sha256" or \
+            lock_file.get("sha256_embedded") is not False:
+        raise FT04ValidationError("current FT04 lock binding is invalid")
+
+
+def _validate_pyradiomics_binding(lock):
+    provenance = lock.get("provenance") or {}
+    sources = provenance.get("sources") or {}
+    expected = {
+        "configuration_path": "w03_radiomics_config",
+        "configuration_sha256": "w03_radiomics_config",
+        "protocol_path": "w03_radiomics_protocol",
+        "protocol_sha256": "w03_radiomics_protocol",
+        "parameter_file_path": "radiomics_parameter_file",
+        "parameter_file_sha256": "radiomics_parameter_file",
+    }
+    record = provenance.get("pyradiomics") or {}
+    if record.get("scope") != "identical_A_and_W03_configuration_and_provenance":
+        raise FT04ValidationError("A/W03 PyRadiomics provenance scope is invalid")
+    for record_key, source_key in expected.items():
+        source = sources.get(source_key) or {}
+        expected_value = source.get("path") if record_key.endswith("_path") else source.get("sha256")
+        if record.get(record_key) != expected_value:
+            raise FT04ValidationError("A/W03 PyRadiomics binding mismatch: %s" % record_key)
+
+
+def _canonical_artifact_path(requested, canonical, label):
+    if requested is None:
+        return canonical
+    if os.path.normcase(os.path.abspath(requested)) != \
+            os.path.normcase(os.path.abspath(canonical)):
+        raise FT04ValidationError("%s must use its canonical path" % label)
+    return canonical
+
+
+def _read_text(path, label):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    except (IOError, OSError, UnicodeError) as exc:
+        raise FT04ValidationError("cannot read %s: %s" % (label, exc))
+
+
+def _marker_digest(text, label):
+    pattern = r"(?im)^\s*(?:[-*]\s*)?`?%s`?\s*(?:SHA-256)?\s*[:=]\s*`?([0-9a-f]{64})`?\s*$" % re.escape(label)
+    match = re.search(pattern, text)
+    if not match:
+        raise FT04ValidationError("review is not bound to %s" % label)
+    return match.group(1).lower()
+
+
+def _validate_ft04_review(lock):
+    path = _canonical_artifact_path(None, FT04_REVIEW, "FT04 review")
+    if not os.path.isfile(path):
+        raise FT04ValidationError("accepted independent FT04 review is required")
+    text = _read_text(path, "FT04 review")
+    lowered = text.lower()
+    if re.search(r"not\s+accepted\s+for\s+downstream\s+use", lowered):
+        raise FT04ValidationError("FT04 review disposition is not accepted")
+    accepted = re.search(
+        r"(?im)^\s*(?:(?:disposition|status)\s*[:：]\s*)?`?accepted\s+for\s+downstream\s+use`?\s*$",
+        text)
+    if not accepted:
+        raise FT04ValidationError("FT04 review disposition is not accepted")
+    if not re.search(r"(?i)independent\s+(?:review|reviewer)|independent\s*[:：=]\s*true", text):
+        raise FT04ValidationError("FT04 review is not marked independent")
+    lock_identity = _marker_digest(text, "FT04 lock identity")
+    runner_sha = _marker_digest(text, "FT04 runner")
+    if lock_identity != lock.get("lock_identity_sha256"):
+        raise FT04ValidationError("FT04 review is bound to a different lock")
+    expected_runner = lock["provenance"]["git_binding"]["current_file_bindings"][
+        "ft04_runner"]["sha256"]
+    if runner_sha != expected_runner:
+        raise FT04ValidationError("FT04 review is bound to different FT04 code")
+    return text
+
+
+def _validate_ft_output_path(relative_path, label):
+    if not isinstance(relative_path, str) or os.path.isabs(relative_path):
+        raise FT04ValidationError("%s must be a relative FT output path" % label)
+    normalized = relative_path.replace("\\", "/")
+    prefix = "prognosis_analysis/output/ft_20260910_01a08bf3/FT05A/"
+    if not normalized.startswith(prefix):
+        raise FT04ValidationError("%s is outside the FT05A output namespace" % label)
+    lowered = normalized.lower()
+    if any(token in lowered for token in ("formal", "/w08/", "/l9/")):
+        raise FT04ValidationError("%s mixes with a formal output namespace" % label)
+    return _absolute(normalized)
+
+
+def _validate_nonformal_relative_path(relative_path, label):
+    if not isinstance(relative_path, str) or os.path.isabs(relative_path):
+        raise FT04ValidationError("%s must be a relative project path" % label)
+    normalized = relative_path.replace("\\", "/")
+    lowered = normalized.lower()
+    if any(token in lowered for token in ("formal", "/w08/", "/l9/")):
+        raise FT04ValidationError("%s mixes with a formal output namespace" % label)
+    return _absolute(normalized)
+
+
+def _technical_feature_columns():
+    columns = ["patient_id"]
+    for block in ("R_low", "R_high"):
+        columns.extend([block + "_structurally_defined",
+                        block + "_technically_available"])
+        columns.extend(ft02.BLOCK_PREFIXES[block] + name
+                       for name in ft02.BLOCK_FEATURE_NAMES[block])
+    columns.append("W_Original_available")
+    columns.extend(ft02.BLOCK_PREFIXES["W_Original"] + name
+                   for name in ft02.BLOCK_FEATURE_NAMES["W_Original"])
+    return columns
+
+
+def _validate_ft05a_review_artifact(record, canonical_path, label):
+    if not isinstance(record, dict) or record.get("path") != _relative(canonical_path):
+        raise FT04ValidationError("%s path is not canonical" % label)
+    if record.get("status") != "accepted" or record.get("independent") is not True or \
+            record.get("verdict") not in ("PASS", "PASS_WITH_FINDINGS"):
+        raise FT04ValidationError("%s is not accepted" % label)
+    if not re.match(r"^[0-9a-f]{64}$", str(record.get("sha256", ""))):
+        raise FT04ValidationError("%s hash is invalid" % label)
+    path = _absolute(record["path"])
+    if _sha256_file(path) != record["sha256"]:
+        raise FT04ValidationError("%s hash mismatch" % label)
+    text = _read_text(path, label)
+    if not re.search(r"(?i)independent", text) or \
+            not re.search(r"(?im)^\s*(?:verdict|status)\s*[:：]\s*(?:PASS|PASS_WITH_FINDINGS|accepted)\s*$", text):
+        raise FT04ValidationError("%s content is incomplete" % label)
+
+
+def _validate_ft05a_feature_table(manifest):
+    table_record = manifest.get("feature_table") or {}
+    required_keys = (
+        "path", "sha256", "format", "complete", "columns", "row_count",
+        "patient_id_column", "patient_count", "patient_ids_unique",
+        "duplicate_patient_count", "duplicate_extraction_count",
+        "extraction_count")
+    if any(key not in table_record for key in required_keys):
+        raise FT04ValidationError("FT05A feature-table completeness record is incomplete")
+    table_path = _validate_ft_output_path(table_record["path"], "FT05A feature table")
+    if table_record.get("format") != "csv" or table_record.get("complete") is not True:
+        raise FT04ValidationError("FT05A feature table is not complete CSV")
+    if not re.match(r"^[0-9a-f]{64}$", str(table_record.get("sha256", ""))):
+        raise FT04ValidationError("FT05A feature-table hash is invalid")
+    if _sha256_file(table_path) != table_record["sha256"]:
+        raise FT04ValidationError("FT05A feature-table hash mismatch")
+    try:
+        table = pd.read_csv(table_path)
+    except (IOError, OSError, ValueError) as exc:
+        raise FT04ValidationError("cannot read FT05A feature table: %s" % exc)
+    if list(table.columns) != table_record["columns"]:
+        raise FT04ValidationError("FT05A feature-table column order mismatch")
+    if table_record.get("patient_id_column") != "patient_id" or \
+            "patient_id" not in table.columns:
+        raise FT04ValidationError("FT05A feature-table patient ID schema is invalid")
+    ids = table["patient_id"].astype(str).str.strip()
+    if ids.eq("").any() or ids.duplicated().any():
+        raise FT04ValidationError("FT05A feature-table patients are not unique")
+    if int(table_record["row_count"]) != len(table) or \
+            int(table_record["patient_count"]) != len(table) or \
+            table_record.get("patient_ids_unique") is not True or \
+            int(table_record["duplicate_patient_count"]) != 0:
+        raise FT04ValidationError("FT05A feature-table row/uniqueness evidence is invalid")
+    if int(table_record["duplicate_extraction_count"]) != 0 or \
+            int(table_record["extraction_count"]) != len(table):
+        raise FT04ValidationError("FT05A duplicate-extraction evidence is invalid")
+    for column in table.columns:
+        lowered = str(column).lower()
+        if lowered in ("dfs_time", "dfs_event", "outcome", "event", "survival_time") or \
+                lowered.endswith("path") or lowered in ("path", "source_path", "image_path", "roi_path"):
+            raise FT04ValidationError("FT05A feature table contains outcome or path data")
+    if "split" in table.columns and not table["split"].astype(str).str.upper().eq("B").all():
+        raise FT04ValidationError("FT05A feature table contains a non-B row")
+    missing = sorted(set(_technical_feature_columns()) - set(table.columns))
+    if missing:
+        raise FT04ValidationError("FT05A feature table is missing frozen technical columns")
+
+
+def _validate_b_feature_manifest(lock, manifest_path=None):
+    manifest_path = _canonical_artifact_path(
+        manifest_path, FT05_MANIFEST, "FT05_B_feature_manifest")
+    if not os.path.isfile(manifest_path):
+        raise FT04ValidationError("canonical FT05_B_feature_manifest.json is required before B prediction")
+    manifest = _read_json(manifest_path)
+    if manifest.get("artifact_id") != "FT05_B_feature_manifest" or \
+            manifest.get("schema_version") != "1.0" or \
+            manifest.get("status") != "frozen":
+        raise FT04ValidationError("FT05 B feature manifest is not complete and frozen")
+    if manifest.get("ft04_lock_identity_sha256") != lock.get("lock_identity_sha256"):
+        raise FT04ValidationError("FT05 B manifest is not bound to this FT04 lock")
+    expected = lock["prediction_contract"]["expected_model_input_hashes"]
+    if manifest.get("model_input_hashes") != expected:
+        raise FT04ValidationError("FT05 B manifest model-input hashes do not match FT04")
+    _validate_ft05a_feature_table(manifest)
+    blocks = manifest.get("feature_blocks") or {}
+    if set(blocks) != {"R_low", "R_high", "W_Original"}:
+        raise FT04ValidationError("FT05 B feature blocks are incomplete")
+    for block, names, count, digest in (
+            ("R_low", ft02.R_LOW_FEATURE_NAMES, 49, R_LOW_CANDIDATE_HASH),
+            ("R_high", ft02.R_HIGH_FEATURE_NAMES, 10, R_HIGH_CANDIDATE_HASH)):
+        record = blocks.get(block) or {}
+        if record.get("feature_names") != list(names) or \
+                record.get("count") != count or \
+                record.get("candidate_hash") != digest:
+            raise FT04ValidationError("FT05 B %s candidate/order contract mismatch" % block)
+    w_record = blocks.get("W_Original") or {}
+    if w_record.get("feature_names") != list(ft02.W_ORIGINAL_FEATURE_NAMES) or \
+            w_record.get("count") != 107 or \
+            w_record.get("order_sha256") != ft02.W_ORIGINAL_ORDER_SHA256 or \
+            w_record.get("reused_existing_asset") is not True or \
+            w_record.get("reextracted") is not False:
+        raise FT04ValidationError("FT05 B W_Original reuse/order contract mismatch")
+    asset_path = _validate_nonformal_relative_path(
+        w_record.get("asset_path"), "FT05 B W_Original asset")
+    if not re.match(r"^[0-9a-f]{64}$", str(w_record.get("asset_sha256", ""))) or \
+            _sha256_file(asset_path) != w_record.get("asset_sha256"):
+        raise FT04ValidationError("FT05 B W_Original asset hash mismatch")
+    boundary = manifest.get("frozen_a_full_boundary") or {}
+    if boundary.get("definition") != "accepted frozen full_A habitat" or \
+            boundary.get("lock_identity_sha256") != lock.get("lock_identity_sha256") or \
+            boundary.get("identity_sha256") != _frozen_a_boundary_identity(lock) or \
+            boundary.get("K") != 2 or boundary.get("n_init") != 100 or \
+            boundary.get("no_refit") is not True or \
+            boundary.get("source_hashes") != OrderedDict((
+                (key, lock["provenance"]["sources"][key]["sha256"])
+                for key in ("ft01_asset_manifest", "habitat_freeze_lock",
+                            "w03_candidate_freeze"))):
+        raise FT04ValidationError("FT05 B frozen A-full boundary binding is invalid")
+    pyradiomics = manifest.get("pyradiomics_provenance")
+    if pyradiomics != lock["provenance"]["pyradiomics"] or \
+            manifest.get("pyradiomics_matches_A_W03") is not True:
+        raise FT04ValidationError("FT05 B PyRadiomics provenance is not identical to A/W03")
+    generation = manifest.get("generation") or {}
+    required_false = ("outcome_accessed", "b_kmeans_fit", "repeat_extraction",
+                      "duplicate_extraction", "checkpoint_resume_repeated_extraction",
+                      "whole_tumor_reextraction", "formal_directory_mixing")
+    if generation.get("outcome_blind") is not True or \
+            generation.get("one_time_first_extraction") is not True or \
+            generation.get("w_original_reused") is not True or \
+            any(generation.get(key) is not False for key in required_false):
+        raise FT04ValidationError("FT05 B generation is not outcome-blind and one-time")
+    reviews = manifest.get("reviews") or {}
+    _validate_ft05a_review_artifact(
+        reviews.get("technical_audit"), FT05A_TECHNICAL_AUDIT,
+        "FT05A technical audit")
+    _validate_ft05a_review_artifact(
+        reviews.get("code_audit"), FT05A_CODE_AUDIT,
+        "FT05A code audit")
+    return manifest
+
+
+def _validate_outcome_unlock(lock, manifest_path=None, unlock_path=None):
+    manifest_path = _canonical_artifact_path(
+        manifest_path, FT05_MANIFEST, "FT05_B_feature_manifest")
+    unlock_path = _canonical_artifact_path(
+        unlock_path, FT_B_UNLOCK, "FT_B_unlock")
+    if not os.path.isfile(unlock_path):
+        raise FT04ValidationError("canonical FT_B_unlock.json is required for outcome access")
+    unlock = _read_json(unlock_path)
+    if unlock.get("artifact_id") != "FT_B_unlock" or \
+            unlock.get("status") != "authorized" or \
+            unlock.get("outcome_access") is not True:
+        raise FT04ValidationError("FT_B_unlock authorization is invalid")
+    if unlock.get("ft04_lock_identity_sha256") != lock.get("lock_identity_sha256"):
+        raise FT04ValidationError("FT_B_unlock is not bound to FT04")
+    if unlock.get("ft05_manifest_sha256") != _sha256_file(manifest_path):
+        raise FT04ValidationError("FT_B_unlock is not bound to the canonical FT05 manifest")
+    return unlock
+
+
 def validate_ft_model_freeze_lock(lock_path=DEFAULT_LOCK):
-    """Validate lock identity, sources, and every ignored model state."""
+    """Validate the FT04 lock, Git bindings, sources, and model states."""
     lock = _read_json(lock_path)
     if lock.get("artifact_id") != "FT_model_freeze_lock" or \
             lock.get("stage") != FT04_STAGE or lock.get("status") != "FROZEN":
@@ -756,11 +1243,20 @@ def validate_ft_model_freeze_lock(lock_path=DEFAULT_LOCK):
     if lock.get("b_access", {}).get("state") != "locked" or \
             lock.get("b_access", {}).get("b_data_read") is not False:
         raise FT04ValidationError("FT04 lock does not keep B locked")
+    b_access = lock.get("b_access") or {}
+    if b_access.get("b_feature_manifest") != \
+            "prognosis_analysis/ft/FT05_B_feature_manifest.json" or \
+            b_access.get("b_outcome_unlock") != \
+            "prognosis_analysis/ft/FT_B_unlock.json":
+        raise FT04ValidationError("FT04 lock does not use canonical B artifact paths")
     identity = lock.get("lock_identity_sha256")
     if identity != _lock_identity(lock):
         raise FT04ValidationError("FT04 lock identity hash mismatch")
     _validate_source_records(lock.get("provenance", {}).get("sources", {}))
     _validate_source_records(lock.get("provenance", {}).get("input_sources", {}))
+    _validate_candidate_contract(lock)
+    _validate_git_binding(lock)
+    _validate_pyradiomics_binding(lock)
     models = lock.get("models", {})
     if lock.get("model_order") != list(MODEL_IDS) or \
             set(models) != set(MODEL_IDS):
@@ -790,41 +1286,14 @@ def validate_ft_model_freeze_lock(lock_path=DEFAULT_LOCK):
     return lock
 
 
-def _validate_b_feature_manifest(lock, manifest_path):
-    if not os.path.isfile(manifest_path):
-        raise FT04ValidationError("FT05_B_feature_manifest.json is required before B prediction")
-    manifest = _read_json(manifest_path)
-    if manifest.get("artifact_id") != "FT05_B_feature_manifest" or \
-            manifest.get("status") != "frozen":
-        raise FT04ValidationError("FT05 B feature manifest is not accepted and frozen")
-    if manifest.get("ft04_lock_identity_sha256") != lock.get("lock_identity_sha256"):
-        raise FT04ValidationError("FT05 B manifest is not bound to this FT04 lock")
-    expected = lock["prediction_contract"]["expected_model_input_hashes"]
-    if manifest.get("model_input_hashes") != expected:
-        raise FT04ValidationError("FT05 B manifest model-input hashes do not match FT04")
-    return manifest
-
-
-def _validate_outcome_unlock(lock, manifest_path, unlock_path):
-    if not os.path.isfile(unlock_path):
-        raise FT04ValidationError("FT05B outcome-unlock authorization is required")
-    unlock = _read_json(unlock_path)
-    if unlock.get("artifact_id") != "FT05B_outcome_unlock" or \
-            unlock.get("status") != "authorized":
-        raise FT04ValidationError("FT05B outcome-unlock authorization is invalid")
-    if unlock.get("ft04_lock_identity_sha256") != lock.get("lock_identity_sha256"):
-        raise FT04ValidationError("FT05B authorization is not bound to FT04")
-    if unlock.get("ft05_manifest_sha256") != _sha256_file(manifest_path):
-        raise FT04ValidationError("FT05B authorization is not bound to FT05 manifest")
-    return unlock
-
-
 def _validate_b_predictor_frame(frame, state):
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         raise FT04ValidationError("B predictor frame must be non-empty")
     if "patient_id" not in frame.columns:
         raise FT04ValidationError("B predictor frame lacks patient_id")
-    if any(column in frame.columns for column in ("DFS_time", "DFS_event")):
+    if any(str(column).lower() in (
+            "dfs_time", "dfs_event", "outcome", "event", "survival_time")
+            for column in frame.columns):
         raise FT04ValidationError("B outcome columns are not accepted in predictor input")
     ids = frame["patient_id"].astype(str).str.strip()
     if ids.eq("").any() or ids.duplicated().any():
@@ -869,13 +1338,16 @@ def load_frozen_prediction_state(lock_path, model_id):
 
 
 def predict_b_from_frozen(feature_frame, model_id, lock_path=DEFAULT_LOCK,
-                          manifest_path=FT05_MANIFEST, outcomes_requested=False):
+                          manifest_path=None, outcomes_requested=False,
+                          unlock_path=None):
     """Predict B risk/survival only after the later FT05 locks validate."""
     lock, state, model, preprocessor = load_frozen_prediction_state(
         lock_path, model_id)
+    _validate_ft04_review(lock)
     _validate_b_feature_manifest(lock, manifest_path)
+    _canonical_artifact_path(unlock_path, FT_B_UNLOCK, "FT_B_unlock")
     if outcomes_requested:
-        _validate_outcome_unlock(lock, manifest_path, FT05B_UNLOCK)
+        _validate_outcome_unlock(lock, manifest_path, unlock_path)
     checked = _validate_b_predictor_frame(feature_frame, state)
     X = preprocessor.transform(checked)
     risk = np.asarray(model.predict_risk(X), dtype=float)
@@ -892,11 +1364,13 @@ def predict_b_from_frozen(feature_frame, model_id, lock_path=DEFAULT_LOCK,
 
 
 def evaluate_b_from_frozen(feature_frame, outcome_frame, model_id,
-                           lock_path=DEFAULT_LOCK, manifest_path=FT05_MANIFEST):
+                           lock_path=DEFAULT_LOCK, manifest_path=None,
+                           unlock_path=None):
     """Evaluate frozen predictions only when FT05B explicitly unlocks outcomes."""
     prediction = predict_b_from_frozen(
         feature_frame, model_id, lock_path=lock_path,
-        manifest_path=manifest_path, outcomes_requested=True)
+        manifest_path=manifest_path, outcomes_requested=True,
+        unlock_path=unlock_path)
     if not isinstance(outcome_frame, pd.DataFrame):
         raise FT04ValidationError("B outcome frame must be a DataFrame")
     required = {"patient_id", "DFS_time", "DFS_event"}

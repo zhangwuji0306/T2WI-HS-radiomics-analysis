@@ -25,18 +25,25 @@ All final states include ordered raw predictors, transformed feature names, prep
 
 ## Provenance and boundaries
 
-- Frozen habitat: `K=2`, `n_init=100`, `R_low=49`, `R_high=10`, `W_Original=107`.
+- Frozen habitat: `K=2`, `n_init=100`, `R_low=49` (candidate hash `a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0`), `R_high=10` (candidate hash `a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce`), `W_Original=107` (order hash `1c07cd4e129e368dde8539d552ecb0f453d9c655fe2a5383d00a5de7b408ca1f`).
 - Frozen split binding: W07 repeat 1, five folds, seed `12345`; split regeneration is `false`.
 - Endpoint: DFS; prediction horizons: 36 and 60 months.
 - B state: locked; FT05A, FT05B, and FT06: not executed.
 - Formal lock: `prognosis_analysis/model_freeze_lock.json` unchanged.
+- Immutable implementation/source commit: `8bc0bb0c3fee67b1c81c35cef1aec30ca22a812d`; it contains the first-round reviewed FT04 runner and lock version. It is distinct from the remediation attestation.
+- Attestation parent commit: `971ea04ba86705e16ba3482a405eb16802d8ffd3`; it contains the pre-remediation FT04 files and is not claimed to contain the remediation.
+- The final local attestation commit is the child that records the remediation lock and this audit. Its hash is intentionally not embedded in the lock, avoiding a self-referential commit claim.
+- Current FT04 runner SHA-256: `f3c7646245879aae85e6819a7432997ed03057112133f69384bc2f9c7eb21a63`; serialized FT04 lock file SHA-256: `f1ec1489c94101a03f746608753417edefca2e19f76b60367b33363c49d208e6`; lock payload identity SHA-256: `d9e9ad604e74274a98f83f4185fbb8f72d4c02bc5143246eeb6489899ba5c921`.
+- PyRadiomics configuration/provenance is bound to the accepted A/W03 files by SHA-256 in `provenance.pyradiomics`.
+- B prediction is fail-closed on the canonical `FT05_B_feature_manifest.json`, an accepted independent FT04 review bound to the current lock/code, and the complete FT05A table/block/provenance/review contract.
+- B outcome evaluation additionally requires the canonical `FT_B_unlock.json`; prediction-only loading does not read or require B outcomes.
 - Runtime wrapper: `tools/run_t2_radiomics.ps1`; pre-run long-task estimate: `180` minutes based on accepted FT03 runtime evidence; no periodic worker polling.
 
 ## Validation
 
-- FT04 serialization, replay, fail-closed prerequisite, tamper, boundary, and formal-lock tests: 6 passed.
-- Direct FT04 plus accepted FT03/FT02/W07 regression suite through the wrapper: 47 passed.
-- All seven serialized states reload in `t2_radiomics` and reproduce risk/survival outputs from their frozen preprocessing and baseline-survival state.
+- The seven existing FT04 model states reload in `t2_radiomics` and reproduce their frozen risk/survival outputs; their hashes are preserved.
+- `tests/test_ft04_runner.py`: 15 synthetic/contract tests passed, including canonical-path, Git-binding, review-gate, complete-manifest, hash/provenance, outcome-unlock, tamper, and formal-lock negative coverage.
+- FT04 plus accepted FT03/FT02/W07 wrapper regression suite: 56 tests passed.
 
 ## Deliverables
 
