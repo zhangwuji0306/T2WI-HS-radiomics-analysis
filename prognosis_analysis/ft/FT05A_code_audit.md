@@ -1,51 +1,53 @@
-# FT05A Independent Pre-run Code Audit — Round 9
+# FT05A Independent Pre-run Code Audit — Round 10
 
 Independent review: true
 
-Reviewed FT05A implementation commit: `030a2db2f5610da0f1dba9bd7ab4d42344979904`
+Reviewed FT05A implementation commit: `b831845d57277f20f115329fd6ea4f0796d1dcd0`
 
-FT05A runner SHA-256: `a7dd51838510d3989ac973a1007808ee1e751414b1490fae68f80c4d7efb60ef`
+FT05A runner SHA-256: `0f37da4c964beffafa1286f54199c267f186d2a9a4c620dcddb27dc270d95498`
 
 FT05A preparation contract identity: `FT05A_code_prep_contract_v1`
 
 ## Verdict
 
-Verdict: FAIL
+Verdict: PASS_WITH_FINDINGS
 
 ## Scope and evidence
 
-- Reviewed the repository instructions, FT scheme and approved amendment, accepted FT00–FT04 records and lock, all FT05A contracts and prior audits, the current FT05A runner and tests, and implementation commit `030a2db`.
-- FT05A wrapper regression passed: 40 synthetic tests, 1 Windows symbolic-link privilege skip, 0 failures.
-- FT04/FT03/FT02/W07 wrapper regression passed: 65 tests, 0 failures.
-- FT04 freeze-lock synthetic regression passed: 6 tests, 0 failures.
-- FT05A static validation returned `pass: true` with no findings for B clustering fit, outcome access, whole-tumour re-extraction, or formal-directory mixing.
-- FT04 lock validation returned `VALID` with lock identity `10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e`.
-- The migration implementation restricts identity differences to `code_audit_sha256`, validates the expected current audit record fields, rejects completed/frozen/non-resume states, uses an atomic state writer, and revalidates completed case artifacts, source records, processor results, flattened rows, schema, row hashes, and pilot keys before migration.
-- Existing regressions continue to support the frozen FT04 prerequisite, exact canonical namespace, technical-source allowlist, outcome blindness, no B fitting, frozen A boundary, unchanged PyRadiomics configuration, W_Original order/candidate binding, source uniqueness, one-time ownership, finalization recovery, technical-only schema, and structural/small-ROI states.
-- No real B image, ROI, W_Original value, technical feature, outcome, clinical/prognostic source, patient-level output, or real FT05A run artifact was read, hashed, changed, or generated during this review.
+- Reviewed the repository instructions, FT scheme and approved amendment, accepted FT00–FT04 records and lock, all FT05A contracts and prior audit state, the actual current Git history/diff, `prognosis_analysis/ft/ft05a_runner.py`, and `tests/test_ft05a_runner.py`.
+- The current implementation includes the full W_Original binding check before audit-identity migration: the migration path performs an unselected full-asset load at the exact FT04-bound path, verifies the expected full SHA-256, frozen feature count/order and reuse flags, verifies cohort coverage, and reconciles every completed artifact and source record before any migration state write.
+- The persisted non-completed state is validated before migration. The checks cover the exact state schema, identity digest, unchanged identity fields except `code_audit_sha256`, run/cohort/count/hash consistency, unique completed case keys and artifact hashes, pilot-key containment, status-specific `PILOT_COMPLETE` evidence, and rejection of zero-completion migration states. Completed artifacts are revalidated against the current source hashes, W_Original rows, processor evidence, flattened rows, schema and stored artifact hashes.
+- Migration writes only a copied state after all preconditions and post-migration structure checks pass, using the atomic state writer. The migration records the old/new audit hashes while preserving the run ID, completed artifacts, pilot set and one-time resume behavior. Completed, frozen, finalizing, non-resume, manifest-existing and other-identity-change cases remain fail-closed.
+- The current audit binding requires an independent accepted report, exact current runner SHA-256, exact reviewed implementation commit/ancestor with matching runner blob, report-only post-review Git changes, and the fixed preparation-contract identity. The FT05A entry point applies the exact canonical output/artifact namespace checks before preflight, source loading, W_Original loading, ownership or output writes.
+- Existing FT05A controls remain intact: technical-only columns and allowlisted roots, outcome/clinical path and column denylist, frozen A boundary and no B K-means fit, unchanged A/W03 PyRadiomics settings, exact candidate/order hashes, accepted W_Original path/hash/order/reuse binding, source uniqueness, structural absence and small-ROI states, exclusive ownership, pilot streaming/resume, atomic finalization/recovery, provenance and formal-directory isolation.
 
 ## Blocking findings
 
-### 1. W_Original migration does not require whole-asset hash validation before state identity change
+None.
 
-The migration callback validates completed cases by calling `_load_w_original_asset` with only the completed patient IDs. The selected-row loader intentionally does not hash the complete W_Original file. Consequently, a changed unselected W_Original row can leave the accepted asset hash in the run identity unchanged while the migration writes the new code-audit identity. An independent synthetic probe changed only an unselected row in a synthetic W_Original asset; the migration wrote `identity_migration` and returned a pilot-complete state even though the physical asset no longer matched the accepted hash. A later full resume may reject the asset, but the migration has already changed persistent run identity and can therefore not be treated as an all-or-nothing accepted continuation.
+## Nonblocking finding
 
-### 2. Status-specific pilot completion invariants are not enforced before migration
+One synthetic directory-symlink test was skipped because the Windows account lacks symbolic-link privilege. The exact lexical namespace gate, resolved-path/reparse checks, non-privileged alias coverage, and junction/reparse coverage remain passing; this limitation does not weaken the production fail-closed path.
 
-`_validate_run_state_structure` accepts a `PILOT_COMPLETE` state whose `pilot_case_keys` contains a valid cohort case while `completed_case_keys` and completed artifact hashes are empty. With no case files, the migration callback accepts and rewrites this state. An independent synthetic probe reproduced this migration of a structurally incomplete pilot state. A subsequent full continuation can process a case that the state claims was already part of a completed pilot, weakening the one-time completion and pilot ownership contract.
+## Synthetic and regression validation
 
-## Nonblocking platform finding
+All Python execution used `tools/run_t2_radiomics.ps1` with the locked `t2_radiomics` environment.
 
-The synthetic directory-symlink test was skipped because the Windows account lacks symbolic-link privilege. This remains nonblocking: the available junction/reparse test and the lexical/resolved-path checks cover the same production namespace gate, and all other required synthetic regressions passed.
+```text
+tools/run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','tests.test_ft05a_runner','tests.test_ft04_runner','tests.test_ft03_runner','tests.test_ft02_runner','tests.test_w07_outer_splits')
+107 tests run; 107 passed; 0 failed; 1 skipped; exit code 0
 
-## FT05A-only remediation plan
+tools/run_t2_radiomics.ps1 -PythonArguments @('.\prognosis_analysis\ft\ft05a_runner.py','static-validate')
+pass: true; B_kmeans_fit: false; outcome_accessed: false; whole_tumor_reextraction: false; formal_directory_mixing: false
 
-1. Before writing a migrated state, validate the complete accepted W_Original asset bytes against the FT04-bound path and SHA-256, while retaining selected-row validation for each completed pilot artifact. No migration state write may occur if the whole asset, path, order, or row binding is inconsistent.
-2. Add status-specific run-state invariants before migration. In particular, require `PILOT_COMPLETE` to have a valid completion timestamp, a nonempty pilot set, and exact equality between pilot keys and completed case keys/artifact hashes; reject any incomplete or semantically inconsistent resumable state without changing its bytes.
-3. Add synthetic regressions for unselected W_Original tampering, rejected migration-state immutability, malformed pilot completion, and a valid full resume that verifies the new parser against pilot artifacts without recomputation or overwrite.
+tools/run_t2_radiomics.ps1 -PythonArguments @('.\prognosis_analysis\ft\ft04_runner.py','validate')
+status: VALID; FT04 lock identity: 10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e
+```
 
-No FT05A execution or later FT module is authorized until this FT05A-only remediation is independently reviewed.
+The FT05A synthetic suite includes adversarial unselected W_Original tampering, malformed pilot completion, atomic migration failure, identity-field mutation, completed/frozen/non-resume rejection, migration artifact reconciliation, pilot resume without recomputation, exact output-root and canonical artifact alias rejection, source/manifest tampering, duplicate mappings, structural absence and small-ROI handling, ownership contention, finalization recovery/tampering, outcome isolation, formal-directory rejection and technical-manifest validation.
+
+No real B image, ROI, W_Original value, technical feature, clinical/outcome source, patient-level FT05A output or later FT05 module was read, generated or changed during this review.
 
 ## Downstream authorization
 
-No downstream authorization. The same-run FT05A resume is not authorized, and this audit does not authorize FT05B or FT06.
+The next Worker is authorized to resume only the same existing one-time FT05A run identity after the normal runtime preconditions are satisfied. This audit authorizes no FT05B outcome unlock and no FT06 execution.
