@@ -465,14 +465,30 @@ def _w_original_header(path, binding):
     return header, id_column, reader_column, selected
 
 
-def _w_original_rows_from_csv(path, id_column, reader_column, selected_ids):
-    """Stream only selected W_Original rows into the pilot working set.
+def _canonical_w_original_value(raw_value):
+    """Convert one accepted CSV value to the canonical stored representation."""
+    value = pd.to_numeric(pd.Series([raw_value]), errors="coerce").iloc[0]
+    try:
+        canonical = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise FT05AValidationError(
+            "W_Original contains a malformed frozen value")
+    if not np.isfinite(canonical):
+        raise FT05AValidationError(
+            "W_Original contains nonfinite frozen values")
+    return canonical
 
-    The CSV is scanned one physical record at a time so the pilot never
-    materializes the complete asset.  Non-selected records are reduced to
-    their selector fields and are never converted, retained, or hashed.
+
+def _w_original_rows_from_csv(path, id_column, reader_column, selected_ids=None):
+    """Load canonical W_Original rows while preserving the pilot stream path.
+
+    The CSV is scanned one physical record at a time.  With ``selected_ids``
+    set, non-selected records are reduced to selector fields and are never
+    converted, retained, or hashed.  The full load uses this same parser and
+    canonical value representation for every accepted B/R1 row.
     """
-    selected_ids = set(str(value).strip() for value in selected_ids)
+    if selected_ids is not None:
+        selected_ids = set(str(value).strip() for value in selected_ids)
     rows = {}
     with open(path, "r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
@@ -480,6 +496,8 @@ def _w_original_rows_from_csv(path, id_column, reader_column, selected_ids):
             header = next(reader)
         except StopIteration:
             raise FT05AValidationError("W_Original asset has no CSV header")
+        if len(header) != len(set(header)):
+            raise FT05AValidationError("W_Original asset header contains duplicate columns")
         indices = {name: index for index, name in enumerate(header)}
         required = [id_column, "split"] + ([reader_column] if reader_column else []) + \
             list(W_ORIGINAL_FEATURE_NAMES)
@@ -489,26 +507,25 @@ def _w_original_rows_from_csv(path, id_column, reader_column, selected_ids):
             if len(fields) != len(header):
                 raise FT05AValidationError("W_Original asset contains a malformed CSV row")
             patient_id = str(fields[indices[id_column]]).strip()
-            if patient_id not in selected_ids:
+            if selected_ids is not None and patient_id not in selected_ids:
                 continue
             split = str(fields[indices["split"]]).strip().upper()
             if split != "B":
                 continue
             if reader_column and str(fields[indices[reader_column]]).strip() not in ("R1", "1"):
                 continue
+            if not patient_id:
+                raise FT05AValidationError(
+                    "W_Original accepted B rows must have nonblank patient IDs")
             values = OrderedDict()
             for name in W_ORIGINAL_FEATURE_NAMES:
-                value = pd.to_numeric(pd.Series([fields[indices[name]]]),
-                                      errors="coerce").iloc[0]
-                if not np.isfinite(float(value)):
-                    raise FT05AValidationError(
-                        "W_Original contains nonfinite frozen values")
-                values[name] = float(value)
+                values[name] = _canonical_w_original_value(
+                    fields[indices[name]])
             if patient_id in rows:
                 raise FT05AValidationError(
-                    "W_Original selected B rows are not unique")
+                    "W_Original accepted B rows are not unique")
             rows[patient_id] = values
-    missing = sorted(selected_ids - set(rows))
+    missing = sorted(selected_ids - set(rows)) if selected_ids is not None else []
     if missing:
         raise FT05AValidationError(
             "W_Original asset does not cover selected B rows: %s" % missing)
@@ -538,18 +555,8 @@ def _load_w_original_asset(lock, path_override=None, selected_patient_ids=None):
         records = _w_original_rows_from_csv(
             path, id_column, reader_column, selected_patient_ids)
     else:
-        table = pd.read_csv(path, encoding="utf-8-sig", dtype=str, usecols=selected)
-        table[id_column] = table[id_column].astype(str).str.strip()
-        table["split"] = table["split"].astype(str).str.strip().str.upper()
-        table = table[table["split"] == "B"].copy()
-        if reader_column:
-            table = table[table[reader_column].astype(str).str.strip().isin(("R1", "1"))].copy()
-        if table[id_column].eq("").any() or table[id_column].duplicated().any():
-            raise FT05AValidationError("W_Original B rows are not unique and nonblank")
-        records = {}
-        for _, row in table.iterrows():
-            records[str(row[id_column])] = OrderedDict(
-                (name, float(row[name])) for name in W_ORIGINAL_FEATURE_NAMES)
+        records = _w_original_rows_from_csv(
+            path, id_column, reader_column, selected_ids=None)
     return {
         "path": _relative(path),
         "sha256": expected_hash,

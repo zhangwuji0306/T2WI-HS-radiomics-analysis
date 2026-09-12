@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 
+import csv
 import json
 import os
 import shutil
@@ -126,6 +127,18 @@ class FT05ARunnerTests(unittest.TestCase):
                 "rows": {"B%d" % i: {name: float(i + 1)
                                       for name in ft.W_ORIGINAL_FEATURE_NAMES}
                            for i in range(2)}}
+
+    def _write_w_original_csv(self, rows, malformed_row=None):
+        header = ["patient_id", "split"] + list(ft.W_ORIGINAL_FEATURE_NAMES)
+        with open(self.w_path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle, lineterminator="\n")
+            writer.writerow(header)
+            for patient_id, split, values in rows:
+                writer.writerow([patient_id, split] + list(values))
+            if malformed_row is not None:
+                writer.writerow(malformed_row)
+        self.lock["habitat_definition"]["W_Original_asset"]["asset_sha256"] = \
+            ft._sha256_file(self.w_path)
 
     def _validate_manifest(self, manifest_path, expected_w_asset=True):
         kwargs = {"output_root": self.out, "_expected_lock": self.lock}
@@ -458,6 +471,71 @@ class FT05ARunnerTests(unittest.TestCase):
         self.assertNotIn(os.path.realpath(self.w_path), seen_hashes)
         self.assertEqual(set(streamed.call_args[0][3]), {"B0"})
         self.assertEqual(numeric.call_count, len(ft.W_ORIGINAL_FEATURE_NAMES))
+
+    def test_selected_and_full_w_original_loads_have_identical_row_and_source_hashes(self):
+        cohort = ft.load_technical_cohort(
+            self.cohort, technical_source_roots=ft.ALLOWED_TECHNICAL_ROOTS,
+            accepted_w_path=self.lock["habitat_definition"]["W_Original_asset"]["path"])
+        full = ft._load_w_original_asset(self.lock)
+        selected = ft._load_w_original_asset(self.lock, selected_patient_ids=["B0"])
+        self.assertEqual(full["rows"]["B0"], selected["rows"]["B0"])
+        self.assertEqual(ft._w_original_row_hash(full["rows"]["B0"]),
+                         ft._w_original_row_hash(selected["rows"]["B0"]))
+        full_source = ft._source_record(cohort.iloc[0], full)
+        selected_source = ft._source_record(cohort.iloc[0], selected)
+        self.assertEqual(full_source, selected_source)
+        self.assertEqual(ft._source_record_hash(full_source),
+                         ft._source_record_hash(selected_source))
+
+    def test_resume_reconciles_pilot_artifact_after_full_w_original_loading(self):
+        first_calls = []
+        second_calls = []
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with mock.patch.object(ft, "validate_ft05a_preflight",
+                               return_value=self.contract), \
+                mock.patch.object(ft, "_validate_code_audit",
+                                  return_value=self.contract["code_audit"]), \
+                mock.patch.object(ft, "_validate_technical_audit",
+                                  return_value={"path": _relative(self.technical_audit),
+                                                "sha256": ft._sha256_file(self.technical_audit),
+                                                "status": "accepted", "independent": True,
+                                                "verdict": "PASS"}), \
+                mock.patch.object(ft, "_frozen_boundary_identity",
+                                  return_value="boundary-id"), \
+                mock.patch.object(ft, "FORMAL_MODEL_LOCK",
+                                  os.path.join(self.root, "formal_absent.json")):
+            pilot = ft.run_ft05a(
+                self.cohort, "run-loader-consistency", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(first_calls), pilot_case_ids=["B0"])
+            result = ft.run_ft05a(
+                self.cohort, "run-loader-consistency", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(second_calls), resume=True)
+        self.assertEqual(pilot["status"], "PILOT_COMPLETE")
+        self.assertEqual(first_calls, ["B0"])
+        self.assertEqual(second_calls, ["B1"])
+        self.assertEqual(result["status"], "frozen")
+
+    def test_w_original_loader_rejects_malformed_nonfinite_and_duplicate_rows(self):
+        valid = ["1.0"] * len(ft.W_ORIGINAL_FEATURE_NAMES)
+        malformed = [("B0", "B", valid), ("B1", "B", valid)]
+        nonfinite = [("B0", "B", ["nan"] + valid[1:]),
+                     ("B1", "B", valid)]
+        duplicate = [("B0", "B", valid), ("B0", "B", valid),
+                     ("B1", "B", valid)]
+        for rows, malformed_row in (
+                (malformed, ["B_extra", "B"]),
+                (nonfinite, None),
+                (duplicate, None)):
+            self._write_w_original_csv(rows, malformed_row=malformed_row)
+            for selected_ids in (["B0"], None):
+                kwargs = {} if selected_ids is None else {
+                    "selected_patient_ids": selected_ids}
+                with self.assertRaises(ft.FT05AValidationError):
+                    ft._load_w_original_asset(self.lock, **kwargs)
 
     def test_exclusive_owner_rejects_concurrent_start(self):
         owner_path, owner = ft._acquire_run_ownership(
