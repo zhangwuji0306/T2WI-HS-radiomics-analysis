@@ -51,6 +51,14 @@ class FT05ARunnerTests(unittest.TestCase):
         self.root = self.source_tmp.name
         self.out = self.tmp.name
         self.cohort = _technical_frame(self.root)
+        self.w_path = os.path.join(self.root, "w_original.csv")
+        w_rows = []
+        for index in range(2):
+            row = {"patient_id": "B%d" % index, "split": "B"}
+            row.update((name, float(index + 1))
+                       for name in ft.W_ORIGINAL_FEATURE_NAMES)
+            w_rows.append(row)
+        pd.DataFrame(w_rows).to_csv(self.w_path, index=False)
         self.code_audit = os.path.join(self.out, "FT05A_code_audit.md")
         self.technical_audit = os.path.join(self.out, "FT05A_technical_audit.md")
         if not os.path.isdir(self.out):
@@ -66,8 +74,8 @@ class FT05ARunnerTests(unittest.TestCase):
                 "M0": "m0", "M1": "m1", "M2": "m2", "M3L": "m3l",
                 "M3H": "m3h", "M4": "m4", "M5": "m5"}},
             "habitat_definition": {"W_Original_asset": {
-                "path": "feature_extract/output/synthetic_w_original.csv",
-                "asset_sha256": "w-hash", "feature_count": 107,
+                "path": _relative(self.w_path),
+                "asset_sha256": ft._sha256_file(self.w_path), "feature_count": 107,
                 "order_sha256": ft.W_ORIGINAL_ORDER_SHA256,
                 "reused_existing_asset": True, "reextracted": False}},
             "provenance": {"sources": {
@@ -91,7 +99,7 @@ class FT05ARunnerTests(unittest.TestCase):
 
     def _w_asset(self):
         return {"path": self.lock["habitat_definition"]["W_Original_asset"]["path"],
-                "sha256": "a" * 64, "feature_count": 107,
+                "sha256": self.lock["habitat_definition"]["W_Original_asset"]["asset_sha256"], "feature_count": 107,
                 "order_sha256": ft.W_ORIGINAL_ORDER_SHA256,
                 "rows": {"B%d" % i: {name: float(i + 1)
                                       for name in ft.W_ORIGINAL_FEATURE_NAMES}
@@ -167,6 +175,30 @@ class FT05ARunnerTests(unittest.TestCase):
             with open(self.code_audit, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write(text.replace(
                     text.split(marker + ": ")[1].split("\n")[0], replacement))
+            with self.assertRaises(ft.FT05AValidationError):
+                ft._validate_code_audit(self.code_audit)
+
+    def test_code_audit_rejects_forged_marker_and_intervening_code_change(self):
+        reviewed = ft.ft04._git_head()
+        text = ("Independent review: true\nVerdict: PASS\n"
+                "Reviewed implementation commit: `%s`\n"
+                "FT05A runner SHA-256: `%s`\n"
+                "FT05A preparation contract identity: `%s`\n" % (
+                    reviewed, ft._sha256_file(ft.__file__),
+                    ft.FT05A_CODE_PREP_CONTRACT_IDENTITY))
+        with open(self.code_audit, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text.replace("Independent review: true", "independent review note"))
+        with mock.patch.object(ft, "_git_current_blob_hash", return_value="blob"), \
+                mock.patch.object(ft, "_git_commit_blob_hash", return_value="blob"), \
+                mock.patch.object(ft, "_git_paths_after", return_value=[]):
+            with self.assertRaises(ft.FT05AValidationError):
+                ft._validate_code_audit(self.code_audit)
+        with open(self.code_audit, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        with mock.patch.object(ft, "_git_current_blob_hash", return_value="blob"), \
+                mock.patch.object(ft, "_git_commit_blob_hash", return_value="blob"), \
+                mock.patch.object(ft, "_git_paths_after",
+                                  return_value=[ft._relative(ft.__file__)]):
             with self.assertRaises(ft.FT05AValidationError):
                 ft._validate_code_audit(self.code_audit)
 
@@ -303,6 +335,43 @@ class FT05ARunnerTests(unittest.TestCase):
             manifest["feature_table"]["path"], "technical table"))
         self.assertNotIn("年龄", table.columns)
 
+    def test_manifest_source_tamper_is_rejected_end_to_end(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with self._patches():
+            ft.run_ft05a(
+                self.cohort, "run-manifest-tamper", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor())
+        manifest = ft._read_json(manifest_path)
+        manifest["source_records"][0]["image_path"] = _relative(
+            os.path.join(ROOT, "prognosis_analysis", "output", "W08",
+                         "forged_image.bin"))
+        with open(manifest_path, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        with self.assertRaises(ft.FT05AValidationError):
+            ft.validate_ft05a_technical_manifest(manifest_path, output_root=self.out)
+
+    def test_pilot_w_original_loader_materializes_only_selected_rows(self):
+        seen_hashes = []
+        original_sha = ft._sha256_file
+
+        def record_sha(path):
+            seen_hashes.append(os.path.realpath(path))
+            return original_sha(path)
+
+        with mock.patch.object(ft, "_sha256_file", side_effect=record_sha), \
+                mock.patch.object(ft, "_w_original_rows_from_csv",
+                                  wraps=ft._w_original_rows_from_csv) as streamed, \
+                mock.patch.object(ft.pd, "to_numeric", wraps=ft.pd.to_numeric) as numeric:
+            asset = ft._load_w_original_asset(
+                self.lock, selected_patient_ids=["B0"])
+        self.assertEqual(set(asset["rows"]), {"B0"})
+        self.assertNotIn(os.path.realpath(self.w_path), seen_hashes)
+        self.assertEqual(set(streamed.call_args[0][3]), {"B0"})
+        self.assertEqual(numeric.call_count, len(ft.W_ORIGINAL_FEATURE_NAMES))
+
     def test_exclusive_owner_rejects_concurrent_start(self):
         owner_path, owner = ft._acquire_run_ownership(
             self.out, "synthetic-run-identity")
@@ -399,6 +468,32 @@ class FT05ARunnerTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "frozen")
         self.assertEqual(ft._read_json(os.path.join(
             self.out, "FT05A_run_state.json"))["status"], "COMPLETED")
+
+    def test_finalization_rejects_tampered_transaction_before_install(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        with self._patches(), mock.patch.object(
+                ft, "_recover_finalization", side_effect=RuntimeError("interrupted")):
+            with self.assertRaises(RuntimeError):
+                ft.run_ft05a(
+                    self.cohort, "run-finalize-tamper", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor())
+        state_path = os.path.join(self.out, "FT05A_run_state.json")
+        state = ft._read_json(state_path)
+        state["finalization"]["table_path"] = _relative(
+            os.path.join(self.out, "arbitrary_table.csv"))
+        with open(state_path, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(state, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        with self._patches():
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-finalize-tamper", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(), resume=True)
+        self.assertFalse(os.path.exists(manifest_path))
 
     def test_resume_skips_completed_pilot_cases_without_recomputation(self):
         first_calls = []
