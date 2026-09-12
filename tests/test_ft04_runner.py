@@ -96,12 +96,14 @@ class FT04RunnerTests(unittest.TestCase):
                 "Independent review: true\n"
                 "FT04 lock identity SHA-256: `%s`\n"
                 "FT04 lock file SHA-256: `%s`\n"
+                "FT04 lock digest file SHA-256: `%s`\n"
                 "FT04 runner SHA-256: `%s`\n"
                 "FT04 reviewed remediation commit: `%s`\n" % (
                     lock["lock_identity_sha256"],
                     ft04._sha256_file(os.path.join(
-                        FT_ROOT, "FT_model_freeze_lock.json")),
-                    runner_sha, ft04._git_head()))
+                         FT_ROOT, "FT_model_freeze_lock.json")),
+                    ft04._sha256_file(ft04.FT04_LOCK_DIGEST),
+                    runner_sha, ft04.FT04_REVIEWED_REMEDIATION_COMMIT))
         technical_review_path = os.path.join(
             root, "FT05A_B_technical_generation_audit.md")
         code_review_path = os.path.join(root, "FT05A_code_audit.md")
@@ -358,22 +360,27 @@ class FT04RunnerTests(unittest.TestCase):
 
     def test_accepted_review_must_attest_current_lock_and_reviewed_commit(self):
         lock = self._lock()
-        for replacement in (
-                "FT04 lock file SHA-256: `0000000000000000000000000000000000000000000000000000000000000000`\n",
-                "",
-                "FT04 reviewed remediation commit: 0000000000000000000000000000000000000000\n"):
+        mutations = (
+            (r"FT04 lock file SHA-256:.*\n",
+             "FT04 lock file SHA-256: `0000000000000000000000000000000000000000000000000000000000000000`\n"),
+            (r"FT04 lock digest file SHA-256:.*\n", ""),
+            (r"FT04 lock digest file SHA-256:.*\n",
+             "FT04 lock digest file SHA-256: malformed\n"),
+            (r"FT04 lock digest file SHA-256:.*\n",
+             "FT04 lock digest file SHA-256: `0000000000000000000000000000000000000000000000000000000000000000`\n"),
+            (r"FT04 reviewed remediation commit:.*\n",
+             "FT04 reviewed remediation commit: 624789feac69d002587d6e79b4ff0b7810d66055\n"),
+            (r"FT04 reviewed remediation commit:.*\n",
+             "FT04 reviewed remediation commit: 8bc0bb0c3fee67b1c81c35cef1aec30ca22a812d\n"),
+        )
+        for pattern, replacement in mutations:
             temp, patches, frame, manifest_path, unused_unlock, unused_manifest = \
                 self._downstream_fixtures(lock)
             try:
                 review_path = os.path.join(temp.name, "FT04_review.md")
                 with open(review_path, "r", encoding="utf-8") as handle:
                     text = handle.read()
-                if replacement.startswith("FT04 lock file"):
-                    text = re.sub(r"FT04 lock file SHA-256:.*\n", replacement, text)
-                elif not replacement:
-                    text = re.sub(r"FT04 lock file SHA-256:.*\n", "", text)
-                else:
-                    text = re.sub(r"FT04 reviewed remediation commit:.*\n", replacement, text)
+                text = re.sub(pattern, replacement, text)
                 with open(review_path, "w", encoding="utf-8", newline="\n") as handle:
                     handle.write(text)
                 with patches:
@@ -381,6 +388,20 @@ class FT04RunnerTests(unittest.TestCase):
                         ft04.predict_b_from_frozen(frame, "M0")
             finally:
                 temp.cleanup()
+
+    def test_accepted_review_with_canonical_digest_and_pinned_commit_passes(self):
+        lock = self._lock()
+        temp, patches, frame, unused_manifest_path, unused_unlock, unused_manifest = \
+            self._downstream_fixtures(lock)
+        try:
+            with patches:
+                review = ft04._validate_ft04_review(lock)
+                self.assertIn(
+                    "FT04 lock digest file SHA-256:", review)
+                self.assertIn(
+                    ft04.FT04_REVIEWED_REMEDIATION_COMMIT, review)
+        finally:
+            temp.cleanup()
 
     def test_prediction_requires_complete_canonical_manifest_and_review(self):
         lock = self._lock()

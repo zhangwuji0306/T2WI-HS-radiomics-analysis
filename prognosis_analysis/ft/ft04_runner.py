@@ -64,6 +64,11 @@ FORMAL_MODEL_LOCK = os.path.join(
 # would make the lock assert a hash for the commit that contains the lock.
 FT04_IMPLEMENTATION_SOURCE_COMMIT = (
     "8bc0bb0c3fee67b1c81c35cef1aec30ca22a812d")
+# This is the exact previously completed remediation commit that an accepted
+# independent FT04 review must attest.  It is intentionally distinct from any
+# later local attestation commit.
+FT04_REVIEWED_REMEDIATION_COMMIT = (
+    "7e509690789d52df78573f8da89606ce1da43252")
 R_LOW_CANDIDATE_HASH = (
     "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0")
 R_HIGH_CANDIDATE_HASH = (
@@ -1174,7 +1179,15 @@ def _validate_ft04_review(lock, lock_path=DEFAULT_LOCK):
         "ft04_runner"]["sha256"]
     if runner_sha != expected_runner:
         raise FT04ValidationError("FT04 review is bound to different FT04 code")
+    digest_file_sha256 = _marker_digest(text, "FT04 lock digest file")
+    actual_digest_file_sha256 = _sha256_file(FT04_LOCK_DIGEST)
+    if digest_file_sha256 != actual_digest_file_sha256:
+        raise FT04ValidationError(
+            "FT04 review is bound to different canonical lock digest bytes")
     reviewed_commit = _marker_commit(text, "FT04 reviewed remediation commit")
+    if reviewed_commit != FT04_REVIEWED_REMEDIATION_COMMIT:
+        raise FT04ValidationError(
+            "FT04 review is not bound to the exact reviewed remediation commit")
     _validate_git_commit_binding(
         reviewed_commit, "reviewed FT04 remediation commit",
         ["prognosis_analysis/ft/ft04_runner.py",

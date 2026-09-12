@@ -34,7 +34,7 @@ All final states include ordered raw predictors, transformed feature names, prep
 - Immutable implementation/source commit: `8bc0bb0c3fee67b1c81c35cef1aec30ca22a812d`; it contains the first-round reviewed FT04 runner and lock version. It is distinct from the remediation attestation.
 - Attestation parent commit: `624789feac69d002587d6e79b4ff0b7810d66055`; it contains the preceding FT04 remediation state and is not claimed to contain the final attestation.
 - The final local attestation commit is the child that records the remediation lock and this audit. Its hash is intentionally not embedded in the lock, avoiding a self-referential commit claim.
-- Current FT04 runner SHA-256: `f83dcd2c6773fd69561d20b997ce1d74365b4c6e16da778d2c30830535a80f9a`; serialized FT04 lock file SHA-256: `1ebf3b3a712bcd46b9e82c040ced0413a761f782991f489c1a30fd2ced160c03` (canonical attestation: `prognosis_analysis/ft/FT04_lock_sha256.json`); lock payload identity SHA-256: `2654ba560d2aac45241d8cbe6811fd7a31e78465a826551d058aee2aff9dcf37`.
+- Current FT04 runner SHA-256: `f4ca2c3fe2cfc7128a9894888ff5e7a2fd1bb2a6d6794af26d0a222aba4856b3`; serialized FT04 lock file SHA-256: `bb0c00b49b68cc31eb3899a9099ca8330551a7c2afd0ff3f849abc091a80c2d2` (canonical attestation: `prognosis_analysis/ft/FT04_lock_sha256.json`); lock payload identity SHA-256: `10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e`.
 - PyRadiomics configuration/provenance is bound to the accepted A/W03 files by SHA-256 in `provenance.pyradiomics`.
 - B prediction is fail-closed on the canonical `FT05_B_feature_manifest.json`, an accepted independent FT04 review bound to the current lock/code, and the complete FT05A table/block/provenance/review contract.
 - B outcome evaluation additionally requires the canonical `FT_B_unlock.json`; prediction-only loading does not read or require B outcomes.
@@ -43,8 +43,8 @@ All final states include ordered raw predictors, transformed feature names, prep
 ## Validation
 
 - The seven existing FT04 model states reload in `t2_radiomics` and reproduce their frozen risk/survival outputs; their hashes are preserved.
-- `tests/test_ft04_runner.py`: 23 synthetic/contract tests passed, including canonical-path, Git-binding, review-gate, complete-manifest, hash/provenance, W_Original binding, outcome-unlock, tamper, and formal-lock negative coverage.
-- FT04 plus accepted FT03/FT02/W07 wrapper regression suite: 64 tests passed.
+- `tests/test_ft04_runner.py`: 24 synthetic/contract tests passed, including canonical-path, Git-binding, review-gate, complete-manifest, hash/provenance, W_Original binding, outcome-unlock, tamper, and formal-lock negative coverage.
+- FT04 plus accepted FT03/FT02/W07 wrapper regression suite: 65 tests passed.
 
 ## Deliverables
 
