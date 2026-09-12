@@ -702,7 +702,9 @@ def _validate_code_audit(path):
         raise FT05AValidationError(
             "FT05A runner changed after the reviewed implementation commit")
     post_review_paths = _git_paths_after(reviewed_commit)
-    if any(item != audit_relative for item in post_review_paths):
+    post_review_audit_paths = {
+        audit_relative, _relative(DEFAULT_TECHNICAL_AUDIT)}
+    if any(item not in post_review_audit_paths for item in post_review_paths):
         raise FT05AValidationError(
             "only the canonical FT05A audit report may change after review")
     if current_commit != reviewed_commit and \

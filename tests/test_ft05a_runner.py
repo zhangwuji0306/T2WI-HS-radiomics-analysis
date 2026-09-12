@@ -280,6 +280,69 @@ class FT05ARunnerTests(unittest.TestCase):
             with self.assertRaises(ft.FT05AValidationError):
                 ft._validate_code_audit(self.code_audit)
 
+    def test_code_audit_accepts_real_post_review_technical_audit_path(self):
+        production = self._output_constants
+        reviewed = "7777498aa6135fb635814e2f86719bcdccae9384"
+        current = "7542f7a88c32267952615a813a82df2acad7ea36"
+        runner_sha = "a" * 64
+        text = ("Independent review: true\nVerdict: PASS\n"
+                "Reviewed implementation commit: `%s`\n"
+                "FT05A runner SHA-256: `%s`\n"
+                "FT05A preparation contract identity: `%s`\n" % (
+                    reviewed, runner_sha,
+                    ft.FT05A_CODE_PREP_CONTRACT_IDENTITY))
+        canonical_code_audit = production["DEFAULT_CODE_AUDIT"]
+        canonical_technical_audit = production["DEFAULT_TECHNICAL_AUDIT"]
+        canonical_paths = [
+            _relative(canonical_code_audit),
+            _relative(canonical_technical_audit)]
+
+        def fake_sha256(path):
+            return runner_sha
+
+        with mock.patch.object(ft, "DEFAULT_CODE_AUDIT",
+                               canonical_code_audit), \
+                mock.patch.object(ft, "DEFAULT_TECHNICAL_AUDIT",
+                                  canonical_technical_audit), \
+                mock.patch.object(ft, "_read_text", return_value=text), \
+                mock.patch.object(ft, "_sha256_file", side_effect=fake_sha256), \
+                mock.patch.object(ft.ft04, "_git_head", return_value=current), \
+                mock.patch.object(ft.ft04, "_git_commit_is_ancestor",
+                                  return_value=True), \
+                mock.patch.object(ft, "_git_current_blob_hash",
+                                  return_value="blob"), \
+                mock.patch.object(ft, "_git_commit_blob_hash",
+                                  return_value="blob"), \
+                mock.patch.object(ft, "_git_paths_after",
+                                  return_value=canonical_paths):
+            record = ft._validate_code_audit(canonical_code_audit)
+        self.assertEqual(record["reviewed_commit"], reviewed)
+
+        for disallowed in (
+                _relative(ft.__file__),
+                _relative(os.path.join(ROOT, "tests", "test_ft05a_runner.py")),
+                _relative(os.path.join(
+                    ROOT, "prognosis_analysis", "ft",
+                    "FT05A_B_technical_generation_audit_copy.md"))):
+            with mock.patch.object(ft, "DEFAULT_CODE_AUDIT",
+                                   canonical_code_audit), \
+                    mock.patch.object(ft, "DEFAULT_TECHNICAL_AUDIT",
+                                      canonical_technical_audit), \
+                    mock.patch.object(ft, "_read_text", return_value=text), \
+                    mock.patch.object(ft, "_sha256_file",
+                                      side_effect=fake_sha256), \
+                    mock.patch.object(ft.ft04, "_git_head", return_value=current), \
+                    mock.patch.object(ft.ft04, "_git_commit_is_ancestor",
+                                      return_value=True), \
+                    mock.patch.object(ft, "_git_current_blob_hash",
+                                      return_value="blob"), \
+                    mock.patch.object(ft, "_git_commit_blob_hash",
+                                      return_value="blob"), \
+                    mock.patch.object(ft, "_git_paths_after",
+                                      return_value=canonical_paths + [disallowed]):
+                with self.assertRaises(ft.FT05AValidationError):
+                    ft._validate_code_audit(canonical_code_audit)
+
     def test_technical_cohort_file_requires_preflight_token(self):
         cohort_path = os.path.join(self.root, "cohort.csv")
         self.cohort.to_csv(cohort_path, index=False)
