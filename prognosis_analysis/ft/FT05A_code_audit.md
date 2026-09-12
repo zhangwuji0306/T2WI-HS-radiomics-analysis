@@ -1,10 +1,10 @@
-# FT05A Independent Pre-run Code Audit — Round 3
+# FT05A Independent Pre-run Code Audit — Round 4
 
 Independent review: true
 
-Reviewed FT05A implementation commit: `d0c59b07b8347dedc7fd04a7e2d08dd4f98a9616`
+Reviewed FT05A implementation commit: `c8682c4d6f321ff17a1f02cab3fe555805eb4f92`
 
-FT05A runner SHA-256: `73169e36c4d1c28d2418abecd1606cdb88b4cd7cc08e5a38d697cc9fa3404535`
+FT05A runner SHA-256: `3d0f1c4df25c8998294fc87d3743e267786ce36427bf1ffd36561667aee75bcf`
 
 FT05A preparation contract identity: `FT05A_code_prep_contract_v1`
 
@@ -12,40 +12,42 @@ FT05A preparation contract identity: `FT05A_code_prep_contract_v1`
 
 Verdict: FAIL
 
-FT05A remains unauthorized to access real B technical assets. The round-2 remediation closes the normal finalization-recovery, source-file, case-identity, table-order, audit-commit, and pilot-row paths, but the canonical technical-manifest validator still accepts self-authorized W_Original provenance and duplicate source mappings.
+FT05A remains unauthorized to access real B technical assets. The round-3 remediation closes the two previously reported manifest-boundary defects, but the production runner still permits multiple independent run namespaces beneath the nominal FT05A output root. This defeats global one-time ownership and permits the same case to be extracted more than once.
 
 ## Evidence
 
-- Reviewed the repository instructions, FT scheme and amendments, accepted FT00–FT04 records, all prior FT05A contracts and audits, commits `35f873ac8333f4f8c0e8e770b87a79e36635d4da` and `d0c59b07b8347dedc7fd04a7e2d08dd4f98a9616`, and the current FT05A/FT04 implementation and tests.
-- The wrapper static validation passed with no B clustering fit, outcome reader, whole-tumour re-extraction, or formal-directory mixing finding.
-- The focused FT05A synthetic suite passed: 24 tests, 24 passed.
-- The FT04 plus FT05A wrapper regression passed: 48 tests, 48 passed.
-- The accepted-state combined wrapper regression passed: 89 tests, 89 passed.
-- Synthetic finalization-recovery checks rejected altered transaction paths and recovered an interrupted transition only after revalidating the canonical table, manifest, completed-case evidence, W_Original binding, and case artifacts.
-- Synthetic source tamper, selected-row pilot instrumentation, duplicate-prevention, structural-state, outcome-isolation, audit-binding, and one-time resume checks passed.
-- No real B image, ROI, W_Original asset, clinical source, outcome source, patient record, or real FT05 manifest was enumerated, opened, hashed, copied, or generated during this review.
+- Reviewed the repository instructions, FT scheme and amendment, accepted FT00–FT04 records, all FT05A contracts and prior audits, remediation commit `c8682c4d6f321ff17a1f02cab3fe555805eb4f92`, and the current FT05A/FT04 implementation and tests.
+- Wrapper static validation passed with no clustering fit, outcome reader, whole-tumour re-extraction, or formal-directory mixing finding.
+- The combined FT05A, FT04, FT03, FT02, and W07 wrapper regression passed: 91 tests, 91 passed.
+- The canonical FT04 lock validated as `VALID` with lock identity `10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e`.
+- The canonical manifest validator rejected alternate W_Original provenance and duplicate persisted image/ROI paths, source keys, source hashes, case identities, and patient identities in the synthetic regression suite. It independently derives the accepted W_Original path, asset hash, 107-feature schema/order, and row values from the FT01/FT04 binding.
+- Synthetic regressions passed for audit binding, preflight-before-file-read, exact technical source roots, finalization recovery and tamper rejection, case-artifact/table/manifest binding, selected-source pilot reads and resume, structural absence, PyRadiomics minimum-ROI handling, outcome isolation, frozen A boundary, no B fit, unchanged A/W03 PyRadiomics settings, and technical-only output schema.
+- An independent synthetic adversarial probe supplied two distinct descendant output roots under the canonical FT05A directory and the same run identity/cohort. Both invocations completed a pilot for the same selected case, and the processor was called twice. No real B source or manifest was accessed.
+- No real B image, ROI, W_Original row, clinical source, outcome source, patient record, or real FT05 manifest was enumerated, opened, hashed, copied, or generated during this review.
 
 ## Mandatory checks
 
 | Check | Result | Evidence |
 |---|---|---|
-| Exact frozen A-full boundary | PASS | Preflight and case evidence bind the frozen boundary identity, K=2, n_init=100, SLIC settings, and source hashes before technical processing. |
-| No habitat fitting on B | PASS | Wrapper static validation found no clustering import, K-means symbol, or fitting call; production projection uses the frozen boundary directly. |
-| No B outcome or clinical access | PASS | Technical input and result schemas denylist outcome/clinical fields and paths; static and synthetic negative checks pass. |
-| Frozen PyRadiomics configuration | PASS | Preflight binds the accepted A/W03 configuration and exact settings before case processing. |
-| No whole-tumour extraction; exact W_Original reuse | PASS_WITH_FINDINGS | Normal generation and finalization bind the accepted W_Original rows; standalone manifest validation can accept a manifest-supplied disallowed W_Original path and hash. |
-| Duplicate patients and extractions rejected | FAIL | Normal cohort loading rejects duplicate mappings, but standalone manifest validation accepts distinct patient rows with identical image/ROI/source mappings after self-consistent hash and identity updates. |
-| Resume never recomputes completed or pilot cases | PASS | Ownership, artifact hashes, case identity, row/schema hashes, and interrupted-finalization recovery are checked before reuse. |
-| No formal-directory read or mixing | PASS_WITH_FINDINGS | Canonical transaction and ordinary source roots are constrained; the manifest validator's exact-path exception bypasses the disallowed non-formal `feature_extract/output` root for W_Original. |
+| Independent W_Original binding | PASS | The validator derives the binding from the canonical FT04 lock, cross-checks FT01, enforces exact path/hash/schema/order, and verifies every persisted W_Original row against the accepted asset. |
+| One-to-one persisted source mappings | PASS | Canonical validation rejects repeated or aliased image/ROI paths, source keys, source hashes, case identities, and patient identities and binds rows to source records in order. |
+| Fail-closed code-audit binding | PASS | The audit record is bound to the exact reviewed implementation commit, current runner bytes, independent-review marker, accepted verdict, and preparation-contract identity; intervening committed code paths and stale runner hashes are rejected. |
+| Preflight before B technical reads | PASS | Lock/review/code/config/static checks precede technical cohort loading and source hashing. |
+| Exact source and output roots | FAIL | Technical source reads are fixed to the canonical source root, but the output-root validator accepts arbitrary descendants of the canonical FT05A root instead of the single canonical run root. |
+| Finalization and artifact binding | PASS | Recovery constrains transaction paths and revalidates state, case artifacts, source records, table bytes, manifest bytes, W_Original, and completion evidence before installation or completion. |
+| Pilot selected-source reads and resume | PASS_WITH_FINDINGS | Within one state namespace, selected sources are read once and completed pilot cases are not recomputed; separate accepted descendant namespaces bypass that guarantee. |
+| Structural absence and technical-small-ROI states | PASS | The production processor records explicit unavailable states without imputation and applies the frozen 10-voxel PyRadiomics boundary. |
+| Duplicate and concurrent extraction prevention | FAIL | Ownership is scoped to the caller-selected output root. Two accepted descendant roots create separate owner/state/case namespaces and can process the same case twice. |
+| Technical-only schema and outcome isolation | PASS | Input/result/table schemas deny clinical/outcome fields, and the nine clinical predictors remain deferred to the authorized later join. |
+| Frozen A boundary, no B fit, unchanged PyRadiomics | PASS | The runner projects to the accepted A-full boundary, contains no clustering fit, and constructs the A/W03 PyRadiomics 3.0.1 settings without re-estimation. |
+| Accepted-state regression | PASS | The combined 91-test wrapper regression and FT04 production validation passed. |
 
-## Residual blocking findings
+## Blocking finding
 
-1. **W_Original provenance is self-authorized by the manifest.** `validate_ft05a_technical_manifest` validates `feature_blocks.W_Original.asset_path` with `exact_paths=(w_record["asset_path"],)`. When no internal expected asset is supplied, it then constructs the W_Original binding from that same manifest path and hash before loading it. A synthetic frozen manifest was changed to use `feature_extract/output/_ft05a_round3_synthetic_w.csv`, with the corresponding self-reported asset hash and source-record bindings; the validator returned success. The validator therefore does not independently bind W_Original to the accepted FT01/FT04 path and hash or reject every disallowed provenance root.
+`_validate_namespace_path` accepts any output root contained beneath `DEFAULT_OUTPUT_ROOT`. Run ownership, run state, case artifacts, staging, and the technical feature table are then derived from that caller-selected descendant. Consequently, the ownership file is not global to the canonical FT05A run. A synthetic probe used two descendant roots with the same run identity and technical cohort; both runs returned `PILOT_COMPLETE` and processed the same selected case independently. The same defect permits parallel full runs to perform duplicate extraction before competing for a manifest.
 
-2. **Persisted source mappings are not required to be one-to-one.** The manifest validator checks duplicate case identities and patient IDs, but does not reject repeated `image_path`, `roi_path`, `source_image_key`, or `source_roi_key` values. A synthetic manifest with two patient rows mapped to the same image/ROI and source keys, with recomputed case identities and cohort hashes, was accepted. This leaves duplicate extraction and incorrect patient-to-source provenance fail-open at the canonical manifest boundary.
-
-Both findings are blocking because the later technical manifest is the provenance boundary for the one-time, technical-only B generation. Real B technical execution must not start until the validator independently binds W_Original to the accepted asset and rejects repeated source mappings.
+This violates the fixed-root, one-time generation, pilot continuity, and duplicate/concurrency requirements. The production interface must enforce one exact canonical output root, or otherwise place ownership and run identity in one immutable global namespace that cannot vary with caller input, before real-B technical execution can be authorized.
 
 ## Disposition
 
-FT04 remains an accepted prerequisite and the accepted-state regression is intact. The normal FT05A execution paths are substantially fail-closed, but the canonical manifest boundary is not. Verdict `FAIL`; no real B technical execution is authorized.
+The prior W_Original self-authorization and persisted source-aliasing findings are closed, and the remaining reviewed controls are intact. The output-root ownership bypass is blocking. Verdict `FAIL`; no real B technical execution is authorized.
