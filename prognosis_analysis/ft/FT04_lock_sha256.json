@@ -2,7 +2,7 @@
   "artifact_id": "FT04_lock_sha256_attestation",
   "hash_algorithm": "SHA-256",
   "lock_path": "prognosis_analysis/ft/FT_model_freeze_lock.json",
-  "lock_sha256": "23056cd5c22acca3800c7ea4df00eead18d2b4c90cdcba6e05ca0ce67e70cc90",
+  "lock_sha256": "1ebf3b3a712bcd46b9e82c040ced0413a761f782991f489c1a30fd2ced160c03",
   "schema_version": "1.0",
   "self_referential": false,
   "status": "canonical"

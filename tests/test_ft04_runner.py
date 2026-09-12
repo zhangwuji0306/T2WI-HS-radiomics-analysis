@@ -326,6 +326,19 @@ class FT04RunnerTests(unittest.TestCase):
         finally:
             temp.cleanup()
 
+    def test_lock_rejects_incorrect_canonical_digest(self):
+        temp, copy_path, digest_path = self._temporary_lock_with_digest()
+        try:
+            with open(digest_path, "r", encoding="utf-8") as handle:
+                digest = json.load(handle)
+            digest["lock_sha256"] = "0" * 64
+            self._write_json(digest_path, digest)
+            with mock.patch.object(ft04, "FT04_LOCK_DIGEST", digest_path):
+                with self.assertRaises(ft04.FT04ValidationError):
+                    ft04.validate_ft_model_freeze_lock(copy_path)
+        finally:
+            temp.cleanup()
+
     def test_lock_rejects_injected_embedded_lock_hash_even_with_matching_digest(self):
         def inject_hash(lock):
             lock["provenance"]["git_binding"]["current_file_bindings"][

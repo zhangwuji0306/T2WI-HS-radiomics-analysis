@@ -671,7 +671,7 @@ def _git_binding(source_records, attestation_parent):
         ]),
         ("attestation_parent_commit", attestation_parent),
         ("attestation_parent_role",
-         "pre-remediation parent of the local commit that records the final FT04 lock and audit; this parent is not claimed to contain the remediation"),
+         "preceding local FT04 remediation commit; it is not claimed to contain the final attestation"),
         ("attestation_parent_paths", [
             "prognosis_analysis/ft/ft04_runner.py",
             "prognosis_analysis/ft/FT_model_freeze_lock.json",
@@ -854,7 +854,7 @@ def _write_audit(lock, path, lock_path=DEFAULT_LOCK):
         "- B state: locked; FT05A, FT05B, and FT06: not executed.",
         "- Formal lock: `prognosis_analysis/model_freeze_lock.json` unchanged.",
         "- Immutable implementation/source commit: `%s`; it contains the first-round reviewed FT04 runner and lock version. It is distinct from the remediation attestation." % git_binding["implementation_source_commit"],
-        "- Attestation parent commit: `%s`; it contains the pre-remediation FT04 files and is not claimed to contain the remediation." % git_binding["attestation_parent_commit"],
+        "- Attestation parent commit: `%s`; it contains the preceding FT04 remediation state and is not claimed to contain the final attestation." % git_binding["attestation_parent_commit"],
         "- The final local attestation commit is the child that records the remediation lock and this audit. Its hash is intentionally not embedded in the lock, avoiding a self-referential commit claim." ,
         "- Current FT04 runner SHA-256: `%s`; serialized FT04 lock file SHA-256: `%s` (canonical attestation: `prognosis_analysis/ft/FT04_lock_sha256.json`); lock payload identity SHA-256: `%s`." % (
             runner_binding["sha256"], lock_file_sha256,
@@ -867,8 +867,8 @@ def _write_audit(lock, path, lock_path=DEFAULT_LOCK):
         "## Validation",
         "",
         "- The seven existing FT04 model states reload in `t2_radiomics` and reproduce their frozen risk/survival outputs; their hashes are preserved.",
-        "- `tests/test_ft04_runner.py`: 22 synthetic/contract tests passed, including canonical-path, Git-binding, review-gate, complete-manifest, hash/provenance, W_Original binding, outcome-unlock, tamper, and formal-lock negative coverage.",
-        "- FT04 plus accepted FT03/FT02/W07 wrapper regression suite: 63 tests passed.",
+        "- `tests/test_ft04_runner.py`: 23 synthetic/contract tests passed, including canonical-path, Git-binding, review-gate, complete-manifest, hash/provenance, W_Original binding, outcome-unlock, tamper, and formal-lock negative coverage.",
+        "- FT04 plus accepted FT03/FT02/W07 wrapper regression suite: 64 tests passed.",
         "",
         "## Deliverables",
         "",

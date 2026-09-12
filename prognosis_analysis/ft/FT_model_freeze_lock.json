@@ -50,7 +50,7 @@
     "no_refit": true
   },
   "label": "exploratory_fullA_habitat_non_nested_validation",
-  "lock_identity_sha256": "9ae1735aa0bbbbff56d4e309e810be7c0f120a497dd401c9ec851b247e45f5c8",
+  "lock_identity_sha256": "2654ba560d2aac45241d8cbe6811fd7a31e78465a826551d058aee2aff9dcf37",
   "model_order": [
     "M0",
     "M1",
@@ -688,12 +688,12 @@
     "finalization_mode": "existing_completed_local_states",
     "ft04_runtime_seconds": null,
     "git_binding": {
-      "attestation_parent_commit": "31e15f4b1aa22677c894184e44b7d50dba3d5ccd",
+      "attestation_parent_commit": "624789feac69d002587d6e79b4ff0b7810d66055",
       "attestation_parent_paths": [
         "prognosis_analysis/ft/ft04_runner.py",
         "prognosis_analysis/ft/FT_model_freeze_lock.json"
       ],
-      "attestation_parent_role": "pre-remediation parent of the local commit that records the final FT04 lock and audit; this parent is not claimed to contain the remediation",
+      "attestation_parent_role": "preceding local FT04 remediation commit; it is not claimed to contain the final attestation",
       "current_file_bindings": {
         "ft04_lock": {
           "digest_attestation_path": "prognosis_analysis/ft/FT04_lock_sha256.json",
@@ -703,12 +703,12 @@
         },
         "ft04_runner": {
           "path": "prognosis_analysis/ft/ft04_runner.py",
-          "sha256": "27fa5aeae623ebce764b0ef511bc8a608cf97abc19a2c356e7d5a59027793b18"
+          "sha256": "f83dcd2c6773fd69561d20b997ce1d74365b4c6e16da778d2c30830535a80f9a"
         }
       },
       "final_attestation_commit": {
         "hash_embedded": false,
-        "parent_commit": "31e15f4b1aa22677c894184e44b7d50dba3d5ccd",
+        "parent_commit": "624789feac69d002587d6e79b4ff0b7810d66055",
         "reason_not_embedded": "embedding it would make the lock self-referential",
         "role": "local child commit recording the final FT04 lock and audit"
       },
@@ -816,7 +816,7 @@
       "ft04_runner": {
         "exists": true,
         "path": "prognosis_analysis/ft/ft04_runner.py",
-        "sha256": "27fa5aeae623ebce764b0ef511bc8a608cf97abc19a2c356e7d5a59027793b18"
+        "sha256": "f83dcd2c6773fd69561d20b997ce1d74365b4c6e16da778d2c30830535a80f9a"
       },
       "ft_scheme": {
         "exists": true,
