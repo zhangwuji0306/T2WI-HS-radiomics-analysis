@@ -40,6 +40,9 @@ import ft04_runner as ft04  # noqa: E402
 FT05A_STAGE = "FT05A"
 FT05A_SCHEMA_VERSION = "1.0"
 FT_LABEL = "exploratory_fullA_habitat_non_nested_validation"
+TECHNICAL_AUDIT_PENDING_STATUS = "generated_pending_review"
+TECHNICAL_AUDIT_PENDING_VERDICT = "PENDING_REVIEW"
+TECHNICAL_COMPLETE_PENDING_REVIEW = "TECHNICAL_COMPLETE_PENDING_REVIEW"
 FT05A_CODE_PREP_CONTRACT_IDENTITY = "FT05A_code_prep_contract_v1"
 FT05A_IDENTITY_MIGRATION_REASON = (
     "reviewed FT05A code/audit remediation continuation")
@@ -185,6 +188,29 @@ def _write_json_atomic(path, payload, refuse_existing=False):
         with open(path, "rb") as handle:
             if handle.read() != raw:
                 raise FT05AValidationError("refusing to overwrite existing artifact: %s" % path)
+        return
+    temporary = "%s.tmp.%s" % (path, uuid.uuid4().hex)
+    try:
+        with open(temporary, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
+def _write_text_atomic(path, text, refuse_existing=False):
+    directory = os.path.dirname(os.path.abspath(path))
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
+    raw = text.encode("utf-8")
+    if refuse_existing and os.path.exists(path):
+        with open(path, "rb") as handle:
+            if handle.read() != raw:
+                raise FT05AValidationError(
+                    "refusing to overwrite existing artifact: %s" % path)
         return
     temporary = "%s.tmp.%s" % (path, uuid.uuid4().hex)
     try:
@@ -589,6 +615,63 @@ def _git_paths_after(commit):
             if line.strip()]
 
 
+def _audit_marker(text, label):
+    pattern = r"(?im)^\s*%s\s*[:：]\s*`?([^`\r\n]+?)`?\s*$" % \
+        re.escape(label)
+    match = re.search(pattern, text)
+    if not match:
+        raise FT05AValidationError(
+            "FT05A technical audit is missing the %s marker" % label)
+    return match.group(1).strip()
+
+
+def _technical_audit_fields(text):
+    fields = {
+        "status": _audit_marker(text, "Status").lower(),
+        "independent": _audit_marker(text, "Independent review").lower(),
+        "verdict": _audit_marker(text, "Verdict").upper(),
+        "run_identity_sha256": _audit_marker(
+            text, "FT05A run identity SHA-256"),
+        "cohort_sha256": _audit_marker(text, "FT05A cohort SHA-256"),
+        "case_completion_evidence_hash": _audit_marker(
+            text, "FT05A case-completion evidence SHA-256"),
+        "technical_case_count": _audit_marker(text, "Technical case count"),
+        "ft04_lock_identity_sha256": _audit_marker(
+            text, "FT04 lock identity SHA-256"),
+        "code_audit_sha256": _audit_marker(text, "FT05A code-audit SHA-256"),
+        "runner_sha256": _audit_marker(text, "FT05A runner SHA-256"),
+        "w_original_asset_sha256": _audit_marker(
+            text, "W_Original asset SHA-256"),
+        "w_original_order_sha256": _audit_marker(
+            text, "W_Original order SHA-256"),
+        "row_schema_sha256": _audit_marker(
+            text, "FT05A row-schema SHA-256"),
+        "outcome_blind": _audit_marker(text, "Outcome-blind").lower(),
+        "outcome_accessed": _audit_marker(text, "Outcome accessed").lower(),
+        "b_kmeans_fit": _audit_marker(text, "B K-means fit").lower(),
+        "w_original_reused": _audit_marker(
+            text, "W_Original reused").lower(),
+        "repeat_extraction": _audit_marker(
+            text, "Repeat extraction").lower(),
+    }
+    for key in ("run_identity_sha256", "cohort_sha256",
+                "case_completion_evidence_hash", "code_audit_sha256",
+                "runner_sha256", "w_original_asset_sha256",
+                "w_original_order_sha256", "row_schema_sha256"):
+        if not re.match(r"^[0-9a-f]{64}$", fields[key]):
+            raise FT05AValidationError(
+                "FT05A technical audit %s is not a SHA-256" % key)
+    try:
+        fields["technical_case_count"] = int(fields["technical_case_count"])
+    except (TypeError, ValueError):
+        raise FT05AValidationError(
+            "FT05A technical audit case count is invalid")
+    if fields["technical_case_count"] < 1:
+        raise FT05AValidationError(
+            "FT05A technical audit case count is invalid")
+    return fields
+
+
 def _validate_code_audit(path):
     if not os.path.isfile(path):
         raise FT05AValidationError("accepted independent FT05A code audit is required")
@@ -645,13 +728,96 @@ def _validate_technical_audit(path):
     if not os.path.isfile(path):
         raise FT05AValidationError("accepted independent FT05A technical audit is required")
     text = _read_text(path, "FT05A technical audit")
-    if not re.search(r"(?i)independent", text):
+    fields = _technical_audit_fields(text)
+    if fields["status"] != "accepted" or \
+            fields["independent"] != "true":
         raise FT05AValidationError("FT05A technical audit is not independent")
-    if not re.search(r"(?im)^\s*(?:verdict|status)\s*[:：]\s*(?:PASS|PASS_WITH_FINDINGS|accepted)\s*$", text):
+    if fields["verdict"] not in ("PASS", "PASS_WITH_FINDINGS"):
         raise FT05AValidationError("FT05A technical audit has no accepted verdict")
+    if fields["outcome_blind"] != "true" or \
+            fields["outcome_accessed"] != "false" or \
+            fields["b_kmeans_fit"] != "false" or \
+            fields["w_original_reused"] != "true" or \
+            fields["repeat_extraction"] != "false":
+        raise FT05AValidationError(
+            "FT05A technical audit safety evidence is invalid")
+    if fields["runner_sha256"] != _sha256_file(__file__):
+        raise FT05AValidationError(
+            "FT05A technical audit is bound to a different runner")
     return {"path": _relative(path), "sha256": _sha256_file(path),
             "status": "accepted", "independent": True,
-            "verdict": "PASS" if re.search(r"(?im)^\s*verdict\s*[:：]\s*PASS\s*$", text) else "PASS_WITH_FINDINGS"}
+            "verdict": fields["verdict"],
+            "run_identity_sha256": fields["run_identity_sha256"],
+            "cohort_sha256": fields["cohort_sha256"],
+            "case_completion_evidence_hash": fields[
+                "case_completion_evidence_hash"],
+            "technical_case_count": fields["technical_case_count"],
+            "ft04_lock_identity_sha256": fields["ft04_lock_identity_sha256"],
+            "code_audit_sha256": fields["code_audit_sha256"],
+            "runner_sha256": fields["runner_sha256"],
+            "w_original_asset_sha256": fields["w_original_asset_sha256"],
+            "w_original_order_sha256": fields["w_original_order_sha256"],
+            "row_schema_sha256": fields["row_schema_sha256"]}
+
+
+def _technical_audit_expected(run_state, cohort, contract, w_asset,
+                              code_audit):
+    return {
+        "run_identity_sha256": run_state["run_identity_sha256"],
+        "cohort_sha256": run_state["identity_payload"]["cohort_sha256"],
+        "case_completion_evidence_hash": _sha256_text(_canonical_json(
+            run_state.get("completed_case_artifact_hashes", {}))),
+        "technical_case_count": int(len(cohort)),
+        "ft04_lock_identity_sha256": contract["lock"][
+            "lock_identity_sha256"],
+        "code_audit_sha256": code_audit["sha256"],
+        "runner_sha256": _sha256_file(__file__),
+        "w_original_asset_sha256": w_asset["sha256"],
+        "w_original_order_sha256": W_ORIGINAL_ORDER_SHA256,
+        "row_schema_sha256": _row_schema_hash(),
+    }
+
+
+def _validate_technical_audit_binding(record, expected):
+    for key, value in expected.items():
+        if key in record and record[key] != value:
+            raise FT05AValidationError(
+                "FT05A technical audit is not bound to the completed run")
+
+
+def _validate_generated_technical_audit(path, expected):
+    if not os.path.isfile(path):
+        raise FT05AValidationError(
+            "FT05A generated technical audit is missing")
+    fields = _technical_audit_fields(
+        _read_text(path, "FT05A generated technical audit"))
+    if fields["status"] != TECHNICAL_AUDIT_PENDING_STATUS or \
+            fields["independent"] != "false" or \
+            fields["verdict"] != TECHNICAL_AUDIT_PENDING_VERDICT:
+        raise FT05AValidationError(
+            "FT05A technical audit is neither accepted nor pending review")
+    if fields["outcome_blind"] != "true" or \
+            fields["outcome_accessed"] != "false" or \
+            fields["b_kmeans_fit"] != "false" or \
+            fields["w_original_reused"] != "true" or \
+            fields["repeat_extraction"] != "false":
+        raise FT05AValidationError(
+            "FT05A generated technical audit safety evidence is invalid")
+    _validate_technical_audit_binding(fields, expected)
+    return {"path": _relative(path), "sha256": _sha256_file(path),
+            "status": TECHNICAL_AUDIT_PENDING_STATUS, "independent": False,
+            "verdict": TECHNICAL_AUDIT_PENDING_VERDICT,
+            "run_identity_sha256": fields["run_identity_sha256"],
+            "cohort_sha256": fields["cohort_sha256"],
+            "case_completion_evidence_hash": fields[
+                "case_completion_evidence_hash"],
+            "technical_case_count": fields["technical_case_count"],
+            "ft04_lock_identity_sha256": fields["ft04_lock_identity_sha256"],
+            "code_audit_sha256": fields["code_audit_sha256"],
+            "runner_sha256": fields["runner_sha256"],
+            "w_original_asset_sha256": fields["w_original_asset_sha256"],
+            "w_original_order_sha256": fields["w_original_order_sha256"],
+            "row_schema_sha256": fields["row_schema_sha256"]}
 
 
 def _read_text(path, label):
@@ -1630,6 +1796,60 @@ def _initial_run_state(run_id, cohort, lock, code_audit, output_root):
     ))
 
 
+def _technical_audit_text(expected):
+    return """# FT05A B Technical Generation Audit
+
+Status: %s
+Independent review: false
+Verdict: %s
+
+This is factual runtime evidence emitted by the FT05A runner. It is not an
+independent review and does not authorize FT05B or FT06. An independent
+Reviewer must inspect the completed technical artifacts and update this same
+canonical report before the frozen feature manifest can be created.
+
+FT05A run identity SHA-256: `%s`
+FT05A cohort SHA-256: `%s`
+FT05A case-completion evidence SHA-256: `%s`
+Technical case count: %s
+FT04 lock identity SHA-256: `%s`
+FT05A code-audit SHA-256: `%s`
+FT05A runner SHA-256: `%s`
+W_Original asset SHA-256: `%s`
+W_Original order SHA-256: `%s`
+FT05A row-schema SHA-256: `%s`
+
+Outcome-blind: true
+Outcome accessed: false
+B K-means fit: false
+W_Original reused: true
+Repeat extraction: false
+""" % (
+        TECHNICAL_AUDIT_PENDING_STATUS, TECHNICAL_AUDIT_PENDING_VERDICT,
+        expected["run_identity_sha256"], expected["cohort_sha256"],
+        expected["case_completion_evidence_hash"],
+        expected["technical_case_count"],
+        expected["ft04_lock_identity_sha256"], expected["code_audit_sha256"],
+        expected["runner_sha256"], expected["w_original_asset_sha256"],
+        expected["w_original_order_sha256"], expected["row_schema_sha256"])
+
+
+def _ensure_technical_generation_audit(path, run_state, cohort, contract,
+                                        w_asset, code_audit):
+    expected = _technical_audit_expected(
+        run_state, cohort, contract, w_asset, code_audit)
+    if os.path.isfile(path):
+        try:
+            accepted = _validate_technical_audit(path)
+        except FT05AValidationError:
+            return _validate_generated_technical_audit(path, expected)
+        _validate_technical_audit_binding(accepted, expected)
+        return accepted
+    _write_text_atomic(path, _technical_audit_text(expected),
+                       refuse_existing=True)
+    return _validate_generated_technical_audit(path, expected)
+
+
 def _write_json_exclusive(path, payload):
     directory = os.path.dirname(os.path.abspath(path))
     if not os.path.isdir(directory):
@@ -1729,7 +1949,8 @@ def _validate_run_state_structure(state, expected, cohort=None):
     allowed = required | {
         "identity_migration", "pilot_completed_at_epoch",
         "feature_table_path", "feature_table_sha256", "manifest_path",
-        "manifest_sha256", "completed_at_epoch",
+        "manifest_sha256", "completed_at_epoch", "technical_audit_path",
+        "technical_audit_sha256",
     }
     if set(state) - allowed or not required.issubset(set(state)):
         raise FT05AValidationError("FT05A run state structure is malformed")
@@ -1738,7 +1959,7 @@ def _validate_run_state_structure(state, expected, cohort=None):
         raise FT05AValidationError("FT05A run state schema is invalid")
     if state.get("status") not in (
             "RUNNING", "PILOT_COMPLETE", "FAILED", "FINALIZING",
-            "COMPLETED", "FROZEN"):
+            "COMPLETED", "FROZEN", TECHNICAL_COMPLETE_PENDING_REVIEW):
         raise FT05AValidationError("FT05A run state status is invalid")
     payload = state.get("identity_payload")
     expected_payload = expected.get("identity_payload") \
@@ -1797,6 +2018,18 @@ def _validate_run_state_structure(state, expected, cohort=None):
             "FT05A pilot completion timestamp lacks pilot case evidence")
     if not isinstance(state.get("failed_cases"), list):
         raise FT05AValidationError("FT05A run-state failure evidence is invalid")
+    technical_audit_fields = {"technical_audit_path", "technical_audit_sha256"}
+    if state.get("status") == TECHNICAL_COMPLETE_PENDING_REVIEW:
+        if technical_audit_fields - set(state) or \
+                not isinstance(state.get("technical_audit_path"), str) or \
+                not _is_sha256(state.get("technical_audit_sha256")) or \
+                state.get("completed_case_count") != target_count or \
+                len(completed_keys) != target_count or state.get("failed_cases"):
+            raise FT05AValidationError(
+                "FT05A pending technical-review state lacks complete case evidence")
+    elif technical_audit_fields.intersection(set(state)):
+        raise FT05AValidationError(
+            "FT05A run state has unexpected technical-audit evidence")
     finalization = state.get("finalization")
     if state.get("status") == "FINALIZING":
         if not isinstance(finalization, dict):
@@ -1893,6 +2126,9 @@ def _load_or_create_state(path, expected, resume, code_audit=None, cohort=None,
         if not _identity_differs_only_by_audit(
                 state.get("identity_payload"), expected.get("identity_payload")):
             raise FT05AValidationError("conflicting FT05A run identity")
+        if state.get("status") == TECHNICAL_COMPLETE_PENDING_REVIEW:
+            raise FT05AValidationError(
+                "FT05A technical-complete state cannot migrate code identity")
         if state.get("status") == "FINALIZING":
             raise FT05AValidationError(
                 "FT05A finalization state cannot be migrated across code remediation")
@@ -2202,6 +2438,8 @@ def _recover_finalization(state, state_path, contract=None, cohort=None,
     state["manifest_sha256"] = transaction["manifest_sha256"]
     state["completed_case_count"] = int(transaction["completed_case_count"])
     state["completed_at_epoch"] = time.time()
+    state.pop("technical_audit_path", None)
+    state.pop("technical_audit_sha256", None)
     state["finalization"] = None
     _update_state(state_path, state)
     for path in (staged_table, staged_manifest):
@@ -2216,8 +2454,12 @@ def _recover_finalization(state, state_path, contract=None, cohort=None,
 def _finalize_manifest(contract, cohort, records, run_state, output_root,
                        manifest_path, technical_audit_path, code_audit_path,
                        w_asset, state_path):
-    technical_audit = _validate_technical_audit(technical_audit_path)
     code_audit = _validate_code_audit(code_audit_path)
+    technical_audit = _validate_technical_audit(technical_audit_path)
+    _validate_technical_audit_binding(
+        technical_audit,
+        _technical_audit_expected(
+            run_state, cohort, contract, w_asset, code_audit))
     rows = []
     for _, record in cohort.iterrows():
         path = _case_result_path(os.path.join(output_root, "cases"), record)
@@ -2307,8 +2549,8 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
         technical_audit_path, "FT05A technical audit", output_root,
         allow_ft_namespace=True)
     # This is the only entry point that may turn a technical cohort into a
-    # readable frame.  The lock, accepted review, code audit, and static
-    # safety checks all complete before it is called.
+    # readable frame. The FT04 lock/review, code audit, and static safety
+    # checks all complete before it is called.
     contract = validate_ft05a_preflight(lock_path, code_audit_path)
     static = static_validate()
     if not static["pass"]:
@@ -2382,6 +2624,10 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
             state_path, expected, resume, code_audit=contract["code_audit"],
             cohort=cohort_frame, manifest_path=manifest_path,
             migration_validator=validate_identity_migration)
+        if state.get("status") == TECHNICAL_COMPLETE_PENDING_REVIEW and \
+                state.get("technical_audit_path") != _relative(technical_audit_path):
+            raise FT05AValidationError(
+                "FT05A pending state is bound to a different technical audit")
         _validate_state_case_keys(state, cohort_frame)
         _refuse_existing_manifest(manifest_path, state)
         if state.get("status") == "FINALIZING":
@@ -2494,6 +2740,20 @@ def run_ft05a(cohort, run_id, lock_path=DEFAULT_LOCK, output_root=DEFAULT_OUTPUT
                 "FT05A cannot finalize with incomplete case completion")
         if set(source_record_map) != set(completed):
             raise FT05AValidationError("FT05A source-record completion is incomplete")
+        technical_audit = _ensure_technical_generation_audit(
+            technical_audit_path, state, cohort_frame, contract, w_asset,
+            contract["code_audit"])
+        if technical_audit["status"] != "accepted":
+            state["status"] = TECHNICAL_COMPLETE_PENDING_REVIEW
+            state["technical_audit_path"] = _relative(technical_audit_path)
+            state["technical_audit_sha256"] = technical_audit["sha256"]
+            _update_state(state_path, state)
+            return {
+                "status": TECHNICAL_COMPLETE_PENDING_REVIEW,
+                "run_state": state,
+                "technical_audit": technical_audit,
+                "completed_case_count": int(state["completed_case_count"]),
+            }
         manifest = _finalize_manifest(
             contract, cohort_frame, source_record_map, state, output_root,
             manifest_path, technical_audit_path, code_audit_path, w_asset,
@@ -2526,10 +2786,12 @@ def main():
         manifest_path=args.manifest, code_audit_path=args.code_audit,
         technical_audit_path=args.technical_audit, resume=args.resume,
         pilot_size=args.pilot_size)
-    print(json.dumps({"status": result.get("status", "COMPLETED"),
-                      "artifact_id": result.get("artifact_id", "FT05_B_feature_manifest"),
-                      "row_count": result.get("feature_table", {}).get("row_count")},
-                     ensure_ascii=False, sort_keys=True))
+    payload = {"status": result.get("status", "COMPLETED"),
+               "artifact_id": result.get("artifact_id"),
+               "row_count": result.get("feature_table", {}).get("row_count")}
+    if result.get("status") == TECHNICAL_COMPLETE_PENDING_REVIEW:
+        payload["technical_audit"] = result.get("technical_audit", {}).get("path")
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
 if __name__ == "__main__":

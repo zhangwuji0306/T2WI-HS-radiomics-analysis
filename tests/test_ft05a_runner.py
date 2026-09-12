@@ -204,6 +204,20 @@ class FT05ARunnerTests(unittest.TestCase):
             "contract_identity": ft.FT05A_CODE_PREP_CONTRACT_IDENTITY,
         }
 
+    @contextmanager
+    def _runtime_patches_without_technical_audit(self):
+        with mock.patch.object(ft, "validate_ft05a_preflight",
+                               return_value=self.contract), \
+                mock.patch.object(ft, "_load_w_original_asset",
+                                  return_value=self._w_asset()), \
+                mock.patch.object(ft, "_validate_code_audit",
+                                  return_value=self.contract["code_audit"]), \
+                mock.patch.object(ft, "_frozen_boundary_identity",
+                                  return_value="boundary-id"), \
+                mock.patch.object(ft, "FORMAL_MODEL_LOCK",
+                                  os.path.join(self.root, "formal_absent.json")):
+            yield
+
     def _write_state_fixture(self, path, state):
         with open(path, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(state, handle, ensure_ascii=False, indent=2,
@@ -382,6 +396,94 @@ class FT05ARunnerTests(unittest.TestCase):
         self.assertEqual(state["completed_case_count"], 2)
         self.assertTrue(all(column not in manifest["feature_table"]["columns"]
                             for column in ("DFS_time", "DFS_event", "clinical_status")))
+
+    def test_first_full_run_emits_factual_pending_audit_without_manifest(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        os.remove(self.technical_audit)
+        calls = []
+        with self._runtime_patches_without_technical_audit():
+            result = ft.run_ft05a(
+                self.cohort, "run-pending-review", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(calls))
+
+        self.assertEqual(result["status"], ft.TECHNICAL_COMPLETE_PENDING_REVIEW)
+        self.assertEqual(calls, ["B0", "B1"])
+        self.assertTrue(os.path.isfile(self.technical_audit))
+        self.assertFalse(os.path.exists(manifest_path))
+        audit_text = self._read_bytes(self.technical_audit).decode("utf-8")
+        self.assertIn("Status: generated_pending_review", audit_text)
+        self.assertIn("Independent review: false", audit_text)
+        self.assertIn("Verdict: PENDING_REVIEW", audit_text)
+        self.assertNotIn("Independent review: true", audit_text)
+        self.assertNotIn("Status: accepted", audit_text)
+        with self.assertRaises(ft.FT05AValidationError):
+            ft._validate_technical_audit(self.technical_audit)
+
+        state = ft._read_json(os.path.join(self.out, "FT05A_run_state.json"))
+        self.assertEqual(state["status"], ft.TECHNICAL_COMPLETE_PENDING_REVIEW)
+        self.assertEqual(state["technical_audit_path"], _relative(self.technical_audit))
+        self.assertEqual(state["technical_audit_sha256"],
+                         ft._sha256_file(self.technical_audit))
+        with mock.patch.object(ft.ft04, "FT05_MANIFEST", manifest_path):
+            with self.assertRaises(ft.ft04.FT04ValidationError):
+                ft.ft04._validate_b_feature_manifest(
+                    self.lock, manifest_path=manifest_path)
+
+    def test_reviewer_acceptance_resumes_pending_run_without_reextraction(self):
+        manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
+        os.remove(self.technical_audit)
+        with self._runtime_patches_without_technical_audit():
+            pending = ft.run_ft05a(
+                self.cohort, "run-review-resume", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor())
+        self.assertEqual(pending["status"], ft.TECHNICAL_COMPLETE_PENDING_REVIEW)
+        with self._runtime_patches_without_technical_audit():
+            still_pending = ft.run_ft05a(
+                self.cohort, "run-review-resume", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(
+                    failure=AssertionError("pending resume recomputed a case")),
+                resume=True)
+        self.assertEqual(still_pending["status"],
+                         ft.TECHNICAL_COMPLETE_PENDING_REVIEW)
+
+        with open(self.technical_audit, "r", encoding="utf-8") as handle:
+            accepted_text = handle.read()
+        accepted_text = accepted_text.replace(
+            "Status: generated_pending_review", "Status: accepted")
+        accepted_text = accepted_text.replace(
+            "Independent review: false", "Independent review: true")
+        accepted_text = accepted_text.replace(
+            "Verdict: PENDING_REVIEW", "Verdict: PASS")
+        with open(self.technical_audit, "w", encoding="utf-8",
+                  newline="\n") as handle:
+            handle.write(accepted_text)
+
+        with self._runtime_patches_without_technical_audit():
+            result = ft.run_ft05a(
+                self.cohort, "run-review-resume", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(
+                    failure=AssertionError("completed case was recomputed")),
+                resume=True)
+
+        self.assertEqual(result["status"], "frozen")
+        self.assertEqual(result["reviews"]["technical_audit"]["status"],
+                         "accepted")
+        self.assertTrue(result["reviews"]["technical_audit"]["independent"])
+        self.assertEqual(result["reviews"]["technical_audit"]["sha256"],
+                         ft._sha256_file(self.technical_audit))
+        state = ft._read_json(os.path.join(self.out, "FT05A_run_state.json"))
+        self.assertEqual(state["status"], "COMPLETED")
+        self.assertNotIn("technical_audit_path", state)
+        self.assertNotIn("technical_audit_sha256", state)
+        self._validate_manifest(manifest_path)
 
     def test_actual_technical_manifest_passes_canonical_technical_validator(self):
         manifest_path = os.path.join(self.out, "FT05_B_feature_manifest.json")
