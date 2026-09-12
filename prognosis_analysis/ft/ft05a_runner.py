@@ -1788,7 +1788,8 @@ def _validate_run_state_structure(state, expected, cohort=None):
             "FT05A pilot cases are not represented in completed cases")
     if state.get("status") == "PILOT_COMPLETE":
         if not pilot_keys or set(pilot_keys) != set(completed_keys) or \
-                "pilot_completed_at_epoch" not in state:
+                "pilot_completed_at_epoch" not in state or \
+                state.get("failed_cases"):
             raise FT05AValidationError(
                 "FT05A pilot-complete state lacks complete case evidence")
     if "pilot_completed_at_epoch" in state and not pilot_keys:
@@ -1913,6 +1914,7 @@ def _load_or_create_state(path, expected, resume, code_audit=None, cohort=None,
              expected["identity_payload"]["code_audit_sha256"]),
             ("reason", FT05A_IDENTITY_MIGRATION_REASON),
         ))
+        _validate_run_state_structure(migrated, expected, cohort=cohort)
         _write_json_atomic(path, migrated)
         return migrated
     if _write_json_exclusive(path, expected):
