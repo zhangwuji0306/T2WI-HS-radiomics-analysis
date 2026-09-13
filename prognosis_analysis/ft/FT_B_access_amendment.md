@@ -23,7 +23,20 @@ row-schema SHA-256 is
 the FT04 lock identity SHA-256 is
 `10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e`.
 
-After these checks, B DFS/outcome access is opened only for FT06 frozen-model
-prediction/evaluation. No B fitting, tuning, feature selection, K-means fit,
-cutoff change, preprocessing estimation, or radiomics re-extraction is
-authorized.
+The only FT05B authorization entry is
+`prognosis_analysis/ft/ft05b_runner.py::validate_ft05b_gate`. It validates the
+FROZEN/VALID FT04 lock, absence of the formal model lock, the accepted FT05A
+technical audit and scientific amendment, the exact ignored `.finalize`
+manifest/table bytes, 163 unique ordered B technical rows, the candidate and
+W_Original contracts, and the FT_B_unlock hash/scope bindings. It fails closed
+on the former canonical manifest path, any hash/schema/order/uniqueness
+mismatch, and any disabled or out-of-scope unlock.
+
+After the gate passes, `ft05b_runner.py::read_b_dfs` uses the existing
+allow-list/streaming primitive and requests only `影像号`, `DFS_time`, and
+`DFS_event`. It does not call the formal `read_B_validation` reader or
+`require_b_unlock`; the in-memory source frame is reduced to aggregate counts
+and is not persisted. Access is authorized only for FT06 frozen-model
+prediction/evaluation. B fitting, tuning, feature selection, K-means fit,
+cutoff change, preprocessing estimation, and radiomics re-extraction remain
+prohibited.

@@ -10,6 +10,7 @@
   "ft04_lock_identity_sha256": "10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e",
   "ft05a_run_id": "FT05A-20260912-01a08bf3",
   "ft05a_run_identity_sha256": "718f357176f704f42027669b47041d24b33e9116b010bceac07b574be84c00bd",
+  "ft05a_cohort_sha256": "642830a817c6c3e71845c32f9be64ab98514adc372d070570bba86f34ae5ba53",
   "feature_manifest_path": "prognosis_analysis/output/ft_20260910_01a08bf3/FT05A/.finalize/FT05_B_feature_manifest.json",
   "feature_manifest_sha256": "055bdf0e98d05ed4c4e0b8ae2c175d5e82d66ba484ebec30b4b8c04c9e0eb251",
   "ft05_manifest_sha256": "055bdf0e98d05ed4c4e0b8ae2c175d5e82d66ba484ebec30b4b8c04c9e0eb251",
