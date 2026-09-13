@@ -14,6 +14,13 @@
 
 The tags are immutable recovery points. The transition commit history remains traceable through the Primary v2 commits and the merged `main` history.
 
+## Historical refs / cleanup boundary
+
+- `main` is the only active long-term branch, and Primary v2 is the only active scientific protocol.
+- `codex/l7-current-code-technical-preflight` and `codex/w00-formal-archive` remain occupied by their respective linked worktrees. They are not removed in this cleanup to avoid deleting content from other workspaces.
+- Older `origin/codex/*` refs are remote historical references only. This cleanup does not delete remote refs or push to the remote.
+- These retained references are not active analysis routes. They do not alter either immutable tag or the Primary v2 scientific release conclusion; retention is a reversible repository-safety boundary.
+
 ## Archive directories
 
 - `archive/formal_nested_cv_v1/`: Formal W08 v1 protocol, old execution SOP, W08/R5/R6 audit records and aggregate evidence.
