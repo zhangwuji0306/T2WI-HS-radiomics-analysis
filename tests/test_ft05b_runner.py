@@ -62,6 +62,7 @@ class FT05BRunnerTests(unittest.TestCase):
 
     def _build_fixture(self):
         self._patch("_PROJECT_ROOT", self.root)
+        self._patch("_git_commit_resolves", mock.Mock(return_value=True))
         paths = {
             "FT04_LOCK_PATH": os.path.join(self.root, "ft04.json"),
             "FORMAL_MODEL_LOCK": os.path.join(self.root, "formal.json"),
@@ -288,7 +289,7 @@ Completed unique B cases | `163/163`
             "B_data_read_before_unlock": False,
             "B_outcome_read_before_unlock": False,
             "prohibitions": list(ft.PROHIBITED_OPERATIONS),
-            "source_commit": "0" * 40,
+            "source_commit": ft.HISTORICAL_ACCESS_SOURCE_COMMIT,
         }
         self._write_json(paths["FT_B_UNLOCK_PATH"], unlock)
         self._patch_object(ft.ft04, "validate_ft_model_freeze_lock",
@@ -316,6 +317,23 @@ Completed unique B cases | `163/163`
         with mock.patch.object(ft.data_split_guard, "_authorized_read") as reader:
             with self.assertRaises(ft.FT05BValidationError):
                 ft.read_b_dfs()
+        reader.assert_not_called()
+
+    def test_alternate_receipt_path_fails_closed_before_outcome_read(self):
+        alternate_receipt_path = os.path.join(self.root, "alternate.json")
+        with mock.patch.object(ft.data_split_guard, "_authorized_read") as reader:
+            with self.assertRaises(ft.FT05BValidationError):
+                ft.read_b_dfs(receipt_path=alternate_receipt_path)
+        reader.assert_not_called()
+        self.assertFalse(os.path.exists(alternate_receipt_path))
+
+    def test_source_commit_must_resolve_to_historical_git_object(self):
+        with mock.patch.object(ft, "_git_commit_resolves",
+                               return_value=False) as verifier:
+            with mock.patch.object(ft.data_split_guard, "_authorized_read") as reader:
+                with self.assertRaises(ft.FT05BValidationError):
+                    ft.read_b_dfs()
+        verifier.assert_called_once_with(ft.HISTORICAL_ACCESS_SOURCE_COMMIT)
         reader.assert_not_called()
 
     def test_wrong_hash_old_path_and_disabled_status_fail_closed(self):

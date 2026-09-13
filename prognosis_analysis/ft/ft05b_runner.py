@@ -21,6 +21,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 
 
@@ -69,6 +70,10 @@ EXPECTED_W_ORDER_SHA256 = (
     "1c07cd4e129e368dde8539d552ecb0f453d9c655fe2a5383d00a5de7b408ca1f")
 EXPECTED_AUDIT_SHA256 = (
     "96758aec2949c58e1ed96ddcbb7072448a520b4598cfedf376e43b2197702778")
+# Historical source commit recorded for the original FT05B access.  This is
+# provenance for that access, not the commit containing this remediation.
+HISTORICAL_ACCESS_SOURCE_COMMIT = (
+    "5b2083ff85eb0565f795ae44988a0fe5f8c071ff")
 
 FT04_LOCK_PATH = os.path.join(_HERE, "FT_model_freeze_lock.json")
 FORMAL_MODEL_LOCK = os.path.join(
@@ -183,7 +188,7 @@ def _project_path(relative_path, label):
 def _require_exact_path(path, expected, label):
     if os.path.normcase(os.path.abspath(path)) != \
             os.path.normcase(os.path.abspath(expected)):
-        _fail("%s must use the FT05B .finalize allow-listed path" % label)
+        _fail("%s must use the canonical FT05B allow-listed path" % label)
     return expected
 
 
@@ -191,6 +196,20 @@ def _require_sha(value, expected, label):
     if not re.match(r"^[0-9a-f]{64}$", str(value or "")) or \
             str(value).lower() != expected.lower():
         _fail("%s hash binding is invalid" % label)
+
+
+def _git_commit_resolves(commit):
+    """Return whether commit resolves to the same local Git commit object."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", os.path.abspath(_PROJECT_ROOT), "rev-parse",
+             "--verify", "%s^{commit}" % commit],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, check=False, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and \
+        result.stdout.strip().lower() == str(commit).lower()
 
 
 def _marker(text, label, digest=True):
@@ -542,8 +561,14 @@ def _validate_unlock(lock, manifest_hash, table_hash):
         _fail("FT_B_unlock contains a prior B access claim")
     if set(unlock.get("prohibitions") or ()) != set(PROHIBITED_OPERATIONS):
         _fail("FT_B_unlock prohibition scope is incomplete")
-    if not re.match(r"^[0-9a-f]{40}$", str(unlock.get("source_commit", ""))):
+    source_commit = unlock.get("source_commit")
+    if not isinstance(source_commit, str) or \
+            not re.match(r"^[0-9a-f]{40}$", source_commit):
         _fail("FT_B_unlock source commit is invalid")
+    if source_commit != HISTORICAL_ACCESS_SOURCE_COMMIT:
+        _fail("FT_B_unlock source commit does not match historical access provenance")
+    if not _git_commit_resolves(source_commit):
+        _fail("FT_B_unlock source commit does not resolve to a Git commit object")
     return unlock, _sha256_file(FT_B_UNLOCK_PATH)
 
 
@@ -563,6 +588,7 @@ def _build_context():
         "feature_manifest_sha256": manifest_hash,
         "feature_table_sha256": table_hash,
         "ft_b_unlock_sha256": unlock_hash,
+        "source_commit": unlock["source_commit"],
         "technical_case_count": len(allowed_ids),
         "requested_columns": list(B_OUTCOME_COLUMNS),
         "patient_level_frame_persisted": False,
@@ -604,9 +630,11 @@ def read_b_dfs(outcome_path=None, receipt_path=None):
     A receipt already present is a hard stop to prevent a second controlled
     access from being mistaken for the first access.
     """
+    receipt_path = FT05B_RECEIPT_PATH if receipt_path is None else receipt_path
+    _require_exact_path(receipt_path, FT05B_RECEIPT_PATH,
+                        "FT05B unlock receipt")
     context = _build_context()
     outcome_path = OUTCOME_SOURCE_PATH if outcome_path is None else outcome_path
-    receipt_path = FT05B_RECEIPT_PATH if receipt_path is None else receipt_path
     _require_exact_path(outcome_path, OUTCOME_SOURCE_PATH,
                         "B outcome source")
     if os.path.isfile(receipt_path):
@@ -668,8 +696,7 @@ def read_b_dfs(outcome_path=None, receipt_path=None):
         "b_data_read_before_unlock": False,
         "access_after_unlock": True,
         "ft06_executed": False,
-        "source_commit": _read_json(
-            FT_B_UNLOCK_PATH, "FT_B_unlock.json").get("source_commit"),
+        "source_commit": context.summary["source_commit"],
     }
     _write_receipt(receipt_path, receipt)
     result = dict(context.summary)
