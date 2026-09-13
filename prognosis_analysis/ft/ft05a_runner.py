@@ -2826,20 +2826,36 @@ def _repair_finalization(state, state_path, contract, cohort, w_asset,
         raise FT05AValidationError(
             "FT05A staged manifest audit bindings are inconsistent")
     generation_code_audit = reviews.get("code_audit")
+    uses_original_generation_audit = False
     if code_audit.get("sha256") == original_code_audit_sha256:
         if generation_code_audit != code_audit:
             raise FT05AValidationError(
                 "FT05A staged manifest audit bindings are inconsistent")
-    elif not isinstance(generation_code_audit, dict) or \
-            generation_code_audit.get("path") != _relative(code_audit_path) or \
-            generation_code_audit.get("sha256") != original_code_audit_sha256 or \
-            generation_code_audit.get("status") != "accepted" or \
-            generation_code_audit.get("independent") is not True or \
-            generation_code_audit.get("verdict") not in (
-                "PASS", "PASS_WITH_FINDINGS"):
-        raise FT05AValidationError(
-            "FT05A original generation code-audit binding is invalid")
-    if isinstance(generation_code_audit, dict) and \
+        uses_original_generation_audit = True
+    else:
+        # A schema-1 transaction may already have staged the accepted
+        # remediation audit before the repair was resumed.  The staged
+        # manifest must then carry that exact current audit record; the
+        # original generation binding remains in state and in the technical
+        # audit validated above.
+        _validate_current_code_audit_record(
+            code_audit, contract["code_audit"]["sha256"],
+            require_post_generation_scope=True)
+        if generation_code_audit == code_audit:
+            pass
+        elif not isinstance(generation_code_audit, dict) or \
+                generation_code_audit.get("path") != _relative(code_audit_path) or \
+                generation_code_audit.get("sha256") != original_code_audit_sha256 or \
+                generation_code_audit.get("status") != "accepted" or \
+                generation_code_audit.get("independent") is not True or \
+                generation_code_audit.get("verdict") not in (
+                    "PASS", "PASS_WITH_FINDINGS"):
+            raise FT05AValidationError(
+                "FT05A original generation code-audit binding is invalid")
+        else:
+            uses_original_generation_audit = True
+    if uses_original_generation_audit and \
+            isinstance(generation_code_audit, dict) and \
             "runner_sha256" in generation_code_audit and \
             generation_code_audit.get("runner_sha256") != \
             (state.get("generation_binding") or {}).get("runner_sha256"):

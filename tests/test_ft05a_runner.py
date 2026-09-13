@@ -274,6 +274,24 @@ class FT05ARunnerTests(unittest.TestCase):
         self._write_state_fixture(state_path, state)
         return asset, manifest_path, state_path, stage_table, stage_manifest
 
+    def _prepare_legacy_finalizing_scene_with_current_audit(self):
+        asset, manifest_path, state_path, stage_table, stage_manifest = \
+            self._prepare_legacy_finalizing_scene()
+        state = ft._read_json(state_path)
+        state["technical_audit_path"] = _relative(self.technical_audit)
+        state["technical_audit_sha256"] = ft._sha256_file(self.technical_audit)
+        current_audit = self._strict_code_audit("c" * 64)
+        self.contract["code_audit"] = current_audit
+        manifest = ft._read_json(stage_manifest)
+        manifest["reviews"]["code_audit"] = copy.deepcopy(current_audit)
+        with open(stage_manifest, "wb") as handle:
+            handle.write(ft._json_bytes(manifest))
+        state["finalization"]["manifest_sha256"] = ft._sha256_file(
+            stage_manifest)
+        self._write_state_fixture(state_path, state)
+        return (asset, manifest_path, state_path, stage_table, stage_manifest,
+                current_audit)
+
     def _create_legacy_pending_run(self, run_id="run-legacy-pending",
                                    old_code_audit_hash=None,
                                    old_runner_hash=None):
@@ -1720,6 +1738,172 @@ class FT05ARunnerTests(unittest.TestCase):
         repaired_state = ft._read_json(state_path)
         self.assertEqual(repaired_state["identity_payload"], original_identity)
         self.assertEqual(repaired_state["generation_binding"], original_binding)
+
+    def test_legacy_repair_accepts_current_audit_already_in_staged_manifest(self):
+        (asset, manifest_path, state_path, unused_stage_table,
+         unused_stage_manifest, current_audit) = \
+            self._prepare_legacy_finalizing_scene_with_current_audit()
+        state_before = ft._read_json(state_path)
+        original_identity = copy.deepcopy(state_before["identity_payload"])
+        original_binding = copy.deepcopy(state_before["generation_binding"])
+        calls = []
+        with self._patches() as loader:
+            loader.return_value = asset
+            result = ft.run_ft05a(
+                self.cohort, "run-legacy-finalization", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(calls, failure=AssertionError(
+                    "recomputed")),
+                resume=True, repair_finalization=True)
+        self.assertEqual(result["status"], "frozen")
+        self.assertEqual(calls, [])
+        self.assertEqual(result["reviews"]["code_audit"], current_audit)
+        repaired_state = ft._read_json(state_path)
+        self.assertEqual(repaired_state["identity_payload"], original_identity)
+        self.assertEqual(repaired_state["generation_binding"], original_binding)
+
+    def test_legacy_repair_rejects_current_audit_binding_tamper_before_processing(self):
+        (asset, manifest_path, state_path, unused_stage_table,
+         unused_stage_manifest, current_audit) = \
+            self._prepare_legacy_finalizing_scene_with_current_audit()
+        current_audit["post_generation_change_scope"] = "unapproved scope"
+        self.contract["code_audit"] = current_audit
+        state_before = self._read_bytes(state_path)
+        calls = []
+        with self._patches() as loader:
+            loader.return_value = asset
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-legacy-finalization",
+                    output_root=self.out, manifest_path=manifest_path,
+                    code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(calls), resume=True,
+                    repair_finalization=True)
+        self.assertEqual(calls, [])
+        self.assertEqual(self._read_bytes(state_path), state_before)
+
+    def test_legacy_repair_rejects_current_runner_binding_tamper_before_processing(self):
+        (asset, manifest_path, state_path, unused_stage_table,
+         unused_stage_manifest, current_audit) = \
+            self._prepare_legacy_finalizing_scene_with_current_audit()
+        current_audit["runner_sha256"] = "0" * 64
+        self.contract["code_audit"] = current_audit
+        state_before = self._read_bytes(state_path)
+        calls = []
+        with self._patches() as loader:
+            loader.return_value = asset
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-legacy-finalization",
+                    output_root=self.out, manifest_path=manifest_path,
+                    code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(calls), resume=True,
+                    repair_finalization=True)
+        self.assertEqual(calls, [])
+        self.assertEqual(self._read_bytes(state_path), state_before)
+
+    def test_legacy_repair_rejects_staged_current_audit_field_mismatch(self):
+        (asset, manifest_path, state_path, unused_stage_table,
+         stage_manifest, unused_current_audit) = \
+            self._prepare_legacy_finalizing_scene_with_current_audit()
+        manifest = ft._read_json(stage_manifest)
+        manifest["reviews"]["code_audit"]["reviewed_commit"] = "0" * 40
+        with open(stage_manifest, "wb") as handle:
+            handle.write(ft._json_bytes(manifest))
+        state = ft._read_json(state_path)
+        state["finalization"]["manifest_sha256"] = ft._sha256_file(
+            stage_manifest)
+        self._write_state_fixture(state_path, state)
+        state_before = self._read_bytes(state_path)
+        calls = []
+        with self._patches() as loader:
+            loader.return_value = asset
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-legacy-finalization", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(calls), resume=True,
+                    repair_finalization=True)
+        self.assertEqual(calls, [])
+        self.assertEqual(self._read_bytes(state_path), state_before)
+
+    def test_legacy_repair_rejects_old_technical_binding_tamper_before_processing(self):
+        (asset, manifest_path, state_path, unused_stage_table,
+         stage_manifest, unused_current_audit) = \
+            self._prepare_legacy_finalizing_scene_with_current_audit()
+        manifest = ft._read_json(stage_manifest)
+        bad_technical_audit = copy.deepcopy(manifest["reviews"]["technical_audit"])
+        bad_technical_audit["code_audit_sha256"] = "0" * 64
+        manifest["reviews"]["technical_audit"] = bad_technical_audit
+        with open(stage_manifest, "wb") as handle:
+            handle.write(ft._json_bytes(manifest))
+        state = ft._read_json(state_path)
+        state["finalization"]["manifest_sha256"] = ft._sha256_file(
+            stage_manifest)
+        self._write_state_fixture(state_path, state)
+        state_before = self._read_bytes(state_path)
+        calls = []
+        with self._patches() as loader, mock.patch.object(
+                ft, "_validate_technical_audit",
+                return_value=bad_technical_audit):
+            loader.return_value = asset
+            with self.assertRaises(ft.FT05AValidationError):
+                ft.run_ft05a(
+                    self.cohort, "run-legacy-finalization", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(calls), resume=True,
+                    repair_finalization=True)
+        self.assertEqual(calls, [])
+        self.assertEqual(self._read_bytes(state_path), state_before)
+
+    def test_legacy_repair_with_current_staged_audit_is_retryable_after_failure(self):
+        (asset, manifest_path, state_path, stage_table, stage_manifest,
+         unused_current_audit) = \
+            self._prepare_legacy_finalizing_scene_with_current_audit()
+        legacy_table_raw = self._read_bytes(stage_table)
+        current_manifest_raw = self._read_bytes(stage_manifest)
+        real_update_state = ft._update_state
+
+        def fail_state(path, state):
+            if path == state_path and state.get("status") == "FINALIZING" and \
+                    (state.get("finalization") or {}).get(
+                        "transaction_schema_version") == ft.FT05A_FINALIZATION_SCHEMA_VERSION:
+                raise IOError("injected state write failure")
+            return real_update_state(path, state)
+
+        with self._patches() as loader, mock.patch.object(
+                ft, "_update_state", side_effect=fail_state):
+            loader.return_value = asset
+            with self.assertRaises(IOError):
+                ft.run_ft05a(
+                    self.cohort, "run-legacy-finalization", output_root=self.out,
+                    manifest_path=manifest_path, code_audit_path=self.code_audit,
+                    technical_audit_path=self.technical_audit,
+                    processor=self._processor(failure=AssertionError(
+                        "recomputed")), resume=True, repair_finalization=True)
+        state_after_failure = ft._read_json(state_path)
+        self.assertEqual(
+            state_after_failure["finalization"]["transaction_schema_version"],
+            ft.FT05A_LEGACY_FINALIZATION_SCHEMA_VERSION)
+        self.assertEqual(self._read_bytes(stage_table), legacy_table_raw)
+        self.assertEqual(self._read_bytes(stage_manifest), current_manifest_raw)
+
+        calls = []
+        with self._patches() as loader:
+            loader.return_value = asset
+            result = ft.run_ft05a(
+                self.cohort, "run-legacy-finalization", output_root=self.out,
+                manifest_path=manifest_path, code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(calls, failure=AssertionError(
+                    "recomputed")), resume=True, repair_finalization=True)
+        self.assertEqual(result["status"], "frozen")
+        self.assertEqual(calls, [])
 
     def test_finalizing_technical_audit_fields_are_not_partially_accepted(self):
         _, manifest_path, state_path, unused_stage_table, unused_stage_manifest = \
