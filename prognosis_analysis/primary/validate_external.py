@@ -265,18 +265,48 @@ def predict_frozen(feature_frame, model_id, protected_state, lock,
     output.attrs["cohort_identity_sha256"] = cohort_identity_hash
     output.attrs["frozen_prediction_only"] = True
     output.attrs["B_outcome_read_before_predict"] = False
+    output.attrs["B_base_frame_n"] = gate["gate"]["B_base_frame_n"]
+    output.attrs["B_base_frame_completeness_validated"] = True
+    output.attrs["frozen_model_validated_before_predict"] = True
     return output
 
 
-def evaluate_frozen_predictions(predictions, outcome_frame, model_id, lock):
-    """Evaluate predictions against B outcomes after the freeze gate."""
-    refit_freeze.validate_canonical_lock(lock)
-    if not isinstance(predictions, pd.DataFrame) or not predictions.attrs.get("frozen_prediction_only"):
+def evaluate_frozen_predictions(predictions, outcome_frame, model_id, lock,
+                                protected_state=None, cohort_identity=None,
+                                cohort_identity_hash=None,
+                                external_registration=None,
+                                evidence_manifest=None,
+                                protocol_path=va.DEFAULT_PROTOCOL):
+    """Evaluate frozen predictions only after the complete B gate succeeds."""
+    gate = validate_frozen_b_predictors(
+        outcome_frame, model_id, lock, cohort_identity, cohort_identity_hash,
+        external_registration, evidence_manifest, protocol_path)
+    _validate_protected_state(protected_state, model_id, lock)
+    if not isinstance(predictions, pd.DataFrame) or \
+            not predictions.attrs.get("frozen_prediction_only"):
         raise ExternalValidationError("evaluation requires predictions from predict_frozen")
     if predictions.attrs.get("model_id") != model_id:
         raise ExternalValidationError("prediction model identity mismatch")
+    prediction_hash = predictions.attrs.get("cohort_identity_sha256")
+    if predictions.attrs.get("cohort_identity_token") != cohort_identity or \
+            not isinstance(prediction_hash, str) or \
+            prediction_hash.lower() != str(cohort_identity_hash).lower():
+        raise ExternalValidationError("prediction cohort identity mismatch")
+    if predictions.attrs.get("B_base_frame_n") != gate["gate"]["B_base_frame_n"] or \
+            predictions.attrs.get("B_base_frame_completeness_validated") is not True or \
+            predictions.attrs.get("frozen_model_validated_before_predict") is not True:
+        raise ExternalValidationError("prediction B gate metadata is incomplete")
+    if "patient_id" not in predictions.columns or \
+            "risk_score" not in predictions.columns:
+        raise ExternalValidationError("frozen predictions schema is incomplete")
+    prediction_ids = predictions["patient_id"].astype(str).str.strip()
+    if prediction_ids.eq("").any() or prediction_ids.duplicated().any():
+        raise ExternalValidationError("frozen prediction IDs must be nonempty and unique")
+    risk_values = pd.to_numeric(predictions["risk_score"], errors="coerce")
+    if risk_values.isna().any() or not np.isfinite(risk_values.to_numpy(dtype=float)).all():
+        raise ExternalValidationError("frozen prediction risk scores are invalid")
     outcome = va.validate_predictor_frame(
-        outcome_frame, [model_id], cohort="B", require_outcome=True)
+        gate["frame"], [model_id], cohort="B", require_outcome=True)
     prediction_ids = set(predictions["patient_id"].astype(str))
     if prediction_ids != set(outcome.loc[va.eligibility_mask(outcome, va.MODEL_SPECS[model_id]["population"]), "patient_id"].astype(str)):
         raise ExternalValidationError("B outcome and frozen prediction eligibility do not match")
@@ -300,6 +330,9 @@ def evaluate_frozen_predictions(predictions, outcome_frame, model_id, lock):
         "DFS_events": int(event.sum()),
         "metrics": metrics,
         "gate": {
+            "B_base_frame_n": gate["gate"]["B_base_frame_n"],
+            "B_base_frame_completeness_validated": True,
+            "frozen_model_state_validated_before_evaluation": True,
             "B_prediction_frozen_before_evaluation": True,
             "B_tuning": False,
             "B_refit": False,

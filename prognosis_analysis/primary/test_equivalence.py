@@ -343,5 +343,90 @@ def test_synthetic_runtime_model_identity_gate():
                      validate_external._validate_protected_state(tampered, "M5", lock))
 
 
+def _synthetic_protected_state(lock, model_id):
+    return {
+        "model": _SyntheticRuntimeModel(dict(lock["models"][model_id])),
+        "preprocessor": object(),
+    }
+
+
+def _synthetic_predictions(frame, model_id, token, digest):
+    output = pd.DataFrame({
+        "patient_id": frame["patient_id"].astype(str).tolist(),
+        "risk_score": np.linspace(0.1, 1.0, len(frame)),
+    })
+    output.attrs["model_id"] = model_id
+    output.attrs["cohort_identity_token"] = token
+    output.attrs["cohort_identity_sha256"] = digest
+    output.attrs["frozen_prediction_only"] = True
+    output.attrs["B_base_frame_n"] = 163
+    output.attrs["B_base_frame_completeness_validated"] = True
+    output.attrs["frozen_model_validated_before_predict"] = True
+    return output
+
+
+def _evaluate_synthetic_b(predictions, outcome, model_id, lock, token, digest,
+                          registration, manifest, state):
+    return validate_external.evaluate_frozen_predictions(
+        predictions, outcome, model_id, lock, state, token, digest,
+        registration, manifest)
+
+
+def test_evaluate_frozen_predictions_requires_complete_b_gate():
+    """Evaluation cannot use a one-row outcome or attrs as a gate substitute."""
+    manifest, lock, registration = _primary_metadata()
+    token = va.B_COHORT_IDENTITY_TOKEN
+    digest = va.B_COHORT_IDENTITY_SHA256
+    state = _synthetic_protected_state(lock, "M0")
+    full_frame = synthetic_b_predictor_frame(163)
+    predictions = _synthetic_predictions(full_frame.iloc[:1], "M0", token, digest)
+    one_row = full_frame.iloc[:1].copy()
+    one_row.attrs["cohort_identity_token"] = token
+    one_row.attrs["cohort_identity_sha256"] = digest
+
+    # The legacy four-argument call has no registration, cohort binding, or
+    # protected runtime state and must fail closed.
+    _must_reject(lambda: validate_external.evaluate_frozen_predictions(
+        predictions, one_row, "M0", lock))
+
+    # Even with the correct token/hash and runtime identity, an incomplete
+    # actual B frame cannot enter the evaluation path.
+    _must_reject(lambda: _evaluate_synthetic_b(
+        predictions, one_row, "M0", lock, token, digest,
+        registration, manifest, state))
+
+    wrong_attrs = full_frame.copy()
+    wrong_attrs.attrs["cohort_identity_token"] = token
+    wrong_attrs.attrs["cohort_identity_sha256"] = "0" * 64
+    _must_reject(lambda: _evaluate_synthetic_b(
+        predictions, wrong_attrs, "M0", lock, token, digest,
+        registration, manifest, state))
+
+    cross_cohort = full_frame.copy()
+    cross_cohort["A__synthetic_leak"] = 0
+    _must_reject(lambda: _evaluate_synthetic_b(
+        predictions, cross_cohort, "M0", lock, token, digest,
+        registration, manifest, state))
+
+
+def test_evaluate_frozen_predictions_accepts_only_complete_b_frame():
+    """A complete 163-row synthetic B frame reaches the metric path."""
+    manifest, lock, registration = _primary_metadata()
+    token = va.B_COHORT_IDENTITY_TOKEN
+    digest = va.B_COHORT_IDENTITY_SHA256
+    state = _synthetic_protected_state(lock, "M0")
+    outcome = synthetic_b_predictor_frame(163)
+    outcome.attrs["cohort_identity_token"] = token
+    outcome.attrs["cohort_identity_sha256"] = digest
+    predictions = _synthetic_predictions(outcome, "M0", token, digest)
+
+    result = _evaluate_synthetic_b(
+        predictions, outcome, "M0", lock, token, digest,
+        registration, manifest, state)
+    assert result["eligible_n"] == 163
+    assert result["gate"]["B_base_frame_n"] == 163
+    assert result["gate"]["B_base_frame_completeness_validated"] is True
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

@@ -302,7 +302,15 @@ def canonical_frame_hash(frame, columns=None):
         ordered = frame.loc[:, columns]
     except KeyError as exc:
         raise PrimaryValidationError("cannot hash missing columns: %s" % exc)
-    return sha256_text(ordered.to_csv(index=False, lineterminator="\n"))
+    # pandas 1.3.5 (the locked analysis environment) names this argument
+    # ``line_terminator``; newer pandas releases also expose the spelling
+    # ``lineterminator``.  The returned string is hashed directly, so the
+    # explicit LF value preserves the canonical newline semantics across both.
+    try:
+        encoded = ordered.to_csv(index=False, line_terminator="\n")
+    except TypeError:
+        encoded = ordered.to_csv(index=False, lineterminator="\n")
+    return sha256_text(encoded)
 
 
 def load_protocol(path=DEFAULT_PROTOCOL):
