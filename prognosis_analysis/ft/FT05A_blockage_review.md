@@ -14,6 +14,7 @@ FT05A 已就地完成 163 例 B 技术提取，产物本身有效且可无损提
 2. **B2（拦死任何提升）**：表—病例一致性比较器把 `NaN↔NaN` 判为不一致，导致规范表与暂存表在提升前校验中必然失败。该比较器对当前数据 100% 误报。
 3. **B3（审计绑定不可满足）**：暂存 manifest 冻结的代码审计绑定与 state 的生成期审计绑定分属两个已不可复现的历史版本，任何一侧的相等性要求都无法满足。
 4. **B4（状态内技术审计哈希陈旧）**：`state.technical_audit_sha256` 停留在 `generated_pending_review` 版本，与已验收技术审计文件哈希不等，`_repair_finalization()` 因此直接失败关闭。
+5. **B5（设计级，数据边界）**：即使 B1–B4 全部修复，按现有落盘设计执行最终化会在受控命名空间 `prognosis_analysis/ft/` 生成含 163 个原始影像号与原始路径的 manifest，与仓库存放边界冲突（详见 9.5）。B5 不改变上述运行路径，但决定最终化产物能否落盘。
 
 实际遭遇顺序（在 B1 被修复的前提下）：
 
@@ -245,6 +246,112 @@ test_legacy_repair_rejects_current_audit_binding_tamper_before_processing (field
 
 ## 八、待确认事项
 
-1. 第二个写入者的身份与是否已停止；整改是否可独占 `ft05a_runner.py` 与测试文件。
+1. ~~第二个写入者的身份与是否已停止~~ —— 该并行任务已结束并提交 `b8624ba`，工作区现已干净；整改可独占 `ft05a_runner.py` 与测试文件（详见第九节）。
 2. 本复核报告需先于修复提交入库（否则会破坏阶段 3 的 allowlist 顺序）；确认后即可提交。
 3. 第 14 轮独立代码审计由谁出具、何时出具（必须在文件冻结之后）。
+4. ~~W_Original冻结资产恢复~~ —— 已由外部备份恢复，SHA-256为`462201e6…`；完整恢复与核验结果见`INCIDENT_20260913_local_output_deletion.md`。
+5. **B5 的处置选择**（manifest 内容形态与落盘命名空间），必须在最终化之前决定，详见 9.5。
+
+## 九、第 14 轮复核补充（并行任务结束后）
+
+### 9.1 并行任务最终产物
+
+并行写入者在复核期间提交 `b8624ba Allow FT05A remediation audit in legacy finalization`（本地领先远程一个提交，尚未推送）。工作区现仅剩未跟踪的 `_codex_ft_run_20260910_01a08bf3/`。
+
+- 改动范围：只重写 `_repair_finalization()` 的代码审计准入分支，并新增 184 行测试。
+- 复测：`tests.test_ft05a_runner` = **64 项通过、1 项跳过**（复核中途该套件为 62 项、2 项报错，现已转绿）。
+- 生产门禁：**仍然失败**（`FT05A runner changed after the reviewed implementation commit`）。当前 runner blob `a11562fc…` ≠ 审计记录的 `27ae5371…`（db92fb4）；`db92fb4..HEAD` 的非审计改动路径已增至 3 个：`ft05a_runner.py`、`tests/test_ft05a_runner.py`、本复核报告 `FT05A_blockage_review.md`。
+
+### 9.2 B1、B2、B4 未变
+
+- B1：门禁三重约束依旧，没有任何入口能到达最终化逻辑。
+- B2：`_assert_table_matches_cases()` 仍只处理 `wanted is None`，未处理 `wanted is NaN`；对本次数据仍 100% 误报（369/369 全为 NaN↔NaN）。
+- B4：`state.technical_audit_sha256`（`377b6dee…`）与当前已验收技术审计（`96758aec…`）仍不等，判定仍要求严格相等。
+
+### 9.3 B3 放宽后仍不可达（精确理由）
+
+`b8624ba` 把准入从"必须等于当前审计"放宽为"等于当前审计 **或** 等于生成期审计"。对本次冻结 manifest 记录：
+
+```text
+manifest.reviews.code_audit = {
+  path: prognosis_analysis/ft/FT05A_code_audit.md,
+  sha256: bb8ec7ab…,          # 提交 e9dfa4d 时的修订
+  runner_sha256: edf47786…,   # db92fb4 的 runner
+  reviewed_commit: db92fb4…,
+  status: accepted, independent: true, verdict: PASS }
+state.identity_payload.code_audit_sha256 = 2260e13b…   # 提交 43cf8af 时的修订
+当前 runner 文件 sha256（B2 修正后）      ≠ edf47786…
+```
+
+- 分支一（等于当前审计记录）：要求 `runner_sha256 == 当前 runner 哈希`。B2 的修复必须改动 runner，故当前 runner 哈希必然不再是 `edf47786…` → 永不相等。
+- 分支二（`sha256` 等于生成期审计）：要求 `bb8ec7ab == 2260e13b` → 永不成立。
+
+⇒ 在 B2 必须修复的前提下，冻结 manifest 的代码审计记录与两个锚点均不相容，**B3 仍未解除**。新增测试只覆盖了两个分支各自的合成记录，从未使用真实冻结记录，因此测试转绿不构成 B3 已解决的证据。
+
+### 9.4 新增建设性规则：审计锚点应做"历史修订"判定
+
+经核查，两个锚点都不是任意取值，而是 `FT05A_code_audit.md` 的**已提交修订**：
+
+- `2260e13b…` = 提交 `43cf8af` 时的文件哈希（state 端锚点）
+- `bb8ec7ab…` = 提交 `e9dfa4d` 时的文件哈希（manifest 端锚点，且与当前工作区文件相同）
+
+因此存在一个可实现、可机械验证、且不牺牲失败关闭语义的准入判定：manifest 中的 `reviews.code_audit` 只需（a）路径为规范审计路径，（b）`status=accepted`、`independent=true`、`verdict ∈ {PASS, PASS_WITH_FINDINGS}`，（c）其 `sha256` 为 `FT05A_code_audit.md` 的**任一已提交修订**（用 `git log --all -- <path>` + `git show` 逐修订复核），（d）其事实性绑定与生成证据一致。这比"与当前文件逐字节相等"更符合"审计是历史事实"的语义，也是解除 B3 的最小改动。
+
+### 9.5 新增阻塞点 B5：规范 manifest 的数据边界冲突
+
+暂存规范 manifest `FT05_B_feature_manifest.json` 的目标路径为 `prognosis_analysis/ft/FT05_B_feature_manifest.json`——**受版本控制的命名空间**，且 `.gitignore` 中没有任何 FT05 规则。而该文件内容包含：
+
+- `source_records[*].patient_id`（163 个原始影像号）以及 `image_path`、`roi_path`、`source_image_key`、`source_roi_key`（路径中内嵌同一批影像号）。
+- 与本地映射表核对：这批编号位于映射表的 `original_image_id` 列（匿名号形如 `IM…`，共 693 行映射）。
+- 对全部 163 个编号做词边界扫描：当前受控文件中命中 **0/163**，即仓库目前不存在此类编号。
+
+因此按现有设计执行最终化，会在受控命名空间中生成首个含原始影像号与原始路径的产物，与"含影像号的清单/表格/报告入库前必须匿名"的边界要求直接冲突。这是独立于 B1–B4 的设计级问题，需在最终化之前决策并加护栏，可选项包括：
+
+1. 规范 manifest 只保留哈希与聚合计数，去除 `patient_id` 与内嵌影像号的路径；
+2. 把规范 manifest 移出受控命名空间（落入本地输出目录并加入 `.gitignore`）；
+3. 保留原样但显式声明为本地材料，加入 `.gitignore` 与提交前护栏，并同步修订协议产物清单。
+
+任一选项都会触及 `DEFAULT_MANIFEST` 与 `_validate_namespace_path()` 的命名空间约定，属协议修订（可参照既有 `FT_protocol_amendment_20260911.json` 的处置方式）。
+
+### 9.6 端到端提升验证：未取得（原因见事故报告）
+
+原计划在隔离沙箱中真正执行一次 `_recover_finalization`（仅施加 NaN-aware 比较器修正 + schema-1→2 事务迁移），以证明修正集合充分并给出提升后规范产物的预期哈希。该沙箱以目录联接构建，清理步骤误删了真实 `feature_extract/` 与 `habitat_analysis/` 的内容，验证未完成，详见 `INCIDENT_20260913_local_output_deletion.md`。
+
+现有替代证据：NaN-aware 比较器对"由 case 重建的期望表"与"暂存 CSV 读回"均判定通过（369 处误报全部消除）；`_validate_finalization_context()` 与 `_validate_finalization_artifacts()` 对现有冻结产物均判定通过。W_Original及其余缺失资产现已恢复并通过冻结哈希核验；提升动作本身仍需在B1–B5整改完成后，以"复制而非联接"的隔离方式补做。
+
+### 9.7 整改方案的前置条件更新
+
+在第六节方案之上新增两条前置：
+
+1. **W_Original恢复前置已完成**：资产SHA-256为`462201e6…`；FT01声明的13项来源与FT04锁定的20项provenance均已通过恢复后核验。
+2. **B5 必须先决策**（manifest 的内容形态与落盘命名空间）；若在最终化之后再决策，将需要重写已冻结的 manifest。
+
+阶段 1–3 的代码修复内容与"提交 / 独立审计"的顺序约束不变。
+
+### 9.8 环境级风险：冻结字节摘要与行尾自动转换冲突（第 6 项独立发现）
+
+本机 `core.autocrlf=true`。FT04 lock 以及 FT01/FT04 相关清单对一批输入文件做**字节级 SHA-256** 绑定，其中 11 个受控文件的锁定期望值基于 **LF** 字节：
+
+```text
+environment.yml
+prognosis_analysis/ft/ft02_runner.py
+prognosis_analysis/ft/FT02_technical_audit.md
+prognosis_analysis/ft/FT03_review.md
+prognosis_analysis/ft/ft03_runner.py
+prognosis_analysis/ft/ft04_runner.py
+T2WI-HS 生境预后快速验证（FT）方案书.md
+prognosis_analysis/ft/FT_protocol_amendment_20260911.json
+feature_extract/configs/radiomics_params.yaml
+prognosis_analysis/configs/w03_habitat_radiomics.json
+prognosis_analysis/W03_habitat_radiomics_protocol.md
+```
+
+在这 11 个文件上执行一次普通的 `git checkout`（或任何让 git 重写工作区副本的操作）都会把 LF 改成 CRLF，使 FT04 lock 的 provenance 校验立即失败（实测：本次恢复过程中 `git checkout` 即触发该失败，错误为 `bound source hash mismatch: radiomics_parameter_file`）。另有 8 个绑定文件的锁定期望值本身就是 CRLF，不受影响。
+
+这意味着**冻结摘要链对 git 的行尾策略不安全**，任何一次 checkout/分支切换都可能让整条 FT04→FT05A 冻结链失效。整改建议（与 FT05A 修复一同提交）：
+
+1. 增加 `.gitattributes`，把上述冻结输入（以及全部 `*.json`/`*.csv`/`*.yaml` 冻结材料）标记为 `-text`，使 git 永不改写其行尾；
+2. 或在本仓库设置 `core.autocrlf=false` 并重新签出，随后统一复核全部锁定期望摘要；
+3. 在任何 checkout 之后、执行 FT05A 之前，必须先跑一次 `validate_ft05a_preflight()` 的冻结链校验（含 lock/FT01/lock sha256 见证），把摘要失配挡在最终化之外。
+
+本次恢复中已按锁定期望的 LF 字节还原 `feature_extract/configs/radiomics_params.yaml`（`5cad11c0…`）与 `habitat_analysis/configs/main_cross_case_kmeans_k2_4mm.json`（`fc2f856b…`），并复测 FT04 lock 的 20 项摘要全部 MATCH。两文件的Git过滤后blob与HEAD一致，索引状态已刷新；工作区保留冻结要求的原始LF字节。
