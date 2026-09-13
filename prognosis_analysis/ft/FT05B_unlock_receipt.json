@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "artifact_id": "FT05B_unlock_receipt",
+  "status": "validated",
+  "ft_stage": "FT05B",
+  "scope": "FT06 prediction/evaluation only",
+  "ft04_lock_identity_sha256": "10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e",
+  "ft05a_manifest_sha256": "055bdf0e98d05ed4c4e0b8ae2c175d5e82d66ba484ebec30b4b8c04c9e0eb251",
+  "ft05a_table_sha256": "10b35d9d661da665bfe98e95dbefa34a6b0e9c0d911bae37a34f3d635ab5d804",
+  "ft_b_unlock_sha256": "20aacae0c7cb85c8cf7c544e8788d2950820956e3ab581e41df9d66760e07415",
+  "unlock_committed_before_access": true,
+  "unlock_validated_before_access": true,
+  "access_timestamp": "2026-09-13T11:35:31+08:00",
+  "reader_entry": "ft05b_runner.read_b_dfs -> data_split_guard._authorized_read",
+  "requested_columns": [
+    "影像号",
+    "DFS_time",
+    "DFS_event"
+  ],
+  "aggregate": {
+    "row_count": 163,
+    "unique_identifier_count": 163,
+    "event_count": 42,
+    "censor_count": 121
+  },
+  "patient_level_frame_persisted": false,
+  "b_data_read_before_unlock": false,
+  "access_after_unlock": true,
+  "ft06_executed": false,
+  "source_commit": "5b2083f4f1b6eef558a2367763213bf90dd3a81f"
+}

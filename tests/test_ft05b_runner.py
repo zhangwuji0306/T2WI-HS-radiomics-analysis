@@ -338,6 +338,17 @@ Completed unique B cases | `163/163`
                 reader.assert_not_called()
         self.assertFalse(os.path.exists(ft.FT05B_RECEIPT_PATH))
 
+    def test_wrong_feature_column_order_fails_closed_before_outcome_read(self):
+        with open(ft.FT05A_TABLE_PATH, "r", encoding="utf-8") as handle:
+            lines = handle.readlines()
+        lines[0] = lines[0].replace("patient_id,split", "split,patient_id", 1)
+        with open(ft.FT05A_TABLE_PATH, "w", encoding="utf-8", newline="") as handle:
+            handle.writelines(lines)
+        with mock.patch.object(ft.data_split_guard, "_authorized_read") as reader:
+            with self.assertRaises(ft.FT05BValidationError):
+                ft.read_b_dfs()
+        reader.assert_not_called()
+
     def test_formal_lock_presence_fails_closed(self):
         with open(ft.FORMAL_MODEL_LOCK, "w", encoding="utf-8") as handle:
             handle.write("{}");

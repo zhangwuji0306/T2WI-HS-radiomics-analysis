@@ -607,6 +607,8 @@ def read_b_dfs(outcome_path=None, receipt_path=None):
     context = _build_context()
     outcome_path = OUTCOME_SOURCE_PATH if outcome_path is None else outcome_path
     receipt_path = FT05B_RECEIPT_PATH if receipt_path is None else receipt_path
+    _require_exact_path(outcome_path, OUTCOME_SOURCE_PATH,
+                        "B outcome source")
     if os.path.isfile(receipt_path):
         _fail("FT05B unlock receipt already exists; repeated outcome access is refused")
     if not os.path.isfile(outcome_path):
