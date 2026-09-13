@@ -1,122 +1,60 @@
 # T2WI-HS-radiomics-analysis
 
-直肠癌治疗前 T2WI 生境分析项目。项目包含影像预处理、影像组学特征提取、生境分析和预后分析的代码、参数及方法文档。
-
-## 数据边界
-
-GitHub/Codex 仓库只保存代码、配置、方法文档和不含原始影像号的项目状态信息。
-
-以下内容保留在本地受控环境，不进入仓库：
-
-- 原始影像、ROI 和 Slicer 工程文件；
-- 临床、病理和预后原始表；
-- 患者级特征、模型数据集和分析输出；
-- 含原始影像号的清单、日志、报告或历史结果。
-
-需要共享的清单或结果必须先将影像号替换为匿名号。原始影像号—匿名号映射表保存在本地 `local_private/image_id_mapping.csv`，不进入 GitHub。
-
-## 目录
-
-- `feature_extract/scripts/`：影像清单、预处理、归一化、QC 和特征提取脚本。
-- `feature_extract/configs/`：PyRadiomics 及技术敏感性参数。
-- `habitat_analysis/scripts/`：当前生境分析脚本。
-- `habitat_analysis/configs/`：主方法参数和终点定义。
-- `habitat_analysis/` 下的 Markdown 文件：队列定义、分析冻结和执行边界。
-- `prognosis_analysis/scripts/`：队列建模表和候选特征 QC 脚本。
-- `manuscript/methodology_defense/`：方法学证据归档；不作为重新选择技术方法的入口。
-- `archive/protocol_history/`：已完成或被替代的任务书和方法审阅报告。
-- `archive/exploration_20260828/`：含患者级结果的历史探索材料，仅保存在本地。
+直肠癌治疗前 T2WI 生境分析项目，包含影像预处理、影像组学、固定 full-A habitat、预后建模及方法文档。
 
 ## 当前主线
 
-主方法固定为三维 SLIC 4 mm 加跨病例 K-means，聚类数为 K=2。科学问题、冻结原则、模型层级和 A/B 隔离由《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》定义；当前唯一逐阶段执行入口为《T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md》。历史执行工作流保存在 `archive/protocol_history/`，不作为当前入口。
-
-分析顺序为：
-
 ```text
-G2R PASS
-→ P4 integrity audit
-→ P5 implementation
-→ G2R2
-→ P5 50-fold technical-only preflight
-→ G3 PASS
-→ formal W08
-→ A-only evaluation / final refit / model freeze
-→ B一次性外部验证
+MRI/radiomics freeze
+→ full-A habitat freeze
+→ candidate freeze
+→ Primary v2 fixed 5-fold A validation
+→ full-A model freeze
+→ frozen B external validation
+→ final interpretation
 ```
 
-第一把锁只允许读取A集临床变量和结局；第二把锁生成前，B集临床、结局、特征分布和性能均保持不可见。B只用于最终模型冻结后的一次性外部验证。
+当前方法为 **Primary Prognostic Analysis v2**。Formal W08 v1 已归档并标记为 `archived / superseded`，旧 W08/G3/R5/R6 记录不再是 active next step。FT validation v1 已归档，是 Primary v2 的历史开发来源，不是当前活动分析树。
 
-## 环境
+## Primary v2 固定合同
 
-本地分析环境为 conda 环境 `t2_radiomics`：
+- 固定 full-A 3D SLIC、cross-case K-means `K=2`，不在 CV fold 或 B 中重拟合 habitat centers、boundary 或 habitat radiomics。
+- `R_low=49`、`R_high=10`、`W_Original=107`；保留全部 `M0–M5`。
+- LASSO-Cox `alpha=1`；A 内部验证为固定 `repeat-1`、single 5-fold outer validation。
+- 临床/影像预处理、特征选择和 lambda 选择均遵守 training-only 规则；B 只执行 frozen prediction。
+- Primary v2 是 post-FT protocol transition：FT03 A 与 FT06 B 结果在方法提升/登记决定时已可见，不能追溯表述为 B 结果前的预先指定；B prediction 在 B evaluation 前已冻结。
 
-- Python 3.7.12
-- NumPy 1.21.6
-- pandas 1.3.5
-- SciPy 1.7.3
-- scikit-learn 1.0.2
-- PyRadiomics 3.0.1
-- SimpleITK 2.2.1
+## 数据边界
 
-完整依赖见 `environment.yml`。Codex 云端环境使用 Python 3.7，并通过 `setup.sh` 安装 `requirements-cloud.txt`。云端任务只针对代码、配置和不含患者级数据的文档；真实影像分析在本地受控环境执行。
+GitHub/Codex 仓库只保存代码、配置、方法文档和不含原始影像号的项目状态信息。以下材料保留在本地受控环境，不进入仓库：
 
-## 本地使用
+- 原始影像、ROI 和 Slicer 工程；
+- 临床、病理和预后原始表；
+- 患者级特征、预测、模型状态和分析输出；
+- 含原始影像号的清单、日志、报告或历史结果。
+
+原始影像号—匿名号映射表仅保存在本地 `local_private/image_id_mapping.csv`。归档目录中的报告和 JSON 仅限安全的协议、审查及聚合证据。
+
+## 目录
+
+- `feature_extract/scripts/`：清单、预处理、归一化、QC 和特征提取脚本。
+- `feature_extract/configs/`：PyRadiomics 及技术敏感性参数。
+- `habitat_analysis/`：固定 habitat 方法、配置、队列定义和冻结规则。
+- `prognosis_analysis/primary/`：Primary v2 当前协议、验证、冻结和外部验证代码。
+- `manuscript/methodology_defense/`：方法学证据归档。
+- `archive/formal_nested_cv_v1/`：Formal W08 v1 历史协议与审查归档。
+- `archive/ft_validation_v1/`：FT validation v1 安全聚合证据归档。
+- `archive/protocol_history/`：更早的协议历史。
+
+当前科学主协议为根目录的《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》；当前 Primary v2 合同见《T2WI-HS-radiomics-analysis Primary v2 正式分析方案书与串行执行工作流.md》及 `prognosis_analysis/primary/protocol.json`。归档内容不作为当前分析输入。
+
+## 环境与检查
+
+本地影像组学环境为 conda `t2_radiomics`，固定版本见 `environment.yml`。若 PowerShell 无法直接识别 `conda`，使用 `tools/run_t2_radiomics.ps1`。
 
 ```powershell
-conda env update -n t2_radiomics -f environment.yml
-conda run -n t2_radiomics --no-capture-output python <script>
+.\tools\run_t2_radiomics.ps1 -PythonArguments @('-m','compileall','-q','feature_extract/scripts','prognosis_analysis/primary')
+.\tools\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','discover','-s','tests','-p','test_*.py')
 ```
 
-若当前 PowerShell 无法识别 `conda`，使用仓库内的环境入口。该入口会依次检查当前命令、`CONDA_EXE`、Conda 环境注册表及 Miniforge/Miniconda/Anaconda 常见安装位置，并核对全部锁定版本：
-
-```powershell
-.\tools\run_t2_radiomics.ps1
-.\tools\run_t2_radiomics.ps1 -PythonArguments @("<script>", "<参数>")
-```
-
-涉及 SimpleITK 的本地脚本需要使用本机配置的 ASCII junction。不要将本地绝对路径写入清单、报告或仓库文档。
-
-### 上游处理顺序
-
-修复后的上游主线应分别运行 muscle 主分析臂和 z-score 敏感性分析臂。R1 固定使用 label 3 作为肌肉；R2 只有在 label 2、3 均存在且均值可比较时才解析肌肉标签，无法解析时仅跳过 R2。
-
-```powershell
-conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/build_manifest.py
-conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/preprocess.py --normalize muscle
-conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/verify_preprocess.py --ids <匿名号> --expected-normalization muscle
-conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/preprocess.py --normalize zscore
-conda run -n t2_radiomics --no-capture-output python feature_extract/scripts/verify_preprocess.py --ids <匿名号> --expected-normalization zscore
-```
-
-预处理输出目录、指标和分析结果均只保留在本地。重新生成上游结果前，不应直接沿用旧的预处理或特征输出。
-
-### 代码检查
-
-```powershell
-conda run -n t2_radiomics --no-capture-output python -m compileall -q feature_extract/scripts tests
-conda run -n t2_radiomics --no-capture-output python -m unittest discover -s tests -p "test_*.py"
-```
-
-## 影像号匿名化
-
-本地生成或更新映射表：
-
-```powershell
-python tools/build_image_id_mapping.py
-```
-
-该命令只更新本地 `local_private/image_id_mapping.csv`，不修改原始影像或原始数据。提交前应检查所有待提交文件，确认不含原始影像号、患者级数据、绝对路径和敏感信息。
-
-## 文档入口
-
-- [科学主协议](T2WI-HS-radiomics-analysis%20后续探索性预后分析与双阶段冻结任务书.md)
-- [当前执行 SOP](T2WI-HS-radiomics-analysis%20Pre-W08%20整改、协议补丁与后续%20A-only%20建模分包工作流.md)
-- [W08本地计算优化整改与分包执行工作流](T2WI-HS-radiomics-analysis%20W08本地计算优化整改与分包执行工作流.md)
-- [项目说明](项目说明.md)
-- [组学分析方案](组学分析方案.md)
-- [生境分析方案与工作流](生境分析方案与工作流.md)
-- [分析冻结状态](habitat_analysis/analysis_freeze.md)
-- [项目状态](PROJECT_STATUS.md)
-- [历史协议归档](archive/protocol_history/README.md)
-- [历史执行工作流](archive/protocol_history/三十二、具体执行工作流：从%20formal%20PASS%20至%20A-only%20model%20freeze.md)
+真实影像分析及患者级结果只在本地受控环境执行；提交前检查待提交文件，确认不含患者隐私、绝对路径、凭据或大文件。
