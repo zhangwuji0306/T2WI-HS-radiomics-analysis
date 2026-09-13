@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "artifact_id": "FT_B_unlock",
+  "status": "authorized",
+  "unlock": true,
+  "outcome_access": true,
+  "ft_label": "exploratory_fullA_habitat_non_nested_validation",
+  "ft_stage": "FT05B",
+  "scope": "FT06 prediction/evaluation only",
+  "ft04_lock_identity_sha256": "10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e",
+  "ft05a_run_id": "FT05A-20260912-01a08bf3",
+  "ft05a_run_identity_sha256": "718f357176f704f42027669b47041d24b33e9116b010bceac07b574be84c00bd",
+  "feature_manifest_path": "prognosis_analysis/output/ft_20260910_01a08bf3/FT05A/.finalize/FT05_B_feature_manifest.json",
+  "feature_manifest_sha256": "055bdf0e98d05ed4c4e0b8ae2c175d5e82d66ba484ebec30b4b8c04c9e0eb251",
+  "ft05_manifest_sha256": "055bdf0e98d05ed4c4e0b8ae2c175d5e82d66ba484ebec30b4b8c04c9e0eb251",
+  "feature_table_path": "prognosis_analysis/output/ft_20260910_01a08bf3/FT05A/.finalize/FT05A_B_technical_features.csv",
+  "feature_table_sha256": "10b35d9d661da665bfe98e95dbefa34a6b0e9c0d911bae37a34f3d635ab5d804",
+  "completion_evidence_sha256": "1f70e474ef2dcf42c875630a309fd9f27d88bb9342d5ea60a44d7e1b85ecd585",
+  "row_schema_sha256": "3aa6dbec948a52da64aaab74367ab797e340ee0348e10acdf433b79595ba9e19",
+  "candidate_hashes": {
+    "R_low": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
+  },
+  "W_Original": {
+    "count": 107,
+    "asset_sha256": "462201e66d8e8989063f02f1d7f63865a23335883c582707dc7713f40d3e9649",
+    "order_sha256": "1c07cd4e129e368dde8539d552ecb0f453d9c655fe2a5383d00a5de7b408ca1f",
+    "reused_existing_asset": true,
+    "reextracted": false
+  },
+  "technical_audit_sha256": "96758aec2949c58e1ed96ddcbb7072448a520b4598cfedf376e43b2197702778",
+  "B_data_read_before_unlock": false,
+  "B_outcome_read_before_unlock": false,
+  "prohibitions": [
+    "fit",
+    "lambda_tuning",
+    "feature_selection",
+    "K-means_fit",
+    "cutoff_optimization",
+    "preprocessing_parameter_estimation",
+    "radiomics_re-extraction"
+  ],
+  "source_commit": "942bcc0616064d50490e0bea099c00d9d233f5bd"
+}
