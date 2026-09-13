@@ -241,8 +241,8 @@ def _write_text_atomic(path, text, refuse_existing=False):
             os.remove(temporary)
 
 
-def _write_bytes_atomic(path, raw):
-    """Write bytes through a flushed temporary file and one atomic replace."""
+def _replace_bytes_atomic(path, raw):
+    """Replace bytes through a flushed same-directory temporary file."""
     directory = os.path.dirname(os.path.abspath(path))
     if not os.path.isdir(directory):
         os.makedirs(directory)
@@ -256,6 +256,27 @@ def _write_bytes_atomic(path, raw):
     finally:
         if os.path.exists(temporary):
             os.remove(temporary)
+
+
+def _write_bytes_atomic(path, raw):
+    """Write bytes through a flushed temporary file and one atomic replace."""
+    _replace_bytes_atomic(path, raw)
+
+
+def _persisted_finalization_matches(path, transaction):
+    """Return whether an atomic state write committed this transaction."""
+    try:
+        persisted = _read_json(path, "FT05A run state after finalization write")
+    except FT05AValidationError:
+        return False
+    return persisted.get("status") == "FINALIZING" and \
+        persisted.get("finalization") == transaction
+
+
+def _restore_staged_bytes(paths_and_bytes):
+    """Restore the prior staged generation using the same atomic semantics."""
+    for path, raw in paths_and_bytes:
+        _replace_bytes_atomic(path, raw)
 
 
 def _relative(path):
@@ -2769,6 +2790,11 @@ def _repair_finalization(state, state_path, contract, cohort, w_asset,
                          output_root, manifest_path, technical_audit_path,
                          code_audit_path):
     """Admit and repair only the known legacy default-serializer transaction."""
+    if (state.get("finalization") or {}).get("transaction_schema_version") == \
+            FT05A_FINALIZATION_SCHEMA_VERSION:
+        return _recover_finalization(
+            state, state_path, contract=contract, cohort=cohort, w_asset=w_asset,
+            output_root=output_root, manifest_path=manifest_path)
     context = _validate_finalization_context(
         state, contract, cohort, w_asset, output_root, manifest_path,
         FT05A_LEGACY_FINALIZATION_SCHEMA_VERSION,
@@ -2837,6 +2863,12 @@ def _repair_finalization(state, state_path, contract, cohort, w_asset,
         raise FT05AValidationError(
             "FT05A staged table is not the known legacy default serialization")
     try:
+        with open(context["manifest_source"], "rb") as handle:
+            legacy_manifest_raw = handle.read()
+    except (IOError, OSError) as exc:
+        raise FT05AValidationError(
+            "cannot read legacy FT05A staged manifest: %s" % exc)
+    try:
         legacy_table = pd.read_csv(context["table_source"])
     except (IOError, OSError, ValueError) as exc:
         raise FT05AValidationError(
@@ -2889,11 +2921,26 @@ def _repair_finalization(state, state_path, contract, cohort, w_asset,
     repaired_transaction["manifest_sha256"] = repaired_manifest_hash
     repaired_state = copy.deepcopy(state)
     repaired_state["finalization"] = repaired_transaction
-    _write_bytes_atomic(
-        context["path_values"]["staged_table_path"], repaired_table_raw)
-    _write_bytes_atomic(
-        context["path_values"]["staged_manifest_path"], repaired_manifest_raw)
-    _update_state(state_path, repaired_state)
+    staged_paths_and_legacy_bytes = (
+        (context["path_values"]["staged_table_path"], legacy_raw),
+        (context["path_values"]["staged_manifest_path"], legacy_manifest_raw),
+    )
+    try:
+        _write_bytes_atomic(
+            context["path_values"]["staged_table_path"], repaired_table_raw)
+        _write_bytes_atomic(
+            context["path_values"]["staged_manifest_path"], repaired_manifest_raw)
+        _update_state(state_path, repaired_state)
+    except Exception:
+        if not _persisted_finalization_matches(
+                state_path, repaired_transaction):
+            try:
+                _restore_staged_bytes(staged_paths_and_legacy_bytes)
+            except Exception as rollback_exc:
+                raise FT05ARunError(
+                    "FT05A legacy finalization rollback failed after write failure: %s"
+                    % rollback_exc)
+        raise
     return _recover_finalization(
         repaired_state, state_path, contract=contract, cohort=cohort,
         w_asset=w_asset, output_root=context["output_root"],
@@ -3133,7 +3180,17 @@ def _finalize_manifest(contract, cohort, records, run_state, output_root,
     ))
     run_state["status"] = "FINALIZING"
     run_state["finalization"] = transaction
-    _update_state(state_path, run_state)
+    try:
+        _update_state(state_path, run_state)
+    except Exception:
+        if not _persisted_finalization_matches(state_path, transaction):
+            for path in (staged_table_path,
+                         os.path.join(stage_root, "FT05_B_feature_manifest.json")):
+                if os.path.exists(path):
+                    os.remove(path)
+            if os.path.isdir(stage_root) and not os.listdir(stage_root):
+                os.rmdir(stage_root)
+        raise
     return _recover_finalization(
         run_state, state_path, contract=contract, cohort=cohort, w_asset=w_asset,
         output_root=output_root, manifest_path=manifest_path)

@@ -20,8 +20,7 @@ from prognosis_analysis.ft import ft05a_runner as ft
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUTPUT_PARENT = os.path.join(
-    ROOT, "prognosis_analysis", "output", "ft_20260910_01a08bf3", "FT05A")
+OUTPUT_PARENT = os.path.join(ROOT, "tests", ".ft05a_tmp")
 
 
 def _relative(path):
@@ -49,19 +48,21 @@ class FT05ARunnerTests(unittest.TestCase):
     def setUp(self):
         if not os.path.isdir(OUTPUT_PARENT):
             os.makedirs(OUTPUT_PARENT)
-        if not os.path.isdir(ft.DEFAULT_TECHNICAL_SOURCE_ROOT):
-            os.makedirs(ft.DEFAULT_TECHNICAL_SOURCE_ROOT)
         self.tmp = tempfile.TemporaryDirectory(dir=OUTPUT_PARENT)
         self._output_constants = {
             name: getattr(ft, name) for name in (
                 "CANONICAL_OUTPUT_ROOT", "DEFAULT_OUTPUT_ROOT", "DEFAULT_MANIFEST",
                 "DEFAULT_CODE_AUDIT", "DEFAULT_TECHNICAL_AUDIT",
                 "DEFAULT_RUN_STATE", "DEFAULT_CASE_ROOT",
-                "DEFAULT_FEATURE_TABLE")}
-        self.source_tmp = tempfile.TemporaryDirectory(
-            dir=ft.DEFAULT_TECHNICAL_SOURCE_ROOT)
-        self.root = self.source_tmp.name
+                "DEFAULT_FEATURE_TABLE", "DEFAULT_TECHNICAL_SOURCE_ROOT",
+                "ALLOWED_TECHNICAL_ROOTS")}
         self.out = self.tmp.name
+        ft.DEFAULT_TECHNICAL_SOURCE_ROOT = os.path.join(self.out, "sources")
+        ft.ALLOWED_TECHNICAL_ROOTS = (ft.DEFAULT_TECHNICAL_SOURCE_ROOT,)
+        if not os.path.isdir(ft.DEFAULT_TECHNICAL_SOURCE_ROOT):
+            os.makedirs(ft.DEFAULT_TECHNICAL_SOURCE_ROOT)
+        self.root = os.path.join(ft.DEFAULT_TECHNICAL_SOURCE_ROOT, "inputs")
+        os.makedirs(self.root)
         # Keep the fixture synthetic while exercising the production rule that
         # one invocation has exactly one canonical output root.
         ft.CANONICAL_OUTPUT_ROOT = self.out
@@ -119,9 +120,12 @@ class FT05ARunnerTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
-        self.source_tmp.cleanup()
         for name, value in self._output_constants.items():
             setattr(ft, name, value)
+        try:
+            os.rmdir(OUTPUT_PARENT)
+        except OSError:
+            pass
 
     def _w_asset(self):
         return {"path": self.lock["habitat_definition"]["W_Original_asset"]["path"],
@@ -1613,6 +1617,79 @@ class FT05ARunnerTests(unittest.TestCase):
             ft._sha256_file(os.path.join(
                 self.out, "FT05A_B_technical_features.csv")),
             result["feature_table"]["sha256"])
+
+    def _assert_legacy_repair_write_failure_is_retryable(self, failed_target):
+        asset, manifest_path, state_path, stage_table, stage_manifest = \
+            self._prepare_legacy_finalizing_scene()
+        legacy_table_raw = self._read_bytes(stage_table)
+        legacy_manifest_raw = self._read_bytes(stage_manifest)
+        real_write_bytes = ft._write_bytes_atomic
+        real_update_state = ft._update_state
+
+        def fail_write(path, raw):
+            if os.path.realpath(path) == os.path.realpath(failed_target):
+                raise IOError("injected %s write failure" % failed_target)
+            return real_write_bytes(path, raw)
+
+        def fail_state(path, state):
+            if path == state_path and state.get("status") == "FINALIZING" and \
+                    (state.get("finalization") or {}).get(
+                        "transaction_schema_version") == ft.FT05A_FINALIZATION_SCHEMA_VERSION:
+                raise IOError("injected state write failure")
+            return real_update_state(path, state)
+
+        failure_patch = mock.patch.object(
+            ft, "_update_state", side_effect=fail_state) if \
+            failed_target == "state" else mock.patch.object(
+                ft, "_write_bytes_atomic", side_effect=fail_write)
+        with self._patches() as loader:
+            loader.return_value = asset
+            with failure_patch:
+                with self.assertRaises(IOError):
+                    ft.run_ft05a(
+                        self.cohort, "run-legacy-finalization",
+                        output_root=self.out, manifest_path=manifest_path,
+                        code_audit_path=self.code_audit,
+                        technical_audit_path=self.technical_audit,
+                        processor=self._processor(failure=AssertionError(
+                            "recomputed")),
+                        resume=True, repair_finalization=True)
+
+        state_after_failure = ft._read_json(state_path)
+        self.assertEqual(state_after_failure["status"], "FINALIZING")
+        self.assertEqual(
+            state_after_failure["finalization"]["transaction_schema_version"],
+            ft.FT05A_LEGACY_FINALIZATION_SCHEMA_VERSION)
+        self.assertEqual(self._read_bytes(stage_table), legacy_table_raw)
+        self.assertEqual(self._read_bytes(stage_manifest), legacy_manifest_raw)
+
+        calls = []
+        with self._patches() as loader:
+            loader.return_value = asset
+            result = ft.run_ft05a(
+                self.cohort, "run-legacy-finalization",
+                output_root=self.out, manifest_path=manifest_path,
+                code_audit_path=self.code_audit,
+                technical_audit_path=self.technical_audit,
+                processor=self._processor(calls, failure=AssertionError(
+                    "recomputed")),
+                resume=True, repair_finalization=True)
+        self.assertEqual(result["status"], "frozen")
+        self.assertEqual(calls, [])
+        self.assertEqual(ft._read_json(state_path)["status"], "COMPLETED")
+        self.assertFalse(os.path.exists(stage_table))
+        self.assertFalse(os.path.exists(stage_manifest))
+
+    def test_legacy_repair_table_write_failure_restores_retryable_transaction(self):
+        self._assert_legacy_repair_write_failure_is_retryable(
+            os.path.join(self.out, ".finalize", "FT05A_B_technical_features.csv"))
+
+    def test_legacy_repair_manifest_write_failure_restores_retryable_transaction(self):
+        self._assert_legacy_repair_write_failure_is_retryable(
+            os.path.join(self.out, ".finalize", "FT05_B_feature_manifest.json"))
+
+    def test_legacy_repair_state_write_failure_restores_retryable_transaction(self):
+        self._assert_legacy_repair_write_failure_is_retryable("state")
 
     def test_legacy_finalization_repair_allows_remediation_audit_without_rebinding_generation(self):
         asset, manifest_path, state_path, unused_stage_table, unused_stage_manifest = \
