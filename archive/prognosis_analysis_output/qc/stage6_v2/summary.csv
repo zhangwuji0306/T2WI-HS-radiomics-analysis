@@ -1,0 +1,4 @@
+combo,batch,n_total,n_icc_pass,n_missing_drop,n_candidates
+muscle_f0.25,original,107,49,0,49
+muscle_f0.25,wavelet,744,184,0,184
+muscle_f0.25,log,279,116,0,116

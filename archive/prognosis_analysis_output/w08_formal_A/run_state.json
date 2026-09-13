@@ -1,0 +1,16 @@
+{
+  "A_population": 393,
+  "B_data_read": false,
+  "B_reader_invoked": false,
+  "B_source_opened": false,
+  "B_statistics_generated": false,
+  "W_columns": 1130,
+  "attempt_id": "attempt_1788972260545084_85fd81ad4583",
+  "code_commit": "88ffcda16b8ba16324f6824637490d5bc1652ef8",
+  "final_outputs_generated": false,
+  "formal_run": true,
+  "slic_cache_cases": 0,
+  "stage": "W08",
+  "started_at_epoch": 1788972250.9818616,
+  "status": "modeling"
+}

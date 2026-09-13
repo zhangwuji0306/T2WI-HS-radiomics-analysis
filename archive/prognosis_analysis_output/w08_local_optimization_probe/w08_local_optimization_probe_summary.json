@@ -1,0 +1,528 @@
+{
+  "bindings": {
+    "alpha_grid_count": 4,
+    "elastic_net_max_iter": 3000,
+    "elastic_net_tolerance": 1e-07,
+    "kmeans": {
+      "algorithm": "kmeans",
+      "initialization": "k-means++",
+      "k": 2,
+      "max_iter": 300,
+      "n_init": 100,
+      "tol": 0.0001
+    },
+    "lambda_count_per_alpha": 100,
+    "minimum_roi_size": 10
+  },
+  "estimation": {
+    "basis": "one complete A-technical plus synthetic repeat immediately before the measured repeats; 15 percent guard",
+    "estimated_total_seconds": 138.0,
+    "over_40_minutes": false,
+    "pilot_repeat_count": 1
+  },
+  "failure_stage_counts": {},
+  "generated_at_utc": "2026-09-08T14:33:49Z",
+  "repeat_count": 3,
+  "runtime": {
+    "platform": "Windows-10",
+    "pyradiomics": "v3.0.1",
+    "python": "3.7.12",
+    "simpleitk": "2.2.1",
+    "threads": {
+      "MKL_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1"
+    }
+  },
+  "safety": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false,
+    "formal_writer_invoked": false,
+    "outcome_columns_read": false
+  },
+  "schema": "w08_local_optimization_probe",
+  "schema_version": "1.1",
+  "scope": "synthetic technical timing only",
+  "stages": {
+    "a_input_load": {
+      "cpu_utilization_percent": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          162.956
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 3836.0,
+        "range": [
+          3836.0,
+          13133.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 3836.0,
+        "range": [
+          3836.0,
+          3836.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 0.011264,
+        "range": [
+          0.00578,
+          0.019177
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147582976.0,
+        "range": [
+          141877248.0,
+          147738624.0
+        ]
+      },
+      "repeat_count": 3,
+      "success_count": 3,
+      "technical_input": {
+        "failure_count": {
+          "median": 0.0,
+          "range": [
+            0.0,
+            0.0
+          ],
+          "total": 0
+        },
+        "sample_count": {
+          "median": 32.0,
+          "range": [
+            32.0,
+            32.0
+          ],
+          "total": 96
+        },
+        "successful_count": {
+          "median": 32.0,
+          "range": [
+            32.0,
+            32.0
+          ],
+          "total": 96
+        }
+      }
+    },
+    "elastic_net_100_lambda_alpha_path": {
+      "cpu_utilization_percent": {
+        "median": 99.553,
+        "range": [
+          98.783,
+          100.242
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 5.461936,
+        "range": [
+          5.393203,
+          8.051113
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147697664.0,
+        "range": [
+          147304448.0,
+          147857408.0
+        ]
+      },
+      "repeat_count": 3,
+      "success_count": 3
+    },
+    "elastic_net_single_candidate": {
+      "cpu_utilization_percent": {
+        "median": 97.662,
+        "range": [
+          83.267,
+          133.577
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 0.015999,
+        "range": [
+          0.011697,
+          0.018765
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147697664.0,
+        "range": [
+          147288064.0,
+          147857408.0
+        ]
+      },
+      "repeat_count": 3,
+      "success_count": 3
+    },
+    "habitat_mask_g_features": {
+      "cpu_utilization_percent": {
+        "median": 153.886,
+        "range": [
+          80.735,
+          155.113
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 52063.0,
+        "range": [
+          52063.0,
+          52063.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 0.019353,
+        "range": [
+          0.010073,
+          0.020307
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147689472.0,
+        "range": [
+          144494592.0,
+          147849216.0
+        ]
+      },
+      "repeat_count": 3,
+      "success_count": 3
+    },
+    "model_preprocessor": {
+      "cpu_utilization_percent": {
+        "median": 99.358,
+        "range": [
+          95.73,
+          107.769
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 0.212185,
+        "range": [
+          0.130487,
+          0.220164
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147697664.0,
+        "range": [
+          147226624.0,
+          147857408.0
+        ]
+      },
+      "repeat_count": 3,
+      "success_count": 3
+    },
+    "r_high_pyradiomics": {
+      "cpu_utilization_percent": {
+        "median": 161.949,
+        "range": [
+          83.311,
+          193.437
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 0.096481,
+        "range": [
+          0.048465,
+          0.11253
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147697664.0,
+        "range": [
+          146997248.0,
+          147857408.0
+        ]
+      },
+      "repeat_count": 3,
+      "success_count": 3
+    },
+    "r_low_pyradiomics": {
+      "cpu_utilization_percent": {
+        "median": 131.606,
+        "range": [
+          115.38,
+          142.591
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 0.106853,
+        "range": [
+          0.054169,
+          0.109579
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147693568.0,
+        "range": [
+          146796544.0,
+          147857408.0
+        ]
+      },
+      "repeat_count": 3,
+      "success_count": 3
+    },
+    "single_fold_kmeans_n_init_100": {
+      "cpu_utilization_percent": {
+        "median": 103.277,
+        "range": [
+          97.586,
+          106.335
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 2894.0,
+        "range": [
+          2894.0,
+          2894.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 0.160115,
+        "range": [
+          0.105904,
+          0.176329
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147689472.0,
+        "range": [
+          143831040.0,
+          147849216.0
+        ]
+      },
+      "repeat_count": 3,
+      "success_count": 3
+    },
+    "slic_cache_prepare_validate": {
+      "cpu_utilization_percent": {
+        "median": 79.3,
+        "range": [
+          66.302,
+          87.529
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 1969.0,
+        "range": [
+          1969.0,
+          9779.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 1004.0,
+        "range": [
+          1004.0,
+          1004.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 0.035702,
+        "range": [
+          0.023566,
+          0.059111
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147689472.0,
+        "range": [
+          143507456.0,
+          147849216.0
+        ]
+      },
+      "repeat_count": 3,
+      "slic_cache": {
+        "existing_cache_file_count": {
+          "median": 0.0,
+          "range": [
+            0.0,
+            0.0
+          ],
+          "total": 0
+        },
+        "existing_cache_sample_count": {
+          "median": 0.0,
+          "range": [
+            0.0,
+            0.0
+          ],
+          "total": 0
+        },
+        "hit_count": {
+          "median": 0.0,
+          "range": [
+            0.0,
+            0.0
+          ],
+          "total": 0
+        },
+        "miss_count": {
+          "median": 1.0,
+          "range": [
+            1.0,
+            1.0
+          ],
+          "total": 3
+        },
+        "recomputed_count": {
+          "median": 1.0,
+          "range": [
+            1.0,
+            1.0
+          ],
+          "total": 3
+        },
+        "validation_failure_count": {
+          "median": 0.0,
+          "range": [
+            0.0,
+            0.0
+          ],
+          "total": 0
+        }
+      },
+      "success_count": 3
+    },
+    "uno_weights_and_bottom_call": {
+      "cpu_utilization_percent": {
+        "median": 96.83,
+        "range": [
+          0.0,
+          191.633
+        ]
+      },
+      "disk_read_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "disk_write_bytes": {
+        "median": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "duration_seconds": {
+        "median": 0.008154,
+        "range": [
+          0.006039,
+          0.016137
+        ]
+      },
+      "failure_count": 0,
+      "peak_rss_bytes": {
+        "median": 147697664.0,
+        "range": [
+          147312640.0,
+          147857408.0
+        ]
+      },
+      "repeat_count": 3,
+      "success_count": 3
+    }
+  },
+  "status": "complete"
+}

@@ -1,0 +1,426 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "PRIMARY_ANALYSIS_V2",
+  "protocol_version": "2.0",
+  "effective_date": "2026-09-13",
+  "status": "transition_registered_scientific_contract",
+  "title": "Primary Prognostic Analysis v2 — Frozen Full-A Habitat Validation",
+  "transition": {
+    "type": "post-FT protocol transition",
+    "method_framework_action": "method framework improvement and registration",
+    "patient_level_recomputation": false,
+    "formal_v1_status": "superseded",
+    "formal_w08_v1_completed_successfully": false,
+    "decision_reasons": [
+      "computational feasibility",
+      "fixed phenotype interpretability",
+      "methodological simplicity"
+    ],
+    "decision_timing": {
+      "ft03_results_visible_at_decision": true,
+      "ft06_results_visible_at_decision": true,
+      "pipeline_frozen_before_ft06_external_validation": true,
+      "promotion_decision_after_ft06_results_available": true,
+      "performance_driven_model_redesign": false,
+      "retrospective_prespecification_claim": false
+    }
+  },
+  "cohort_definitions": {
+    "technical_screening_reference": {
+      "source": "habitat_analysis/cohort_definition.md",
+      "lenient_target": {
+        "total_n": 500,
+        "A_n": 393,
+        "B_n": 107,
+        "role": "technical screening target; A/B device assignment is fixed before outcome access"
+      },
+      "strict_sensitivity_target": {
+        "total_n": 160,
+        "A_n": 137,
+        "B_n": 23,
+        "role": "prespecified sensitivity subset; does not replace the lenient primary target"
+      }
+    },
+    "primary_A_modeling": {
+      "identity": "exact W06 A393 modeling population after frozen DFS endpoint QC",
+      "n": 393,
+      "DFS_events": 89,
+      "DFS_censored": 304,
+      "eligibility_rule": "retain exact frozen A393 membership; exclude only frozen technical exclusions, outcome unavailability, duplicate or invalid endpoint records, or explicit unrepairable source errors"
+    },
+    "B_external_validation": {
+      "identity": "FT06 authorized frozen-compatible B validation cohort after FT04 freeze and FT05B outcome unlock",
+      "authorized_n": 163,
+      "DFS_events": 42,
+      "DFS_censored": 121,
+      "eligibility_rule": "use only the authorized FT06 validation population and frozen-compatible predictors"
+    },
+    "denominator_scope_note": "The upstream technical-screening reference records a lenient target of A393/B107, whereas the promoted FT06 external-validation record authorizes 163 B cases. This contract preserves both source-specific identities and does not assert that B107 and the FT06 authorized B=163 denominator are the same cohort. Any future implementation must bind the B validation input to the FT06 authorized cohort identity rather than silently reconciling the labels."
+  },
+  "cohort_identities": {
+    "primary_A_modeling": {
+      "identity_token": "A393_W06_endpoint_QC_exact_frozen_modeling_population",
+      "identity_sha256": "5fd90ac407400d59f4a8ae5f1d492de99b6b0e12eb62ff9bdb33800d9884afe3",
+      "n": 393,
+      "DFS_events": 89,
+      "DFS_censored": 304
+    },
+    "FT06_authorized_B": {
+      "identity_token": "B163_FT06_authorized_frozen_compatible_external_validation_cohort",
+      "identity_sha256": "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583",
+      "n": 163,
+      "DFS_events": 42,
+      "DFS_censored": 121
+    }
+  },
+  "endpoint": {
+    "primary": "DFS",
+    "time_column": "DFS_time",
+    "event_column": "DFS_event",
+    "horizons_years": [
+      3,
+      5
+    ],
+    "horizons_months": [
+      36,
+      60
+    ],
+    "OS_or_CSS": "secondary/exploratory only; not part of Primary v2 model design"
+  },
+  "habitat": {
+    "definition_scope": "fixed full-A habitat",
+    "slic": {
+      "method": "3D SLIC",
+      "target_supervoxel_scale_mm": 4
+    },
+    "clustering": {
+      "method": "cross-case K-means",
+      "K": 2,
+      "n_init": 100,
+      "case_weighting": "each case total effective supervoxel weight = 1"
+    },
+    "labels": {
+      "lower_cluster": "H-low",
+      "higher_cluster": "H-high",
+      "boundary": "fixed midpoint of the full-A technical centers"
+    },
+    "refit_forbidden": [
+      "CV outer fold",
+      "B external validation",
+      "DFS-based boundary adjustment"
+    ]
+  },
+  "predictor_blocks": {
+    "C": {
+      "role": "fixed treatment-time clinical block",
+      "features": [
+        "年龄",
+        "CEA_log",
+        "mrT_4级",
+        "mrN_3级",
+        "MRF",
+        "mrEMVI",
+        "thickness",
+        "EID",
+        "活检病理非腺癌"
+      ],
+      "excluded": [
+        "性别",
+        "length",
+        "distance",
+        "postoperative variables"
+      ]
+    },
+    "G": {
+      "role": "fixed global habitat descriptors",
+      "features": [
+        "H_high_fraction",
+        "sv_median_minus_boundary",
+        "sv_IQR",
+        "interface_density",
+        "H_high_largest_component_tumor_fraction",
+        "H_high_radial_burden"
+      ],
+      "descriptive_only": [
+        "habitat_entropy",
+        "H_high_component_density"
+      ]
+    },
+    "R_low": {
+      "count": 49,
+      "candidate_sha256": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+      "availability": "structurally present and technically available only"
+    },
+    "R_high": {
+      "count": 10,
+      "candidate_sha256": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+      "availability": "structurally present and technically available only"
+    },
+    "W_Original": {
+      "count": 107,
+      "order_sha256": "1c07cd4e129e368dde8539d552ecb0f453d9c655fe2a5383d00a5de7b408ca1f",
+      "role": "whole-tumour radiomics reference comparator",
+      "excluded_from_primary_reference": [
+        "Wavelet",
+        "LoG",
+        "other filtered radiomics"
+      ]
+    }
+  },
+  "models": [
+    {
+      "id": "M0",
+      "predictor_blocks": [
+        "C"
+      ],
+      "family": "unpenalized Cox proportional hazards",
+      "role": "clinical baseline"
+    },
+    {
+      "id": "M1",
+      "predictor_blocks": [
+        "C",
+        "H_high_fraction"
+      ],
+      "family": "unpenalized Cox proportional hazards",
+      "role": "simple habitat burden"
+    },
+    {
+      "id": "M2",
+      "predictor_blocks": [
+        "C",
+        "G"
+      ],
+      "family": "unpenalized Cox proportional hazards",
+      "role": "global habitat organization"
+    },
+    {
+      "id": "M3L",
+      "predictor_blocks": [
+        "C",
+        "G",
+        "R_low"
+      ],
+      "family": "LASSO-Cox",
+      "alpha": 1,
+      "population": "R_low"
+    },
+    {
+      "id": "M3H",
+      "predictor_blocks": [
+        "C",
+        "G",
+        "R_high"
+      ],
+      "family": "LASSO-Cox",
+      "alpha": 1,
+      "population": "R_high"
+    },
+    {
+      "id": "M4",
+      "predictor_blocks": [
+        "C",
+        "G",
+        "R_low",
+        "R_high"
+      ],
+      "family": "LASSO-Cox",
+      "alpha": 1,
+      "population": "dual_radiomics"
+    },
+    {
+      "id": "M5",
+      "predictor_blocks": [
+        "C",
+        "W_Original"
+      ],
+      "family": "LASSO-Cox",
+      "alpha": 1,
+      "population": "W_Original_available"
+    }
+  ],
+  "primary_comparisons": [
+    {
+      "id": "M0_vs_M1",
+      "models": [
+        "M0",
+        "M1"
+      ]
+    },
+    {
+      "id": "M0_vs_M2",
+      "models": [
+        "M0",
+        "M2"
+      ]
+    },
+    {
+      "id": "M2_vs_M3L",
+      "models": [
+        "M2",
+        "M3L"
+      ]
+    },
+    {
+      "id": "M2_vs_M3H",
+      "models": [
+        "M2",
+        "M3H"
+      ]
+    },
+    {
+      "id": "M2_vs_M4",
+      "models": [
+        "M2",
+        "M4"
+      ]
+    },
+    {
+      "id": "M3L_vs_M3H",
+      "models": [
+        "M3L",
+        "M3H"
+      ]
+    },
+    {
+      "id": "M4_vs_M5",
+      "models": [
+        "M4",
+        "M5"
+      ]
+    }
+  ],
+  "validation": {
+    "A_design": "fixed single-repeat 5-fold outer validation",
+    "split_source": "prognosis_analysis/output/outer_splits_A.csv",
+    "repeat": 1,
+    "outer_fold_count": 5,
+    "split_regeneration": false,
+    "legacy_10_repeat_W07_design": "not used by Primary v2",
+    "training_validation_isolation": true,
+    "training_only_operations": [
+      "clinical imputation",
+      "clinical scaling",
+      "radiomics imputation",
+      "variance filtering",
+      "correlation reduction",
+      "feature selection",
+      "lambda selection"
+    ],
+    "lambda_selection": {
+      "scope": "outer-training only",
+      "method": "inner 5-fold CV within each outer-training set",
+      "outer_validation_used_for_lambda": false
+    },
+    "metrics": [
+      "Harrell C-index",
+      "Uno C-index",
+      "time-dependent AUC at 3 years",
+      "time-dependent AUC at 5 years",
+      "Brier score at 3 years",
+      "Brier score at 5 years",
+      "3-year calibration",
+      "5-year calibration",
+      "Kaplan-Meier by frozen risk definition",
+      "DCA at 3 and 5 years",
+      "patient-level bootstrap 95% CI"
+    ],
+    "paired_comparisons": "common eligible population and aligned repeat-1 folds for each comparison"
+  },
+  "full_A_refit_and_freeze": {
+    "after_A_validation": true,
+    "models": [
+      "M0",
+      "M1",
+      "M2",
+      "M3L",
+      "M3H",
+      "M4",
+      "M5"
+    ],
+    "lambda_selection": "A-only training data; no B input",
+    "frozen_items": [
+      "predictor order",
+      "preprocessing",
+      "selected features",
+      "coefficients",
+      "lambda",
+      "baseline hazard or survival representation",
+      "risk score definition",
+      "cutoff if required",
+      "model-specific eligibility",
+      "source asset hashes"
+    ]
+  },
+  "B_external_validation": {
+    "mode": "frozen prediction only",
+    "allowed_sequence": [
+      "load frozen model",
+      "load frozen-compatible B predictors",
+      "predict",
+      "evaluate"
+    ],
+    "B_model_freeze_precedes_evaluation": true,
+    "forbidden": [
+      "B feature selection",
+      "B lambda tuning",
+      "B coefficient refit",
+      "B cutoff optimization",
+      "B habitat refit",
+      "B radiomics candidate re-selection",
+      "B to A feedback"
+    ]
+  },
+  "evidence_registry": {
+    "source_git_ref": "refs/heads/codex/ft-validation",
+    "source_git_commit": "3c1eb3b702831a17f2265ba0ce42d7ce3ddf3d34",
+    "FT03": {
+      "status": "COMPLETE",
+      "aggregate_json": {
+        "path": "prognosis_analysis/ft/FT03_A_validation.json",
+        "sha256": "1cd71d9309c8ea23aec7ac485f39ff761d25e661a31c9844f3b4cd9c4fd83ec4"
+      },
+      "report": {
+        "path": "prognosis_analysis/ft/FT03_A_validation_report.md",
+        "sha256": "7af68b0c99e042fc9e828b9486ca473d58c52acd9aafcd3afc77a0e0941b21de"
+      },
+      "A_n": 393,
+      "DFS_events": 89,
+      "validation": "fixed repeat-1 5-fold; A-only"
+    },
+    "FT04": {
+      "status": "ACCEPTED / FROZEN",
+      "lock_path": "prognosis_analysis/ft/FT_model_freeze_lock.json",
+      "lock_identity_sha256": "10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e",
+      "serialized_lock_sha256": "bb0c00b49b68cc31eb3899a9099ca8330551a7c2afd0ff3f849abc091a80c2d2",
+      "lock_attestation_path": "prognosis_analysis/ft/FT04_lock_sha256.json",
+      "lock_attestation_sha256": "877800e482b531b3073e290c4bcbf7270d19904d9ff939726b95fca3b69ff30a"
+    },
+    "FT06": {
+      "status": "COMPLETE",
+      "final_disposition": "FT-INCONCLUSIVE",
+      "aggregate_json": {
+        "path": "prognosis_analysis/ft/FT06_B_validation.json",
+        "sha256": "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583"
+      },
+      "report": {
+        "path": "prognosis_analysis/ft/FT06_B_validation_report.md",
+        "sha256": "8a2dbc4a233085a1442aa5c7c384926a9d3383e52d49733e546eb3aceaaccba1"
+      },
+      "authorized_B_n": 163,
+      "DFS_events": 42,
+      "validation": "frozen prediction only"
+    }
+  },
+  "guardrails": {
+    "retain_all_M0_M5": true,
+    "new_B_tuning": false,
+    "performance_driven_model_selection": false,
+    "DFS_based_candidate_rescreening": false,
+    "A_B_isolation": true,
+    "provenance_binding": true,
+    "fail_closed_validation": true,
+    "transactional_output": true,
+    "patient_level_material_in_repository": false
+  }
+}

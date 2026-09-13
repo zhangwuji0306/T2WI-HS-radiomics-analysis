@@ -1,0 +1,17 @@
+block,metric,value
+R_low,feature_count,107
+R_low,n_valid_pairs_min,17
+R_low,n_valid_pairs_median,17.0
+R_low,features_n_valid_pairs_ge_10,107
+R_low,features_icc_gt_0_75,53
+R_low,features_finite_rate_gate_pass,107
+R_low,formal_prediction_candidate_count,49
+R_low,candidate_hash,a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0
+R_high,feature_count,107
+R_high,n_valid_pairs_min,15
+R_high,n_valid_pairs_median,15.0
+R_high,features_n_valid_pairs_ge_10,107
+R_high,features_icc_gt_0_75,12
+R_high,features_finite_rate_gate_pass,107
+R_high,formal_prediction_candidate_count,10
+R_high,candidate_hash,a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce

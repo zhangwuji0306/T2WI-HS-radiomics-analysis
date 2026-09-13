@@ -1,0 +1,17 @@
+name: t2_radiomics
+channels:
+  - conda-forge
+dependencies:
+  - python=3.7.12
+  - numpy=1.21.6
+  - pandas=1.3.5
+  - openpyxl=3.0.10
+  - scipy=1.7.3
+  - scikit-learn=1.0.2
+  - matplotlib=3.5.3
+  - pyyaml=6.0
+  - pip
+  - pip:
+    - pyradiomics==3.0.1
+    - SimpleITK==2.2.1
+    - pywavelets==1.3.0

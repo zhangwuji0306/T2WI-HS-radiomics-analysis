@@ -1,0 +1,14 @@
+{
+  "certificate_generated_at_utc": "2026-09-09T13:37:09Z",
+  "code_commit": "eae4b6050b20e3b6a4b3d6e0a9e2d84c23bf84fe",
+  "files": {
+    "P5_fold_feasibility.csv": "c2ae2bfa82e9a3f468741a2e4ae80ec76b0aa56ea4c6f786d301376d3aadbf89",
+    "P5_release_gate.json": "99294657c5329562255c578f15b3fb2148a53686a726a0552c435094dd03f69c",
+    "P5_technical_preflight_summary.json": "5f04749aea61fd19927f732b5364f87c2e256a9a6297a4668581770e0fa0b746"
+  },
+  "manifest_excludes_self": true,
+  "schema": "P5_sha256_manifest",
+  "stage": "P5",
+  "successor_of": "prognosis_analysis/output/p5_technical_preflight_A",
+  "version": "1.0"
+}

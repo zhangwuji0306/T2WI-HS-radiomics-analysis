@@ -1,0 +1,16 @@
+analyses:
+  - complete_case
+  - lambda_min
+  - elastic_net_alpha_0.9
+  - muscle_f0.1
+  - zscore_f0.1
+  - zscore_f0.25
+  - mrT_mrN_dummy_encoding
+  - all_predictors_penalized
+  - nonlinear_age_EID_natural_spline_3df
+  - mucin_missing_restored
+  - outcome_free_training_imputation
+exploratory:
+  - postoperative_model
+  - major_B_scanners_separate_performance
+  - MRI_date_time_origin_if_available

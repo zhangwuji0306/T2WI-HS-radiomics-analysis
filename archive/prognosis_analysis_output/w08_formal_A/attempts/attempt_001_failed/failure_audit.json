@@ -1,0 +1,20 @@
+{
+  "attempt_id": "attempt_001_failed",
+  "stage": "W08",
+  "status": "failed",
+  "started_at": "2026-09-05T21:38:37.805668+08:00",
+  "ended_at": "2026-09-05T21:41:11+08:00",
+  "failure_stage": "nested_cv_modeling_radiomics_extraction",
+  "exception_summary": "ValueError: ROI size is too small at the configured minimum-size boundary.",
+  "code_commit_at_attempt": "22ec6062529f32da3000a8abadac5864b0dbc083",
+  "environment_version_summary": {
+    "python": "3.7.12",
+    "pyradiomics": "3.0.1",
+    "simpleitk": "2.2.1"
+  },
+  "B_data_read": false,
+  "B_reader_invoked": false,
+  "B_source_opened": false,
+  "B_statistics_generated": false,
+  "final_outputs_generated": false
+}

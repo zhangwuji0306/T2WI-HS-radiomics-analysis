@@ -1,0 +1,41 @@
+{
+  "files": {
+    "R_high_diagnostics.csv": {
+      "bytes": 304835,
+      "sha256": "30d065080b2dfe7b7b5286c94b22913637f79b2d2f0460784ad664e4066b8828"
+    },
+    "R_high_features.csv": {
+      "bytes": 742293,
+      "sha256": "780afeb164043e39877040758e588212db16b3d349cf2f2c7beac59d495eff62"
+    },
+    "R_low_diagnostics.csv": {
+      "bytes": 330274,
+      "sha256": "993805408633d36161cf34205f0df96a95374b7e80dcad6e486b913cb7607110"
+    },
+    "R_low_features.csv": {
+      "bytes": 810215,
+      "sha256": "b0a91c3456709b28fb6a3958e3b0fde847b06b8a00311d47d4ab38c05595c19b"
+    },
+    "case_availability.csv": {
+      "bytes": 30831,
+      "sha256": "d47d48896e1387a2ed37eb5cf16724bc63738f4f68571bf580aded0a8d9ef863"
+    },
+    "feature_schema.json": {
+      "bytes": 5631,
+      "sha256": "dab26184bd8ed09d1bf74aac91ff4f7e2729d23260744a2c640cc09cfcad1100"
+    },
+    "run_metadata.json": {
+      "bytes": 1101,
+      "sha256": "56ad28d9a9f45c00d10fd413a7955ad9a3227fbff6847df11e666a69694ebebe"
+    },
+    "summary.csv": {
+      "bytes": 604,
+      "sha256": "9c73add2fcb922d4a395d3194b4cd2be92838d429541a106214eb0a54361e12a"
+    },
+    "technical_failures.csv": {
+      "bytes": 1674,
+      "sha256": "3a8efbe0584a08abc46c62f9c6ca6a595994d30ebd436e64494d985e4ac79de1"
+    }
+  },
+  "stage": "W02"
+}

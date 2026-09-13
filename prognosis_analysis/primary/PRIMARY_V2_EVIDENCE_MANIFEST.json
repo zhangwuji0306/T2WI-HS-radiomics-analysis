@@ -1,0 +1,149 @@
+{
+  "schema_version": "1.0",
+  "artifact_id": "PRIMARY_V2_EVIDENCE_MANIFEST",
+  "status": "PROMOTED_WITHOUT_RECOMPUTATION",
+  "protocol_id": "PRIMARY_ANALYSIS_V2",
+  "protocol_version": "2.0",
+  "protocol_path": "prognosis_analysis/primary/protocol.json",
+  "protocol_sha256": "8d0e8239558ad9ecd2f5605bc1ecce29ef93f7769452319c3c804cda20b28e89",
+  "promotion": {
+    "source": "accepted FT03/FT04/FT06 evidence",
+    "recomputation": false,
+    "patient_level_material_copied": false,
+    "decision_timing": {
+      "ft03_results_visible_at_decision": true,
+      "ft06_results_visible_at_decision": true,
+      "promotion_decision_after_ft06_results_available": true,
+      "retrospective_prespecification_claim": false
+    }
+  },
+  "source_git": {
+    "ref": "refs/heads/codex/ft-validation",
+    "commit": "3c1eb3b702831a17f2265ba0ce42d7ce3ddf3d34",
+    "source_files_are_external_bindings": true
+  },
+  "evidence": {
+    "FT03": {
+      "status": "COMPLETE",
+      "label": "exploratory_fullA_habitat_non_nested_validation",
+      "aggregate": {
+        "path": "prognosis_analysis/ft/FT03_A_validation.json",
+        "sha256": "1cd71d9309c8ea23aec7ac485f39ff761d25e661a31c9844f3b4cd9c4fd83ec4"
+      },
+      "report": {
+        "path": "prognosis_analysis/ft/FT03_A_validation_report.md",
+        "sha256": "7af68b0c99e042fc9e828b9486ca473d58c52acd9aafcd3afc77a0e0941b21de"
+      },
+      "A_identity": {
+        "n": 393,
+        "DFS_events": 89,
+        "DFS_censored": 304,
+        "validation": "single repeat-1 outer five-fold; A-only",
+        "identity_token": "A393_W06_endpoint_QC_exact_frozen_modeling_population",
+        "identity_sha256": "5fd90ac407400d59f4a8ae5f1d492de99b6b0e12eb62ff9bdb33800d9884afe3"
+      },
+      "promotion_disposition": "aggregate/report binding only; no result recomputation"
+    },
+    "FT04": {
+      "status": "ACCEPTED / FROZEN",
+      "lock": {
+        "path": "prognosis_analysis/ft/FT_model_freeze_lock.json",
+        "serialized_sha256": "bb0c00b49b68cc31eb3899a9099ca8330551a7c2afd0ff3f849abc091a80c2d2",
+        "identity_sha256": "10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e",
+        "attestation_path": "prognosis_analysis/ft/FT04_lock_sha256.json",
+        "attestation_sha256": "877800e482b531b3073e290c4bcbf7270d19904d9ff939726b95fca3b69ff30a"
+      },
+      "promotion_disposition": "accepted frozen states registered; no refit"
+    },
+    "FT06": {
+      "status": "COMPLETE",
+      "final_disposition": "FT-INCONCLUSIVE",
+      "aggregate": {
+        "path": "prognosis_analysis/ft/FT06_B_validation.json",
+        "sha256": "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583"
+      },
+      "report": {
+        "path": "prognosis_analysis/ft/FT06_B_validation_report.md",
+        "sha256": "8a2dbc4a233085a1442aa5c7c384926a9d3383e52d49733e546eb3aceaaccba1"
+      },
+      "authorized_B_identity": {
+        "n": 163,
+        "DFS_events": 42,
+        "DFS_censored": 121,
+        "identity_token": "B163_FT06_authorized_frozen_compatible_external_validation_cohort",
+        "identity_sha256": "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583",
+        "source_identity": "FT06 authorized frozen-compatible B validation cohort",
+        "technical_screening_B107_is_not_merged": true
+      },
+      "promotion_disposition": "source identity/hash registration only; predictions and metrics not copied"
+    }
+  },
+  "technical_assets": {
+    "habitat_lock": {
+      "path": "habitat_analysis/freeze_lock.json",
+      "sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
+      "identity": "fixed full-A habitat; 3D SLIC 4 mm; K=2; n_init=100"
+    },
+    "R_low": {
+      "candidate_freeze_path": "prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json",
+      "candidate_freeze_sha256": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
+      "count": 49,
+      "candidate_sha256": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0"
+    },
+    "R_high": {
+      "candidate_freeze_path": "prognosis_analysis/output/w03_habitat_radiomics_A/candidate_freeze.json",
+      "candidate_freeze_sha256": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
+      "count": 10,
+      "candidate_sha256": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce"
+    },
+    "W_Original": {
+      "asset_path": "feature_extract/output/features_v2/muscle_f0.25/features_original.csv",
+      "asset_sha256": "462201e66d8e8989063f02f1d7f63865a23335883c582707dc7713f40d3e9649",
+      "count": 107,
+      "order_sha256": "1c07cd4e129e368dde8539d552ecb0f453d9c655fe2a5383d00a5de7b408ca1f",
+      "filtered_features_excluded": true
+    },
+    "clinical_schema": {
+      "path": "prognosis_analysis/modeling_protocol.json",
+      "sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+      "identity": "fixed treatment-time C block; predeclared encoding and exclusions"
+    }
+  },
+  "cohort_identities": {
+    "technical_screening_reference": {
+      "source_path": "habitat_analysis/cohort_definition.md",
+      "identity": "lenient target A393/B107; strict sensitivity A137/B23",
+      "role": "technical denominator only"
+    },
+    "primary_A_modeling": {
+      "source_path": "prognosis_analysis/output/modeling_v2/dataset_primary_raw_A.csv",
+      "identity": "exact frozen W06 A393 population; 89 DFS events; 304 censored",
+      "identity_sha256": "5fd90ac407400d59f4a8ae5f1d492de99b6b0e12eb62ff9bdb33800d9884afe3",
+      "identity_token": "A393_W06_endpoint_QC_exact_frozen_modeling_population",
+      "n": 393,
+      "DFS_events": 89,
+      "DFS_censored": 304
+    },
+    "FT06_authorized_B": {
+      "source_path": "prognosis_analysis/ft/FT06_B_validation.json",
+      "identity": "authorized FT06 B=163; 42 DFS events; 121 censored",
+      "identity_sha256": "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583",
+      "identity_token": "B163_FT06_authorized_frozen_compatible_external_validation_cohort",
+      "n": 163,
+      "DFS_events": 42,
+      "DFS_censored": 121,
+      "not_the_same_as_technical_screening_B107": true
+    }
+  },
+  "isolation": {
+    "A_B_isolation": true,
+    "B_prediction_frozen_before_evaluation": true,
+    "B_frozen_prediction_only": true,
+    "B_tuning": false,
+    "B_refit": false,
+    "B_cutoff_optimization": false,
+    "B_habitat_refit": false,
+    "B_radiomics_candidate_reselection": false,
+    "B_to_A_feedback": false
+  }
+}

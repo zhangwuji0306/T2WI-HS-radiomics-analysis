@@ -1,0 +1,15 @@
+影像号,reader,block,failure_class,failure_reason
+IMG-731AEA47FE,R1,R_high,technical_failure,"ValueError: mask has too few dimensions (number of dimensions 1, minimum required 2)"
+IMG-6C8346139A,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 3"
+IMG-1956F93A94,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 6"
+IMG-D5E58F8859,R1,R_high,technical_failure,ValueError: mask only contains 1 segmented voxel! Cannot extract features for a single voxel.
+IMG-289CB955B6,R1,R_low,technical_failure,ValueError: mask only contains 1 segmented voxel! Cannot extract features for a single voxel.
+IMG-FC390CC9D2,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 3"
+IMG-5B62E67F31,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 6"
+IMG-F279B634FE,R1,R_high,technical_failure,ValueError: mask only contains 1 segmented voxel! Cannot extract features for a single voxel.
+IMG-51BE456A2B,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 8"
+IMG-347471A6EE,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 3"
+IMG-EDE71F65A0,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 4"
+IMG-60A9582A2E,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 7"
+IMG-040E40FBD4,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 3"
+IMG-6D0390E7BE,R1,R_high,technical_failure,"ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 4"

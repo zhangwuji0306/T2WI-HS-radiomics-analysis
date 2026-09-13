@@ -1,0 +1,173 @@
+{
+  "method": "各滤波输出PyRadiomics固定箱宽；binWidth=f×σ_A(filt)；min/max仅作A参考范围；仅训练集A （GE DISCOVERY MR750 3T，R1）肿瘤 ROI 合并统计；滤波 = PyRadiomics imageoperations（Wavelet coif1 8 子带 / LoG σ=1,2,3 mm）",
+  "n_cases": 530,
+  "log_sigmas": [
+    1.0,
+    2.0,
+    3.0
+  ],
+  "f_values": [
+    0.1,
+    0.25
+  ],
+  "arms": {
+    "muscle": {
+      "log-sigma-1-0-mm-3D": {
+        "mean": 0.037609,
+        "sigma": 0.296266,
+        "min": -4.898561,
+        "max": 3.112513,
+        "n_voxels": 6297646
+      },
+      "log-sigma-2-0-mm-3D": {
+        "mean": 0.089361,
+        "sigma": 0.377452,
+        "min": -4.373487,
+        "max": 2.502881,
+        "n_voxels": 6297646
+      },
+      "log-sigma-3-0-mm-3D": {
+        "mean": 0.143449,
+        "sigma": 0.416113,
+        "min": -3.801674,
+        "max": 2.645699,
+        "n_voxels": 6297646
+      },
+      "wavelet-HHH": {
+        "mean": 5.4e-05,
+        "sigma": 0.173264,
+        "min": -2.671357,
+        "max": 2.430631,
+        "n_voxels": 6297646
+      },
+      "wavelet-HHL": {
+        "mean": -0.000537,
+        "sigma": 0.390569,
+        "min": -5.322931,
+        "max": 6.101721,
+        "n_voxels": 6297646
+      },
+      "wavelet-HLH": {
+        "mean": -0.000505,
+        "sigma": 0.21426,
+        "min": -3.821215,
+        "max": 3.480043,
+        "n_voxels": 6297646
+      },
+      "wavelet-HLL": {
+        "mean": 0.016398,
+        "sigma": 0.511617,
+        "min": -11.144877,
+        "max": 9.552912,
+        "n_voxels": 6297646
+      },
+      "wavelet-LHH": {
+        "mean": -0.000587,
+        "sigma": 0.217327,
+        "min": -3.641505,
+        "max": 5.020098,
+        "n_voxels": 6297646
+      },
+      "wavelet-LHL": {
+        "mean": 0.018972,
+        "sigma": 0.515246,
+        "min": -11.127853,
+        "max": 8.840094,
+        "n_voxels": 6297646
+      },
+      "wavelet-LLH": {
+        "mean": 0.020034,
+        "sigma": 0.573442,
+        "min": -8.865443,
+        "max": 9.936853,
+        "n_voxels": 6297646
+      },
+      "wavelet-LLL": {
+        "mean": 7.146791,
+        "sigma": 2.67915,
+        "min": 0.365041,
+        "max": 33.121166,
+        "n_voxels": 6297646
+      }
+    },
+    "zscore": {
+      "log-sigma-1-0-mm-3D": {
+        "mean": 0.083954,
+        "sigma": 0.470734,
+        "min": -6.006035,
+        "max": 5.664586,
+        "n_voxels": 6297646
+      },
+      "log-sigma-2-0-mm-3D": {
+        "mean": 0.197681,
+        "sigma": 0.619457,
+        "min": -4.933035,
+        "max": 4.186372,
+        "n_voxels": 6297646
+      },
+      "log-sigma-3-0-mm-3D": {
+        "mean": 0.31449,
+        "sigma": 0.712178,
+        "min": -4.889952,
+        "max": 4.734045,
+        "n_voxels": 6297646
+      },
+      "wavelet-HHH": {
+        "mean": 9.5e-05,
+        "sigma": 0.324403,
+        "min": -5.045277,
+        "max": 5.829957,
+        "n_voxels": 6297646
+      },
+      "wavelet-HHL": {
+        "mean": -0.001201,
+        "sigma": 0.69241,
+        "min": -10.983223,
+        "max": 10.871047,
+        "n_voxels": 6297646
+      },
+      "wavelet-HLH": {
+        "mean": -0.00118,
+        "sigma": 0.385281,
+        "min": -6.127175,
+        "max": 6.451937,
+        "n_voxels": 6297646
+      },
+      "wavelet-HLL": {
+        "mean": 0.035882,
+        "sigma": 0.863415,
+        "min": -21.217833,
+        "max": 11.385794,
+        "n_voxels": 6297646
+      },
+      "wavelet-LHH": {
+        "mean": -0.001426,
+        "sigma": 0.387632,
+        "min": -7.502256,
+        "max": 9.314172,
+        "n_voxels": 6297646
+      },
+      "wavelet-LHL": {
+        "mean": 0.041286,
+        "sigma": 0.858086,
+        "min": -16.784159,
+        "max": 12.007157,
+        "n_voxels": 6297646
+      },
+      "wavelet-LLH": {
+        "mean": 0.047257,
+        "sigma": 1.019677,
+        "min": -18.430126,
+        "max": 21.258326,
+        "n_voxels": 6297646
+      },
+      "wavelet-LLL": {
+        "mean": 0.021836,
+        "sigma": 2.490385,
+        "min": -10.983818,
+        "max": 24.160904,
+        "n_voxels": 6297646
+      }
+    }
+  }
+}

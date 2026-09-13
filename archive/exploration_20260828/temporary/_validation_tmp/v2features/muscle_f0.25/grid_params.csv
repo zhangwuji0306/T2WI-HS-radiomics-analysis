@@ -1,0 +1,12 @@
+filter,binWidth,n_bins_A_reference,grid_min,grid_max,clip_to_A_range
+log-sigma-1-0-mm-3D,0.074066,109,-4.898561,3.112513,False
+log-sigma-2-0-mm-3D,0.094363,73,-4.373487,2.502881,False
+log-sigma-3-0-mm-3D,0.104028,62,-3.801674,2.645699,False
+wavelet-HHH,0.043316,118,-2.671357,2.430631,False
+wavelet-HHL,0.097642,118,-5.322931,6.101721,False
+wavelet-HLH,0.053565,137,-3.821215,3.480043,False
+wavelet-HLL,0.127904,162,-11.144877,9.552912,False
+wavelet-LHH,0.054332,160,-3.641505,5.020098,False
+wavelet-LHL,0.128811,156,-11.127853,8.840094,False
+wavelet-LLH,0.143361,132,-8.865443,9.936853,False
+wavelet-LLL,0.669787,49,0.365041,33.121166,False

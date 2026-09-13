@@ -1,0 +1,18 @@
+{
+  "B_data_read": false,
+  "B_reader_invoked": false,
+  "B_source_opened": false,
+  "B_statistics_generated": false,
+  "attempt_id": "attempt_1788647247630504_d8ea5057fc8b",
+  "code_commit": "fdd0ce0f779fb10555465a4d040f6e390969f541",
+  "code_commit_at_attempt": "fdd0ce0f779fb10555465a4d040f6e390969f541",
+  "ended_at_epoch": 1788664021.764793,
+  "exception_class": "W08NumericalFailure",
+  "failure_reason": "Elastic-Net Cox fit did not converge",
+  "failure_stage": "nested_cv_modeling",
+  "final_outputs_generated": false,
+  "formal_run": true,
+  "stage": "W08",
+  "started_at_epoch": 1788647235.3958313,
+  "status": "failed"
+}

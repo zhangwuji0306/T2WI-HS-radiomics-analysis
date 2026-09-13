@@ -1,0 +1,12 @@
+{
+  "A_full": 530,
+  "A_cc": 490,
+  "DFS_events_A_full": 121,
+  "DFS_events_A_cc": 105,
+  "n_clinical": 13,
+  "n_radiomics": 197,
+  "n_joint": 210,
+  "EPV_clinical": 8.08,
+  "EPV_radiomics": 0.53,
+  "EPV_joint": 0.5
+}

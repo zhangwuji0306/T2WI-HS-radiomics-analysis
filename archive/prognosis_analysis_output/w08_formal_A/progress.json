@@ -1,0 +1,20 @@
+{
+  "B_data_read": false,
+  "B_reader_invoked": false,
+  "B_source_opened": false,
+  "B_statistics_generated": false,
+  "completed_outer_folds": 4,
+  "completed_runs_in_fold": 13,
+  "current_fold": null,
+  "current_repeat": null,
+  "current_run": null,
+  "elapsed_seconds": 70237.865,
+  "schema": "w08_progress",
+  "schema_version": "1.0",
+  "stage": "W08",
+  "started_at_epoch": 1788972250.9818616,
+  "status": "running",
+  "total_outer_folds": 50,
+  "total_runs_in_fold": 13,
+  "updated_at_epoch": 1789042488.8472302
+}

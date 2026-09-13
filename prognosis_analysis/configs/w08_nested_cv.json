@@ -1,0 +1,332 @@
+{
+  "stage": "W08",
+  "status": "implementation_ready_not_run",
+  "frozen_protocol_sha256": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+  "frozen_outer_split_sha256": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+  "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+  "elastic_net_max_iter": 3000,
+  "execution": {
+    "outer_fold_workers": 1,
+    "historical_requested_outer_fold_workers": 2,
+    "formal_effective_outer_fold_workers": 1,
+    "complex_cache_and_parallel_enabled": false,
+    "allowed_outer_fold_workers": [1, 2, 4],
+    "thread_environment": {
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1"
+    },
+    "checkpoint_schema": "w08_outer_fold_checkpoint_v1",
+    "checkpoint_write_policy": "coordinator_atomic_after_each_validated_fold"
+  },
+  "outer_cv": {
+    "folds": 5,
+    "repeats": 10,
+    "total_folds": 50,
+    "stratify_by": "DFS_event",
+    "validation_roles": ["train", "validation"],
+    "fixed_seed_root": 12345
+  },
+  "inner_cv": {
+    "folds": 5,
+    "stratify_by": "DFS_event",
+    "selection_metric": "mean inner-validation Uno C-index",
+    "validation_never_used_for_selection": true
+  },
+  "alpha_grid": [0.1, 0.5, 0.9, 1.0],
+  "lambda_grid": {
+    "values_per_alpha": 100,
+    "scale": "log-spaced from each training-only lambda_max to lambda_max*1e-4",
+    "minimum_ratio": 0.0001,
+    "lambda_max_scope": "each inner-training fit and the outer-training refit",
+    "tie_break": ["larger lambda within 1e-12", "smaller alpha in frozen grid order"]
+  },
+  "ridge_sensitivity": {
+    "family": "pure_ridge_Cox",
+    "alpha": 0,
+    "feature_zero_selection": false,
+    "lambda_scale": "trace(I0)/p at beta=0 using event-normalized observed information in inner-training",
+    "lambda_relative_grid": {
+      "count": 100,
+      "from": "1e4",
+      "to": "1e-4",
+      "spacing": "logarithmic"
+    },
+    "lambda_max_scope": "inner-training-only ridge reference and outer-training refit",
+    "selection_scope": "outer-training_inner_5fold_only",
+    "selection_metric": "mean_inner_validation_Uno_C_index",
+    "tie_break": "larger_lambda_within_1e-12",
+    "nonpositive_lambda_ref": "hard_fail",
+    "outer_validation_used_for_lambda": false
+  },
+  "models": ["M0", "M1", "M2", "M3L", "M3H", "M4", "M5"],
+  "fixed_runs": [
+    {"run_id": "M0", "model_id": "M0", "population": "main"},
+    {"run_id": "M1", "model_id": "M1", "population": "main"},
+    {"run_id": "M2", "model_id": "M2", "population": "main"},
+    {"run_id": "M0_W_available", "model_id": "M0", "population": "W_available"},
+    {"run_id": "M5", "model_id": "M5", "population": "W_available"},
+    {"run_id": "M2_R_low", "model_id": "M2", "population": "R_low"},
+    {"run_id": "M3L", "model_id": "M3L", "population": "R_low"},
+    {"run_id": "M2_R_high", "model_id": "M2", "population": "R_high"},
+    {"run_id": "M3H", "model_id": "M3H", "population": "R_high"},
+    {"run_id": "M2_dual_radiomics", "model_id": "M2", "population": "dual_radiomics"},
+    {"run_id": "M3L_dual_radiomics", "model_id": "M3L", "population": "dual_radiomics"},
+    {"run_id": "M3H_dual_radiomics", "model_id": "M3H", "population": "dual_radiomics"},
+    {"run_id": "M4", "model_id": "M4", "population": "dual_radiomics"}
+  ],
+  "fixed_sensitivity_runs": [
+    {"run_id": "M0-R", "model_id": "M0", "population": "main"},
+    {"run_id": "M1-R", "model_id": "M1", "population": "main"},
+    {"run_id": "M2-R", "model_id": "M2", "population": "main"}
+  ],
+  "penalty_semantics": {
+    "M0": {
+      "model": "M0",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M1": {
+      "model": "M1",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2": {
+      "model": "M2",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M3L": {
+      "model": "M3L",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_low"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M3H": {
+      "model": "M3H",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_high"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M4": {
+      "model": "M4",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_low", "R_high"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M0_W_available": {
+      "model": "M0_W_available",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M5": {
+      "model": "M5",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "W"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2_R_low": {
+      "model": "M2_R_low",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2_R_high": {
+      "model": "M2_R_high",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2_dual_radiomics": {
+      "model": "M2_dual_radiomics",
+      "family": "Cox_PH_unpenalized",
+      "penalized_blocks": [],
+      "penalty_semantics": "unpenalized Breslow Cox PH coefficient vector",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M3L_dual_radiomics": {
+      "model": "M3L_dual_radiomics",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_low"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M3H_dual_radiomics": {
+      "model": "M3H_dual_radiomics",
+      "family": "Elastic_Net_Cox",
+      "penalized_blocks": ["C", "G", "R_high"],
+      "penalty_semantics": "joint Elastic Net on the complete preprocessed coefficient vector; no block is exempt",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M0-R": {
+      "model": "M0-R",
+      "family": "pure_ridge_Cox",
+      "penalized_blocks": ["C"],
+      "penalty_semantics": "pure L2 ridge on every preprocessed coefficient in penalized_blocks",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M1-R": {
+      "model": "M1-R",
+      "family": "pure_ridge_Cox",
+      "penalized_blocks": ["C", "H_high_fraction"],
+      "penalty_semantics": "pure L2 ridge on every preprocessed coefficient in penalized_blocks",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    },
+    "M2-R": {
+      "model": "M2-R",
+      "family": "pure_ridge_Cox",
+      "penalized_blocks": ["C", "G"],
+      "penalty_semantics": "pure L2 ridge on every preprocessed coefficient in penalized_blocks",
+      "intercept_semantics": "no explicit intercept; Cox baseline hazard is unpenalized"
+    }
+  },
+  "model_populations": {
+    "main": ["M0", "M1", "M2"],
+    "W_available": ["M5"],
+    "R_low": ["M3L"],
+    "R_high": ["M3H"],
+    "dual_radiomics": ["M4"]
+  },
+  "extractability_state": {
+    "source": "P3B",
+    "fields": [
+      "R_low_voxel_count", "R_high_voxel_count", "R_low_state", "R_high_state",
+      "R_low_structurally_defined", "R_high_structurally_defined",
+      "R_low_technically_extractable", "R_high_technically_extractable"
+    ],
+    "minimumROISize": 10,
+    "states": {
+      "structural_absence": "voxel_count == 0",
+      "technical_small_roi": "1 <= voxel_count < 10",
+      "extractable": "voxel_count >= 10"
+    },
+    "zero_is_distinct_from_one_to_nine": true,
+    "eligibility_stage": "after_provider_transform_before_any_preprocessing"
+  },
+  "paired_comparators": [
+    {
+      "comparison_id": "M2_R_low_vs_M3L",
+      "comparator_run": "M2_R_low",
+      "radiomics_run": "M3L",
+      "population": "R_low"
+    },
+    {
+      "comparison_id": "M2_R_high_vs_M3H",
+      "comparator_run": "M2_R_high",
+      "radiomics_run": "M3H",
+      "population": "R_high"
+    },
+    {
+      "comparison_id": "M2_dual_vs_M3L",
+      "comparator_run": "M2_dual_radiomics",
+      "radiomics_run": "M3L_dual_radiomics",
+      "population": "dual_radiomics"
+    },
+    {
+      "comparison_id": "M2_dual_vs_M3H",
+      "comparator_run": "M2_dual_radiomics",
+      "radiomics_run": "M3H_dual_radiomics",
+      "population": "dual_radiomics"
+    },
+    {
+      "comparison_id": "M2_dual_vs_M4",
+      "comparator_run": "M2_dual_radiomics",
+      "radiomics_run": "M4",
+      "population": "dual_radiomics"
+    }
+  ],
+  "coverage_schema": {
+    "unit": "model_run_outer_repeat_fold",
+    "required_fields": [
+      "validation_opportunities", "valid_predictions", "effective_n",
+      "training_eligible_n", "validation_model_state_counts",
+      "validation_block_state_counts"
+    ],
+    "paired_same_coverage": true,
+    "paired_same_boundary": true
+  },
+  "provenance": {
+    "population_source": "prognosis_analysis/output/A_modeling/A_modeling_population.csv",
+    "outer_split_source": "prognosis_analysis/output/outer_splits_A.csv",
+    "W07A_protocol_sha256": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+    "W06_population_binding": "reused from w07_outer_splits.py code lock",
+    "R_low_candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high_candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+    "B_data_read": false,
+    "patient_level_outputs_written": false
+  },
+  "output_schema": {
+    "predictions": "prognosis_analysis/configs/w08_results_schema.json#predictions",
+    "fold_results": "prognosis_analysis/configs/w08_results_schema.json#fold_results",
+    "selection_results": "prognosis_analysis/configs/w08_results_schema.json#selection_results",
+    "patient_level_outputs_written": false,
+    "additional_in_memory_columns": {
+      "predictions": [
+        "outer_training_id_hash", "outer_validation_id_hash",
+        "paired_comparison_ids"
+      ],
+      "fold_results": [
+        "outer_training_id_hash", "outer_validation_id_hash",
+        "W07A_protocol_sha256",
+        "eligible_population_id_hash", "coverage",
+        "validation_opportunities", "valid_predictions", "effective_n",
+        "training_opportunities", "training_eligible_n",
+        "coverage_model_state_counts", "coverage_block_state_counts",
+        "validation_structural_absence",
+        "validation_technical_small_roi_unavailable",
+        "paired_comparison_ids", "paired_comparator_run_ids",
+        "paired_training_id_hash", "paired_validation_id_hash",
+        "paired_boundary", "outer_validation_used_for_boundary_fit",
+        "outer_validation_used_for_eligibility_threshold_learning",
+        "eligibility_before_preprocessing"
+      ],
+      "selection_results": [
+        "outer_training_id_hash", "outer_validation_id_hash",
+        "W07A_protocol_sha256",
+        "paired_comparison_ids", "paired_comparator_run_ids",
+        "validation_opportunities", "valid_predictions", "effective_n",
+        "outer_validation_used_for_boundary_fit",
+        "outer_validation_used_for_eligibility_threshold_learning"
+      ]
+    }
+  },
+  "audit_schema": {
+    "path": "prognosis_analysis/configs/w08_audit_schema.json",
+    "required_provenance": [
+      "training_id_hash",
+      "validation_id_hash",
+      "outer_split_hash",
+      "W04_protocol_sha256",
+      "W07A_protocol_sha256",
+      "fold_kmeans_seed",
+      "model_solver_seed",
+      "R_low_candidate_hash",
+      "R_high_candidate_hash"
+    ],
+    "required_isolation_flags": [
+      "outer_validation_used_for_selection",
+      "outer_validation_used_for_boundary_fit",
+      "outer_validation_used_for_eligibility_threshold_learning",
+      "eligibility_before_preprocessing",
+      "B_data_read",
+      "B_reader_invoked",
+      "B_source_opened",
+      "B_statistics_generated"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "B_data_read": false,
+  "core_scientific_artifacts_match_original_lock": true,
+  "freeze_preflight_csv_sha256": "f0e9a2e339c8b34a3c5ea486ba3ba0da8a2bc443a13eeb5bca8519b1eb3131d8",
+  "freeze_preflight_md_sha256": "3cf68ba988e0f521ee37a927b3ff00aee2032084b022b2203903524072867ee7",
+  "freeze_qc_sha256": "6887ad00ec8bed586f407df9b2d1c38085b474c60e8ba6f63508458c71c45444",
+  "original_freeze_lock_sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262",
+  "outcome_used_to_modify_technical_method": false,
+  "scientific_parameters_changed": false,
+  "technical_freeze_regenerated": false,
+  "verification_commit": "a7592171ad8f519471378e974ff80a501925219d",
+  "verification_timestamp": "2026-09-04T17:18:09Z"
+}

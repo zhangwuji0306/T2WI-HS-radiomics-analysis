@@ -1,0 +1,27 @@
+prognosis_analysis/scripts/w08_formal_run_a.py:225: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead.  To get a de-fragmented frame, use `newframe = frame.copy()`
+  data["split"] = "A"
+prognosis_analysis/scripts/w08_formal_run_a.py:226: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead.  To get a de-fragmented frame, use `newframe = frame.copy()`
+  data["technical_cohort"] = "A393"
+Traceback (most recent call last):
+  File "prognosis_analysis/scripts/w08_formal_run_a.py", line 745, in <module>
+    main()
+  File "prognosis_analysis/scripts/w08_formal_run_a.py", line 741, in main
+    formal(args.output_root)
+  File "prognosis_analysis/scripts/w08_formal_run_a.py", line 708, in formal
+    result = w08.run_w08(frame, provider)
+  File "<LOCAL_PATH>", line 2949, in run_w08
+    lambda_count=LAMBDA_COUNT, population=population)
+  File "<LOCAL_PATH>", line 2669, in run_w08_in_memory
+    train_repr = _normalise_frame(provider.transform(outer_train_ids, state))
+  File "prognosis_analysis/scripts/w08_formal_run_a.py", line 514, in transform
+    cache[identifier] = self._transform_one(identifier, state)
+  File "prognosis_analysis/scripts/w08_formal_run_a.py", line 499, in _transform_one
+    row.update(self._radiomics_for_mask(image, high_image_mask, "R_high"))
+  File "prognosis_analysis/scripts/w08_formal_run_a.py", line 434, in _radiomics_for_mask
+    result = self._extractor.execute(image, mask)
+  File "<LOCAL_PATH>", line 276, in execute
+    boundingBox, correctedMask = imageoperations.checkMask(image, mask, **_settings)
+  File "<LOCAL_PATH>", line 274, in checkMask
+    raise ValueError('Size of the ROI is too small (minimum size: %g, ROI size: %g' % (minSize, roiSize))
+ValueError: Size of the ROI is too small (minimum size: 10, ROI size: 10
+ERROR conda.cli.main_run:execute(148): `conda run python prognosis_analysis/scripts/w08_formal_run_a.py` failed. (See above for error)

@@ -1,0 +1,52 @@
+{
+  "B_access": {
+    "B_data_read": false,
+    "B_reader_invoked": false,
+    "B_source_opened": false,
+    "B_statistics_generated": false
+  },
+  "checks": {
+    "B_access_flags": {
+      "status": "PASS"
+    },
+    "G3_release_certificate": {
+      "status": "PASS"
+    },
+    "P4R_provenance_reconciliation": {
+      "status": "PASS"
+    },
+    "W05_access_boundary": {
+      "status": "PASS"
+    },
+    "W08_configuration": {
+      "status": "PASS"
+    },
+    "clean_worktree": {
+      "status": "PASS"
+    },
+    "code_commit": {
+      "status": "PASS"
+    },
+    "execution_status": {
+      "status": "PASS"
+    },
+    "frozen_W03_W04_W07_W07A_bindings": {
+      "status": "PASS"
+    },
+    "model_freeze_absent": {
+      "status": "PASS"
+    },
+    "prior_attempts_reconciled": {
+      "status": "PASS"
+    },
+    "technical_freeze": {
+      "status": "PASS"
+    }
+  },
+  "code_commit": "88ffcda16b8ba16324f6824637490d5bc1652ef8",
+  "failure_reasons": [],
+  "final_outputs_generated": false,
+  "formal_authorized": true,
+  "stage": "W08_FORMAL_RELEASE",
+  "status": "PASS"
+}

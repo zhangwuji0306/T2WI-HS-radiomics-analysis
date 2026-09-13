@@ -1,0 +1,35 @@
+{
+  "random_seed": 12345,
+  "scales_mm": [
+    4.0,
+    6.0,
+    8.0
+  ],
+  "cluster_k": [
+    2,
+    3
+  ],
+  "main_spacing_mm": [
+    1.0,
+    1.0,
+    2.0
+  ],
+  "isotropic_spacing_mm": [
+    2.0,
+    2.0,
+    2.0
+  ],
+  "n4_enabled": true,
+  "n4_downsample_factor": 2.0,
+  "roi_perturbation_voxels": 1,
+  "roi_perturbation_axes": [
+    1,
+    1,
+    0
+  ],
+  "bin_width": 0.248808,
+  "slic_iterations": 5,
+  "slic_spatial_weight": 10.0,
+  "slic_work_units": 1,
+  "max_supervoxels_per_case_for_fit": 2000
+}

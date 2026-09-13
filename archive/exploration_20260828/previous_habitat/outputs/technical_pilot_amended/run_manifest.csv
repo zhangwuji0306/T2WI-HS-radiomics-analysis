@@ -1,0 +1,2 @@
+strategy,n_selected_A_same_sequence_pairs,n_metric_rows,variants,scales_mm,K_values,elapsed_seconds,outcome_columns_read,B_data_read,technical_gate_decision
+amended_patient_relative,18,324,patient_k2_1x1x2;patient_k2_isotropic_2x2x2;patient_k2_n4_1x1x2;patient_k2_roi_dilate1;patient_k2_roi_erode1;patient_otsu_1x1x2,4.0;6.0;8.0,2,887.601,False,False,pending_manual_qc

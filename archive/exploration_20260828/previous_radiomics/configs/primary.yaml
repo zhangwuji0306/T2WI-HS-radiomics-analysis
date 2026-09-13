@@ -1,0 +1,61 @@
+analysis_version: v2_continuous_nested
+freeze_date: 2026-08-27
+seed: 12345
+
+endpoint:
+  name: DFS
+  time: DFS_time
+  event: DFS_event
+  horizons_years: [1, 3, 5]
+
+split:
+  development: A
+  external_validation: B
+  external_validation_locked: true
+
+clinical_variables:
+  - age
+  - cea_log
+  - mrt_ord
+  - mrn_ord
+  - mrf
+  - mremvi
+  - thickness_mm
+  - eid_mm
+  - biopsy_non_adenocarcinoma
+excluded_from_primary: [sex, length_mm, distance_mm, neoadjuvant, non_lar]
+
+radiomics:
+  combo: muscle_f0.25
+  candidate_source: output/qc/stage6_v2/muscle_f0.25/candidate_features.csv
+  variance_threshold: 1.0e-8
+  correlation_threshold: 0.90
+  correlation_scope: all_feature_families_combined
+  correlation_priority: higher_ICC_then_lexicographic
+
+imputation:
+  engine: mice
+  m: 20
+  maxit: 20
+  continuous_method: pmm
+  binary_method: logreg
+  fit_inside_outer_training_fold: true
+  validation_outcomes_available_to_imputer: false
+  external_outcomes_available_to_imputer: false
+  outcome_assisted_training_imputation: true
+
+validation:
+  outer_folds: 5
+  outer_repeats: 50
+  inner_folds: 5
+  stratify_by_event: true
+  shared_splits_across_models: true
+  lambda_primary: lambda.1se
+  lambda_sensitivity: lambda.min
+
+reporting:
+  resampling_summary: median_IQR
+  confidence_interval: patient_level_paired_bootstrap
+  bootstrap_replicates: 1000
+  risk_groups: exploratory_A_tertiles
+  dca_threshold_range: [0.0, 0.5]

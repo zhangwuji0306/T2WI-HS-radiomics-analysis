@@ -1,0 +1,2 @@
+n_selected_A_same_sequence_pairs,n_metric_rows,variants,scales_mm,K_values,elapsed_seconds,outcome_columns_read,B_data_read,technical_gate_decision
+18,540,isotropic_2x2x2;n4_1x1x2;primary_1x1x2;roi_dilate1;roi_erode1,4.0;6.0;8.0,2;3,694.063,False,False,not_performed

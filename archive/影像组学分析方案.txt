@@ -1,0 +1,203 @@
+# 基于 T2 加权 MRI 的影像组学特征提取最终方案
+
+## 一、研究背景与数据说明
+
+- **序列**：全部为 T2 加权成像（T2-weighted MRI），每例患者仅一个序列。
+- **图像与 ROI**：NRRD 格式，ROI 包含肿瘤、脂肪、肌肉三种标签，本研究仅关注肿瘤区域（标签值假设为 1，需确认）。
+- **数据特点**：不同患者间层厚、平面分辨率、扫描方向（斜轴位、轴位、冠位）不一致。
+
+---
+
+## 二、环境配置
+
+使用 Conda 建立独立环境，并锁定版本以保证可重复性。
+
+```yaml
+name: t2_radiomics
+channels:
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - pip:
+    - numpy==1.23.5
+    - pyradiomics==3.0.1
+    - SimpleITK==2.2.1
+    - pandas
+    - scipy
+    - scikit-learn
+    - matplotlib
+    - pyyaml
+```
+
+- 推荐将环境导出为 `environment.yml`。
+- PyRadiomics 3.0.1 特征公式符合 IBSI 标准。
+
+---
+
+## 三、预处理流程（外部处理，PyRadiomics 仅负责特征计算）
+
+### 3.1 数据读取与检查
+
+- 使用 SimpleITK 读取 NRRD 图像和 ROI 文件。
+- **几何一致性检查**：
+  - 比较图像与 ROI 的 `size`、`spacing`、`origin`、`direction`，使用 `np.allclose` 确保完全一致，否则终止并报错。
+- **确认肿瘤标签值**：检查 ROI 的唯一标签，确定肿瘤对应值（假设为 1）。
+
+### 3.2 生成肿瘤二值掩膜
+
+从多标签 ROI 中提取肿瘤区域，生成二值掩膜（肿瘤=1，其他=0），并保持原几何信息。
+
+```python
+def extract_tumor_mask(roi, tumor_label=1):
+    roi_array = sitk.GetArrayFromImage(roi)
+    tumor_array = (roi_array == tumor_label).astype(np.uint8)
+    tumor_mask = sitk.GetImageFromArray(tumor_array)
+    tumor_mask.CopyInformation(roi)
+    return tumor_mask
+```
+
+### 3.3 偏置场校正（N4ITK）
+
+- **位置**：在**原始分辨率下**进行，早于重采样。原因：N4 估计低频偏置场，原始数据信息最完整，重采样后再校正可能丢失细节。
+- **掩膜**：使用肿瘤二值掩膜限定估计区域，避免背景影响。
+- 实现：`sitk.N4BiasFieldCorrectionImageFilter`，输入浮点图像和掩膜。
+
+### 3.4 方向重定向（Reorientation）
+
+- 目标方向统一为 **RAS**（Right-Anterior-Superior，轴位标准方向）或 RAI（通常 SimpleITK 默认方向）。
+- 若原始方向为斜轴位，需通过重采样实现方向转换，重采样时设置目标方向矩阵为单位阵（RAI）。
+- 注意：此步骤可与重采样合并执行（见下一步）。
+
+### 3.5 重采样至统一体素间距
+
+- **间距选择**：根据原始层厚分布决定。
+  - 若多数层厚 ≤ 3 mm，推荐 `[1,1,1] mm`。
+  - 若多数层厚 3～6 mm，推荐 `[1,1,2] mm` 或 `[1,1,3] mm`，避免 z 方向过度插值。
+  - 建议先统计所有患者的 `spacing[2]` 分布，选择中位数或接近中位数的值。
+- **插值方法**：图像用 `sitk.sitkBSpline`（或线性），掩膜用 `sitk.sitkNearestNeighbor`。
+- **实现**：创建目标几何（原点、方向、间距、尺寸），使用 `ResampleImageFilter` 分别重采样图像和掩膜。
+- 重采样后再次检查图像与掩膜的几何一致性。
+
+### 3.6 ROI 裁剪（Bounding Box）
+
+- 目的：减小计算量、避免背景干扰、加速后续处理。
+- 方法：利用肿瘤掩膜计算边界框，使用 `LabelShapeStatisticsImageFilter` 获取肿瘤区域的 `BoundingBox`，将图像和掩膜裁剪到该区域周围适当扩展（例如每边扩展 5 体素）。
+- 注意：裁剪后图像和掩膜的空间信息需同步更新（原点、方向、间距保持不变，尺寸改变）。
+
+### 3.7 强度标准化（Z-score 基于肿瘤 ROI）
+
+- 使用肿瘤 ROI 内的体素计算均值 μ 和标准差 σ，对**整个图像**（或裁剪后图像）进行 Z-score 变换：
+  \[
+  I' = \frac{I - \mu_{\text{ROI}}}{\sigma_{\text{ROI}}}
+  \]
+- 优点：减少扫描间差异，突出肿瘤内部异质性，适合 T2 加权 MRI。
+- 实现：手动计算并生成标准化图像，关闭 PyRadiomics 内置标准化。
+
+---
+
+## 四、影像组学特征提取（PyRadiomics）
+
+### 4.1 参数配置文件（YAML）
+
+创建 `radiomics_params.yaml`，便于记录和论文复现。
+
+```yaml
+# 适用于 T2 MRI，已外部重采样、标准化、裁剪
+imageType:
+  Original: {}
+  # 后续可逐步添加 Wavelet: {}, LoG: {'sigma': [1.0, 2.0, 3.0]}
+
+featureClass:
+  firstorder: []
+  shape: []
+  glcm: []
+  glrlm: []
+  glszm: []
+  gldm: []
+  ngtdm: []
+
+setting:
+  # 外部已重采样，关闭内部重采样
+  resampledPixelSpacing: []
+  # 外部已标准化，关闭内部标准化
+  normalize: False
+  # 插值器设置（仅内部重采样时有效，但可保留）
+  interpolator: 'sitkBSpline'
+  maskInterpolator: 'sitkNearestNeighbor'
+  # 灰度离散化：固定 bin 宽度（Z-score 后推荐）
+  binWidth: 0.25
+  # 若使用固定 bin 数可改为 binCount: 64
+  # 其他设置
+  padDistance: 0
+  minimumROIDimensions: 2
+  minimumROISize: 10
+  label: 1
+```
+
+- **binWidth 选择**：标准化后强度集中在 [-3, 3] 左右，采用固定 bin 宽度 0.25 可保证跨患者特征可比性，符合 IBSI 建议。可进行敏感性分析（如 0.1、0.5 或 binCount=32/64）。
+- **滤波器**：第一阶段仅使用 `Original`，验证流程后再添加 `Wavelet` 和 `LoG`。
+
+### 4.2 批量提取
+
+- 循环处理每例患者，依次执行预处理步骤，获得标准化图像和肿瘤掩膜。
+- 使用 `extractor.execute(image, mask)` 提取特征。
+- 将所有特征存入列表，最后合并为 pandas DataFrame。
+- **删除非特征列**：移除所有以 `diagnostics_` 开头的列，仅保留特征列（如 `original_`、`wavelet_` 等）。
+- 保存为 CSV 文件。
+
+---
+
+## 五、质量控制与后续分析建议
+
+### 5.1 特征质控
+
+- **检查缺失值**：若 ROI 过小导致某些纹理特征无法计算，会产生 NaN，需记录或剔除。
+- **可重复性分析**：如有重复扫描数据，计算特征 ICC，保留 ICC > 0.75 的特征。
+- **方差与相关性**：去除近零方差特征和高相关特征（如 r > 0.9）。
+- **标准化特征**：将特征缩放至零均值单位方差（z-score）后用于建模。
+
+### 5.2 建模初步建议
+
+- 样本量较少时，使用 LASSO 或 Elastic Net 进行特征选择，避免过拟合。
+- 采用交叉验证评估模型性能，报告 AUC 或 C-index。
+- 若考虑多序列影像组学，本方案基于单一序列 T2，可直接用于后续研究；若未来纳入其他序列，需分别处理并独立建模。
+
+---
+
+## 六、最终 Pipeline 总结
+
+```
+NRRD (T2 + ROI)
+      │
+      ├─ 读取与几何检查
+      │
+      ├─ 生成肿瘤二值掩膜
+      │
+      ├─ N4 偏置场校正（原始空间）
+      │
+      ├─ 重定向至 RAI（与重采样结合）
+      │
+      ├─ 重采样至目标间距（如 1×1×2 mm）
+      │
+      ├─ ROI 裁剪（bounding box + margin）
+      │
+      ├─ 基于肿瘤 ROI 的 Z-score 标准化
+      │
+      ├─ PyRadiomics 特征提取（YAML 参数，固定 binWidth=0.25）
+      │
+      └─ 特征质控 → 特征选择 → 建模
+```
+
+---
+
+## 七、注意事项
+
+- **层厚统计**：应在项目开始前统计所有患者原始层厚，以确定合适的重采样间距。
+- **方向统一**：重采样时同时完成方向统一，避免单独重定向造成额外插值。
+- **标准化范围**：基于肿瘤 ROI 的 Z-score 是对整个图像进行变换，并非仅变换肿瘤区域。
+- **裁剪边界**：裁剪时保留少量背景组织（如 5 体素），避免边缘效应。
+- **版本锁定**：所有依赖包版本固定，确保特征可重复。
+- **参数记录**：所有预处理和 PyRadiomics 参数写入 YAML 文件，并作为论文补充材料。
+
+此方案综合考虑了 MRI 影像组学的标准化要求、数据特点及工程实践，可作为 T2 加权 MRI 影像组学研究的稳健基础。

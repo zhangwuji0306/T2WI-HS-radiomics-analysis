@@ -1,0 +1,81 @@
+{
+  "A137_id_hash": "e876e2b29cb96ebb25cfdf5f13a7e97ec78ad753498e683bbb160996c3f9d7db",
+  "A393_id_hash": "5fd90ac407400d59f4a8ae5f1d492de99b6b0e12eb62ff9bdb33800d9884afe3",
+  "A_outcome_unlock": true,
+  "B_data_read": false,
+  "B_unlock": false,
+  "analysis_id": "habitat_cross_case_kmeans_k2_4mm",
+  "artifact_paths": {
+    "A137_id_hash": {
+      "column": "影像号",
+      "kind": "id_hash",
+      "path": "output/technical_cohort_manifest/cohort_A_strict.csv"
+    },
+    "A393_id_hash": {
+      "column": "影像号",
+      "kind": "id_hash",
+      "path": "output/technical_cohort_manifest/cohort_A_lenient.csv"
+    },
+    "feature_dictionary_hash": "feature_dictionary.md",
+    "feature_qc_hash": "output/habitat_features_A/feature_qc.csv",
+    "formal_bootstrap_summary_hash": "output/bootstrap_stability_A_post_slic_fix/formal/bootstrap_stability_summary.csv",
+    "global_descriptors_hash": "output/habitat_features_A/global_descriptors_full_A.csv",
+    "habitat_map_manifest_hash": {
+      "kind": "habitat_map_manifest",
+      "map_root": "output/habitat_maps_A",
+      "path": "output/habitat_maps_A_manifest.csv"
+    },
+    "high_signal_screen_hash": [
+      "output/high_signal_eligibility_audit/lenient_screening_decisions.csv",
+      "output/high_signal_eligibility_audit/recommended_screening_decisions.csv"
+    ],
+    "manifest_hash": "../feature_extract/output/manifest.csv",
+    "preprocessing_config_hash": "../feature_extract/configs/radiomics_params.yaml",
+    "scanner_map_hash": "../feature_extract/output/scanner_map.csv",
+    "slic_config_hash": "configs/main_cross_case_kmeans_k2_4mm.json",
+    "threshold_audit_hash": "output/high_signal_threshold_audit/outcome_blind_threshold_audit.md",
+    "threshold_confounding_audit_hash": "output/high_signal_threshold_audit/technical_confounding_decomposition.md"
+  },
+  "bootstrap_completed": 1000,
+  "bootstrap_completion_status": "complete",
+  "bootstrap_mode": "formal",
+  "bootstrap_operational_pass": 1,
+  "bootstrap_requested": 1000,
+  "bootstrap_success": 1000,
+  "eligibility_threshold_fraction": 0.001,
+  "eligibility_threshold_role": "minimum_imaging_presence",
+  "feature_dictionary_hash": "e8b5b181cd977a548c6fcff5fcbbc534be2f830b347fae589fcb38ebaf0429db",
+  "feature_qc_hash": "ed86c4c054c5ed509dfc66f2a3517f906e6bfdf65d03f5135a813ef93d7b8d2f",
+  "formal_bootstrap_summary_hash": "c6ca8e3faedec42aeebc58eb9880c2e520294356f2e9c019bc8952d84b96bb5a",
+  "formal_eligible": 1,
+  "freeze_schema_version": "1.0",
+  "freeze_timestamp": "2026-08-31T16:59:01+00:00",
+  "git_commit": "e1b21134dd5e5a4df6befb1d6f7ecab2e84cb1fb",
+  "global_boundary_b": 2.810673745507046,
+  "global_center_high": 3.519630201535477,
+  "global_center_low": 2.1017172894786142,
+  "global_descriptors_hash": "5bcbd9a79764518b1f66142f72dbde386096a1f223d163ed744bf5b658c36011",
+  "habitat_map_manifest_hash": "8c0fd7ed6ee3cfcb68cc4602e16be03b726e26c3d683a5274ea8f629d856ea3a",
+  "habitat_technical_freeze": true,
+  "high_signal_screen_hash": "60006df08b0c3a3688f6cff0a58f21c6d69685ea16190ae1f1eba7b1e9d9bd04",
+  "manifest_hash": "bb13c69fa903744b7ef08887eb982518b98511310050edce1061f236279b5120",
+  "outcome_columns_read": false,
+  "preprocessing_config_hash": "5cad11c0c3671148e1d16a23b77263fbbcc7470c2e42bd28a8077bab60e058e9",
+  "scanner_map_hash": "25f9aee2a08768cde229584dabce0a6f365de3cb918beb97b7c24228f55d35f7",
+  "slic_actual_supergrid_mm_xyz": [
+    4.0,
+    4.0,
+    4.0
+  ],
+  "slic_config_hash": "fc2f856b3bc3fcd3d358f4476fd87a8117568712b3fc382c5e24e315e976bb3f",
+  "slic_supergrid_voxels_xyz": [
+    4,
+    4,
+    2
+  ],
+  "technical_failure_case_hash": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+  "threshold_audit_conclusion": "NEUTRAL_WITH_TECHNICAL_CAUTION",
+  "threshold_audit_hash": "35960cf3ed8e84a5a89c2c48c082ba9df0c84ed1add348c9c75e2750e8117fa2",
+  "threshold_confounding_audit_hash": "20b98e15fa9d632a9eb3ac1e7eae48e9343f8e2ae5c815d640b03bc7aff5d33a",
+  "threshold_selection_performed": false
+}

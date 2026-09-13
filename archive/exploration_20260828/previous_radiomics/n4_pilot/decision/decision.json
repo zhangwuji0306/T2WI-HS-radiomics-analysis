@@ -1,0 +1,48 @@
+{
+  "decision": "不重启（证据不足或存在退化风险）",
+  "deflag_rate": 0.0,
+  "deflag_ci": [
+    -1.3877787807814457e-17,
+    0.113517091390478
+  ],
+  "med_cv_before": 0.2541618197770238,
+  "med_cv_after": 0.2541614017151055,
+  "cv_delta_median": -2.3518444528941584e-06,
+  "med_grad_before": 1.0788559222545833,
+  "med_grad_after": 1.0787380717429726,
+  "grad_delta_median": -5.749748295995338e-05,
+  "mu_ratio_median": 1.0000382624060018,
+  "p50_dist_before": 107.99044032066874,
+  "p50_dist_after": 100.80592734289255,
+  "mr750_med_cv_after": 0.256810423529703,
+  "icc": [
+    {
+      "norm": "muscle",
+      "n": 107,
+      "pass_before": 50,
+      "pass_after": 53,
+      "mean_before": 0.7149614157606365,
+      "mean_after": 0.7195851980302443,
+      "median_before": 0.7442170545138365,
+      "median_after": 0.7435556323002962
+    },
+    {
+      "norm": "zscore",
+      "n": 107,
+      "pass_before": 22,
+      "pass_after": 32,
+      "mean_before": 0.6226640308022091,
+      "mean_after": 0.6718426582165058,
+      "median_before": 0.6464853592821048,
+      "median_after": 0.6734033303536329
+    }
+  ],
+  "rerun_hours": 8.556092757439783,
+  "n4_sec": "6.2（中位 5.0，最大 52.7）",
+  "criteria": {
+    "c1": false,
+    "c2": true,
+    "c3": true,
+    "c4": true
+  }
+}

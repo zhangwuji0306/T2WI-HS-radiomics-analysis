@@ -1,0 +1,18 @@
+{
+  "B_data_read": false,
+  "B_reader_invoked": false,
+  "B_source_opened": false,
+  "B_statistics_generated": false,
+  "attempt_id": "attempt_1788767255363180_2b9b67ce07e0",
+  "code_commit": "c8e3da270d148cbead8913ed511be86c06df911f",
+  "code_commit_at_attempt": "c8e3da270d148cbead8913ed511be86c06df911f",
+  "ended_at_epoch": 1788854822.149354,
+  "exception_class": "RuntimeError",
+  "failure_reason": "external execution session interrupted before formal W08 result writing",
+  "failure_stage": "external_execution_interruption",
+  "final_outputs_generated": false,
+  "formal_run": true,
+  "stage": "W08",
+  "started_at_epoch": 1788767229.8199716,
+  "status": "failed"
+}

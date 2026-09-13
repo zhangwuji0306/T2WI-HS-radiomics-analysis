@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "status": "DEIDENTIFIED_FOR_PUBLICATION",
+  "source_file_count": 7702,
+  "published_file_count": 7613,
+  "excluded_cache_or_temp_count": 91,
+  "identifier_replacement_count": 111287,
+  "unknown_identifier_replacement_count": 1,
+  "local_path_replacement_count": 611,
+  "roi_review_headers_redrawn": 44,
+  "largest_file_bytes": 39227158,
+  "private_mapping_included": false,
+  "patient_level_archive": true
+}

@@ -1,0 +1,31 @@
+{
+  "B_data_read": false,
+  "analysis_id": "w02_habitat_specific_original_radiomics_A",
+  "bin_width_reestimated": false,
+  "clinical_data_read": false,
+  "config_sha256": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f",
+  "created_at_epoch": 1788198081.4855862,
+  "diagnostic_count_per_block": 22,
+  "feature_classes": [
+    "firstorder",
+    "shape",
+    "glcm",
+    "glrlm",
+    "glszm",
+    "gldm",
+    "ngtdm"
+  ],
+  "feature_count_per_block": 107,
+  "habitat_map_manifest_sha256": "8c0fd7ed6ee3cfcb68cc4602e16be03b726e26c3d683a5274ea8f629d856ea3a",
+  "input_scope": "W01_frozen_muscle_normalized_T2WI_tumor_ROI_and_SLIC_labels",
+  "outcome_blind": true,
+  "outcome_columns_read": false,
+  "pyradiomics_version": "v3.0.1",
+  "re_normalization": false,
+  "re_resampling": false,
+  "reader": "R1",
+  "stage": "W02",
+  "target_cases": 393,
+  "technical_cohort_manifest_sha256": "b623de811c2514a17b6306fd88d75d1af861e213ac19a3b32d6ebad3be741c7f",
+  "technical_freeze_lock_sha256": "0388b8372a737cfaca7f8e9989aad68d63d7176a3fb93477b83c96f377001262"
+}

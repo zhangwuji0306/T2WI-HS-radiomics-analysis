@@ -1,0 +1,32 @@
+{
+  "method": "PyRadiomics固定箱宽；binWidth=f×σ_A；min/max仅作A参考范围；不裁剪B",
+  "n_cases": 530,
+  "f_values": [
+    0.1,
+    0.25
+  ],
+  "main": {
+    "normalization": "muscle",
+    "f": 0.25
+  },
+  "arms": {
+    "muscle": {
+      "n_cases": 530,
+      "n_voxels": 6297646,
+      "mean": 2.5237398567409834,
+      "sigma": 0.9952331441058498,
+      "min": -0.10438358038663864,
+      "max": 12.913870811462402,
+      "seconds": 31.9
+    },
+    "zscore": {
+      "n_cases": 530,
+      "n_voxels": 6297646,
+      "mean": -3.343965325723281e-08,
+      "sigma": 1.0000000019073774,
+      "min": -5.586805820465088,
+      "max": 11.800074577331543,
+      "seconds": 34.3
+    }
+  }
+}

@@ -1,0 +1,15 @@
+block,candidate_level,reason,feature_count
+R_high,exploratory_qc,included,0
+R_high,exploratory_qc,ICC_not_above_0.75,12
+R_high,exploratory_qc,exploratory_qc_only,14
+R_high,main,included,7
+R_high,main,ICC_not_above_0.75,68
+R_high,secondary,included,3
+R_high,secondary,ICC_not_above_0.75,15
+R_low,exploratory_qc,included,0
+R_low,exploratory_qc,ICC_not_above_0.75,10
+R_low,exploratory_qc,exploratory_qc_only,14
+R_low,main,included,39
+R_low,main,ICC_not_above_0.75,36
+R_low,secondary,included,10
+R_low,secondary,ICC_not_above_0.75,8

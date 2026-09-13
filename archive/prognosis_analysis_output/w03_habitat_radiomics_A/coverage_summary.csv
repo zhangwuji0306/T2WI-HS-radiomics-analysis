@@ -1,0 +1,5 @@
+reader,block,target_A_cases,reader_input_available_cases,pipeline_success_cases,pipeline_technical_failure_cases,habitat_present_cases,extractable_cases,structural_absence_cases,technical_failure_cases,feature_count,finite_rate_min,finite_rate_median,features_finite_ge_95
+R1,R_low,393,393,393,0,392,391,1,1,107,0.9974489795918368,0.9974489795918368,107
+R1,R_high,393,393,393,0,369,356,24,13,107,0.964769647696477,0.964769647696477,107
+R2,R_low,393,17,17,0,17,17,0,0,107,1.0,1.0,107
+R2,R_high,393,17,17,0,15,15,2,0,107,1.0,1.0,107

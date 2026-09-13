@@ -1,0 +1,16 @@
+{
+  "B_data_read": false,
+  "B_reader_invoked": false,
+  "B_source_opened": false,
+  "B_statistics_generated": false,
+  "P5_technical_preflight": "PASS",
+  "all_paired_populations_equal": true,
+  "all_required_runs_estimable": true,
+  "bindings_verified": true,
+  "completed_fold_units": 50,
+  "frozen_fold_units": 50,
+  "patient_level_outputs_written": false,
+  "performance_generated": false,
+  "stage": "G3",
+  "status": "PASS"
+}

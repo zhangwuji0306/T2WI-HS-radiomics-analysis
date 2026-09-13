@@ -1,0 +1,4306 @@
+"""W08: A-only repeated nested cross-validation pipeline.
+
+The runner is deliberately split into two boundaries:
+
+* :func:`run_w08` opens only the code-bound W06 A population and the code-bound
+  W07 outer-split artifact.  The feature table is supplied in memory by an
+  already-authorized A-only upstream reader.
+* :func:`run_w08_in_memory` performs the fold work.  A
+  :class:`FoldFeatureProvider` must fit a representation on outer-training IDs
+  and then transform training and validation IDs with that immutable state.
+
+No W08 result is written by this module.  This keeps patient-level predictions
+in memory for tests and makes a future formal writer an explicit, separately
+audited action.
+"""
+from __future__ import absolute_import
+
+import argparse
+import concurrent.futures
+import hashlib
+import json
+import math
+import multiprocessing
+import os
+import platform
+import re
+import sys
+import time
+from collections import OrderedDict
+from dataclasses import dataclass, field
+
+# L5 is an execution-layer contract.  These values do not alter any frozen
+# scientific parameter; they only control how already-defined outer folds are
+# scheduled and recovered.  This must run before importing NumPy or any
+# downstream scientific stack because those libraries read the thread caps at
+# import time.
+L5_CHECKPOINT_SCHEMA = "w08_outer_fold_checkpoint_v1"
+L5_CHECKPOINT_VERSION = 1
+L5_CHECKPOINT_WRITE_POLICY = (
+    "coordinator_atomic_after_each_validated_fold")
+L5_ALLOWED_WORKERS = (1, 2, 4)
+# The L5 implementation and its serial/parallel tests retain the historical
+# 2-worker request as a supported execution option.  L6 measured the bounded
+# total probe below the retention threshold, so the current formal contract is
+# explicitly serial and must not enter the complex layer.
+L5_REQUESTED_DEFAULT_OUTER_FOLD_WORKERS = 2
+L5_DEFAULT_OUTER_FOLD_WORKERS = 1
+FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS = 1
+FORMAL_COMPLEX_LAYER_ENABLED = False
+L5_THREAD_ENVIRONMENT = {
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+}
+
+
+def _l5_prepare_worker_environment():
+    for key, value in L5_THREAD_ENVIRONMENT.items():
+        os.environ[key] = value
+
+
+_l5_prepare_worker_environment()
+
+import numpy as np
+import pandas as pd
+from sklearn.cluster import KMeans
+from sklearn.model_selection import StratifiedKFold
+
+SCRIPT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_ROOT not in sys.path:
+    sys.path.insert(0, SCRIPT_ROOT)
+import w07_outer_splits as w07  # noqa: E402
+from w08_kmeans_parameters import (  # noqa: E402
+    KMEANS_PARAMETERS, validate_frozen_kmeans_parameters)
+
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(ROOT)
+DEFAULT_CONFIG = os.path.join(ROOT, "configs", "w08_nested_cv.json")
+DEFAULT_POPULATION = os.path.join(
+    ROOT, "output", "A_modeling", "A_modeling_population.csv")
+DEFAULT_OUTER_SPLITS = os.path.join(ROOT, "output", "outer_splits_A.csv")
+DEFAULT_W07_CONFIG = os.path.join(ROOT, "configs", "w07_outer_splits.json")
+
+# These values are provenance locks, not values which may be replaced by a
+# runtime JSON.  They are copied from the frozen W04/W07 contracts so that a
+# future caller cannot redirect W08 to a different protocol or split plan.
+W04_PROTOCOL_SHA256 = (
+    "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe")
+W07_OUTER_SPLIT_SHA256 = (
+    "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502")
+W07A_PROTOCOL_AMENDMENT_SHA256 = (
+    "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70")
+W07_SPLIT_COLUMNS = ["patient_id", "repeat", "fold", "role", "seed"]
+W08_STATUS = "implementation_ready_not_run"
+
+# P3B is the sole fold-specific radiomics extractability contract consumed by
+# W08.  These fields are emitted by the already-frozen provider; W08 validates
+# them and never reconstructs their values from imputed feature columns.
+MINIMUM_ROI_SIZE = 10
+P3B_EXTRACTABILITY_FIELDS = (
+    "R_low_voxel_count", "R_high_voxel_count", "R_low_state", "R_high_state",
+    "R_low_structurally_defined", "R_high_structurally_defined",
+    "R_low_technically_extractable", "R_high_technically_extractable",
+)
+P3B_STATE_LABELS = {
+    "structural_absence": frozenset(("structurally_absent", "structural_absence")),
+    "technical_small_roi": frozenset((
+        "technically_unextractable_small_ROI", "technical_small_roi")),
+    "extractable": frozenset(("radiomics_extractable", "extractable")),
+}
+P3B_STATE_ORDER = ("structural_absence", "technical_small_roi", "extractable")
+P3B_STATE_DEFINITIONS = OrderedDict((
+    ("structural_absence", "voxel_count == 0"),
+    ("technical_small_roi", "1 <= voxel_count < 10"),
+    ("extractable", "voxel_count >= 10"),
+))
+P3B_COVERAGE_FIELDS = (
+    "validation_opportunities", "valid_predictions", "effective_n",
+    "training_eligible_n", "validation_model_state_counts",
+    "validation_block_state_counts",
+)
+
+ALPHA_GRID = (0.1, 0.5, 0.9, 1.0)
+LAMBDA_COUNT = 100
+LAMBDA_MIN_RATIO = 1e-4
+ELASTIC_NET_MAX_ITER = 3000
+ELASTIC_NET_TOLERANCE = 1e-7
+RIDGE_LAMBDA_COUNT = 100
+RIDGE_LAMBDA_MAX_RATIO = 1e4
+RIDGE_LAMBDA_MIN_RATIO = 1e-4
+CORRELATION_THRESHOLD = 0.90
+HORIZONS_MONTHS = OrderedDict((("3_year", 36.0), ("5_year", 60.0)))
+
+CLINICAL_CONTINUOUS = ["年龄", "CEA_log", "thickness", "EID"]
+CLINICAL_CATEGORICAL = OrderedDict((
+    ("mrT_4级", (1, 2, 3, 4)),
+    ("mrN_3级", (0, 1, 2, 3)),
+))
+CLINICAL_BINARY = ["MRF", "mrEMVI", "活检病理非腺癌"]
+CLINICAL_COLUMNS = (
+    CLINICAL_CONTINUOUS + list(CLINICAL_CATEGORICAL.keys()) + CLINICAL_BINARY)
+GLOBAL_COLUMNS = [
+    "H_high_fraction",
+    "sv_median_minus_boundary",
+    "sv_IQR",
+    "interface_density",
+    "H_high_largest_component_tumor_fraction",
+    "H_high_radial_burden",
+]
+
+MODEL_SPECS = OrderedDict((
+    ("M0", {"blocks": ("C",), "family": "Cox_PH_unpenalized",
+             "population": "main"}),
+    ("M1", {"blocks": ("C", "H_high_fraction"),
+             "family": "Cox_PH_unpenalized", "population": "main"}),
+    ("M2", {"blocks": ("C", "G"), "family": "Cox_PH_unpenalized",
+             "population": "main"}),
+    ("M3L", {"blocks": ("C", "G", "R_low"),
+              "family": "Elastic_Net_Cox", "population": "R_low"}),
+    ("M3H", {"blocks": ("C", "G", "R_high"),
+              "family": "Elastic_Net_Cox", "population": "R_high"}),
+    ("M4", {"blocks": ("C", "G", "R_low", "R_high"),
+             "family": "Elastic_Net_Cox", "population": "dual_radiomics"}),
+    ("M5", {"blocks": ("C", "W"), "family": "Elastic_Net_Cox",
+             "population": "W_available"}),
+))
+
+# The primary W04 models retain their frozen solver families.  P3D adds only
+# three explicitly named ridge sensitivity runs; they reuse the corresponding
+# primary predictor blocks and main population and never replace a primary
+# model.  The block-level declarations are also copied into every fold audit
+# so the penalty mask is machine-checkable rather than inferred from comments.
+RIDGE_SENSITIVITY_RUN_IDS = ("M0-R", "M1-R", "M2-R")
+RIDGE_SENSITIVITY_SPECS = {
+    "M0-R": {"model_id": "M0", "blocks": ("C",), "population": "main"},
+    "M1-R": {"model_id": "M1", "blocks": ("C", "H_high_fraction"),
+             "population": "main"},
+    "M2-R": {"model_id": "M2", "blocks": ("C", "G"),
+             "population": "main"},
+}
+
+_NO_EXPLICIT_INTERCEPT = (
+    "no explicit intercept; Cox baseline hazard is unpenalized")
+_RIDGE_PENALTY_SEMANTICS = (
+    "pure L2 ridge on every preprocessed coefficient in penalized_blocks")
+_ELASTIC_NET_PENALTY_SEMANTICS = (
+    "joint Elastic Net on the complete preprocessed coefficient vector; "
+    "no block is exempt")
+_UNPENALIZED_SEMANTICS = "unpenalized Breslow Cox PH coefficient vector"
+
+MODEL_PENALTY_SEMANTICS = OrderedDict((
+    ("M0", {"model": "M0", "family": "Cox_PH_unpenalized",
+            "penalized_blocks": [], "penalty_semantics": _UNPENALIZED_SEMANTICS,
+            "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M1", {"model": "M1", "family": "Cox_PH_unpenalized",
+            "penalized_blocks": [], "penalty_semantics": _UNPENALIZED_SEMANTICS,
+            "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M2", {"model": "M2", "family": "Cox_PH_unpenalized",
+            "penalized_blocks": [], "penalty_semantics": _UNPENALIZED_SEMANTICS,
+            "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M3L", {"model": "M3L", "family": "Elastic_Net_Cox",
+              "penalized_blocks": ["C", "G", "R_low"],
+              "penalty_semantics": _ELASTIC_NET_PENALTY_SEMANTICS,
+              "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M3H", {"model": "M3H", "family": "Elastic_Net_Cox",
+              "penalized_blocks": ["C", "G", "R_high"],
+              "penalty_semantics": _ELASTIC_NET_PENALTY_SEMANTICS,
+              "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M4", {"model": "M4", "family": "Elastic_Net_Cox",
+             "penalized_blocks": ["C", "G", "R_low", "R_high"],
+             "penalty_semantics": _ELASTIC_NET_PENALTY_SEMANTICS,
+             "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+    ("M5", {"model": "M5", "family": "Elastic_Net_Cox",
+             "penalized_blocks": ["C", "W"],
+             "penalty_semantics": _ELASTIC_NET_PENALTY_SEMANTICS,
+             "intercept_semantics": _NO_EXPLICIT_INTERCEPT}),
+))
+
+for _run_id, _spec in RIDGE_SENSITIVITY_SPECS.items():
+    MODEL_PENALTY_SEMANTICS[_run_id] = {
+        "model": _run_id,
+        "family": "pure_ridge_Cox",
+        "penalized_blocks": list(_spec["blocks"]),
+        "penalty_semantics": _RIDGE_PENALTY_SEMANTICS,
+        "intercept_semantics": _NO_EXPLICIT_INTERCEPT,
+    }
+
+# One W07 split plan is reused for these paired population-specific runs.  The
+# same model ID can therefore occur more than once, but each occurrence has a
+# distinct fixed eligible population for the prespecified comparison.
+FIXED_RUN_DEFINITIONS = (
+    {"run_id": "M0", "model_id": "M0", "population": "main"},
+    {"run_id": "M1", "model_id": "M1", "population": "main"},
+    {"run_id": "M2", "model_id": "M2", "population": "main"},
+    {"run_id": "M0_W_available", "model_id": "M0", "population": "W_available"},
+    {"run_id": "M5", "model_id": "M5", "population": "W_available"},
+    {"run_id": "M2_R_low", "model_id": "M2", "population": "R_low"},
+    {"run_id": "M3L", "model_id": "M3L", "population": "R_low"},
+    {"run_id": "M2_R_high", "model_id": "M2", "population": "R_high"},
+    {"run_id": "M3H", "model_id": "M3H", "population": "R_high"},
+    {"run_id": "M2_dual_radiomics", "model_id": "M2", "population": "dual_radiomics"},
+    {"run_id": "M3L_dual_radiomics", "model_id": "M3L", "population": "dual_radiomics"},
+    {"run_id": "M3H_dual_radiomics", "model_id": "M3H", "population": "dual_radiomics"},
+    {"run_id": "M4", "model_id": "M4", "population": "dual_radiomics"},
+)
+FIXED_RUN_IDS = tuple(run["run_id"] for run in FIXED_RUN_DEFINITIONS)
+FIXED_SENSITIVITY_RUN_DEFINITIONS = tuple(
+    {"run_id": run_id, "model_id": spec["model_id"],
+     "population": spec["population"]}
+    for run_id, spec in RIDGE_SENSITIVITY_SPECS.items())
+FIXED_SENSITIVITY_RUN_IDS = tuple(
+    run["run_id"] for run in FIXED_SENSITIVITY_RUN_DEFINITIONS)
+
+# All fixed run IDs, including population-specific comparator refits, map to
+# the same family/block semantics as their model ID.  Sensitivity runs have
+# their own entries because their family is intentionally different.
+RUN_PENALTY_SEMANTICS = OrderedDict()
+for _run in FIXED_RUN_DEFINITIONS:
+    RUN_PENALTY_SEMANTICS[_run["run_id"]] = dict(
+        MODEL_PENALTY_SEMANTICS[_run["model_id"]])
+    RUN_PENALTY_SEMANTICS[_run["run_id"]]["model"] = _run["run_id"]
+for _run in FIXED_SENSITIVITY_RUN_DEFINITIONS:
+    RUN_PENALTY_SEMANTICS[_run["run_id"]] = dict(
+        MODEL_PENALTY_SEMANTICS[_run["run_id"]])
+
+
+def _run_penalty_definition(run_definition):
+    """Return the frozen family/block penalty declaration for one run."""
+    run_id = run_definition.get("run_id")
+    model_id = run_definition.get("model_id")
+    if run_id in RUN_PENALTY_SEMANTICS:
+        return dict(RUN_PENALTY_SEMANTICS[run_id])
+    if model_id in MODEL_PENALTY_SEMANTICS:
+        return dict(MODEL_PENALTY_SEMANTICS[model_id])
+    raise W08ValidationError("run has no frozen penalty semantics: %s" % run_id)
+
+# Each pair shares the same current-fold eligible IDs.  The three dual
+# comparisons use the M2 dual comparator refit against the corresponding
+# radiomics run on that identical dual population.
+PAIRED_COMPARATOR_DEFINITIONS = (
+    {"comparison_id": "M2_R_low_vs_M3L", "comparator_run": "M2_R_low",
+     "radiomics_run": "M3L", "population": "R_low"},
+    {"comparison_id": "M2_R_high_vs_M3H", "comparator_run": "M2_R_high",
+     "radiomics_run": "M3H", "population": "R_high"},
+    {"comparison_id": "M2_dual_vs_M3L", "comparator_run": "M2_dual_radiomics",
+     "radiomics_run": "M3L_dual_radiomics", "population": "dual_radiomics"},
+    {"comparison_id": "M2_dual_vs_M3H", "comparator_run": "M2_dual_radiomics",
+     "radiomics_run": "M3H_dual_radiomics", "population": "dual_radiomics"},
+    {"comparison_id": "M2_dual_vs_M4", "comparator_run": "M2_dual_radiomics",
+     "radiomics_run": "M4", "population": "dual_radiomics"},
+)
+
+POPULATION_RULES = {
+    "main": (),
+    "W_available": ("W",),
+    "R_low": ("R_low",),
+    "R_high": ("R_high",),
+    "dual_radiomics": ("R_low", "R_high"),
+}
+
+RADIOMICS_PREFIXES = {"R_low": "R_low__", "R_high": "R_high__", "W": "W__"}
+
+# W03 candidate identities are frozen inputs, not merely block sizes.  Keeping
+# the names in the W08 code lock prevents a same-sized, substituted feature
+# pool from entering a formal run.
+FROZEN_CANDIDATE_FEATURES = {
+    "R_low": (
+        "original_firstorder_10Percentile",
+        "original_firstorder_90Percentile",
+        "original_firstorder_Energy",
+        "original_firstorder_Entropy",
+        "original_firstorder_Mean",
+        "original_firstorder_MeanAbsoluteDeviation",
+        "original_firstorder_Median",
+        "original_firstorder_RootMeanSquared",
+        "original_firstorder_TotalEnergy",
+        "original_firstorder_Uniformity",
+        "original_glcm_Contrast",
+        "original_glcm_DifferenceAverage",
+        "original_glcm_DifferenceEntropy",
+        "original_glcm_Id",
+        "original_glcm_Idm",
+        "original_glcm_Imc2",
+        "original_glcm_InverseVariance",
+        "original_glcm_JointEnergy",
+        "original_glcm_JointEntropy",
+        "original_glcm_MCC",
+        "original_glcm_MaximumProbability",
+        "original_glcm_SumEntropy",
+        "original_gldm_DependenceNonUniformity",
+        "original_gldm_DependenceNonUniformityNormalized",
+        "original_gldm_DependenceVariance",
+        "original_gldm_GrayLevelNonUniformity",
+        "original_gldm_LargeDependenceEmphasis",
+        "original_gldm_LargeDependenceLowGrayLevelEmphasis",
+        "original_gldm_LowGrayLevelEmphasis",
+        "original_gldm_SmallDependenceEmphasis",
+        "original_glrlm_GrayLevelNonUniformity",
+        "original_glrlm_GrayLevelNonUniformityNormalized",
+        "original_glrlm_LongRunEmphasis",
+        "original_glrlm_LongRunLowGrayLevelEmphasis",
+        "original_glrlm_LowGrayLevelRunEmphasis",
+        "original_glrlm_RunLengthNonUniformity",
+        "original_glrlm_RunLengthNonUniformityNormalized",
+        "original_glrlm_RunPercentage",
+        "original_glrlm_RunVariance",
+        "original_glrlm_ShortRunEmphasis",
+        "original_glrlm_ShortRunLowGrayLevelEmphasis",
+        "original_glszm_GrayLevelNonUniformityNormalized",
+        "original_glszm_LargeAreaEmphasis",
+        "original_glszm_LargeAreaHighGrayLevelEmphasis",
+        "original_glszm_LargeAreaLowGrayLevelEmphasis",
+        "original_glszm_ZoneEntropy",
+        "original_glszm_ZonePercentage",
+        "original_glszm_ZoneVariance",
+        "original_ngtdm_Contrast",
+    ),
+    "R_high": (
+        "original_firstorder_Mean",
+        "original_firstorder_Median",
+        "original_firstorder_RootMeanSquared",
+        "original_glcm_Correlation",
+        "original_gldm_GrayLevelNonUniformity",
+        "original_glrlm_GrayLevelNonUniformity",
+        "original_glszm_LargeAreaEmphasis",
+        "original_glszm_LargeAreaHighGrayLevelEmphasis",
+        "original_glszm_ZoneVariance",
+        "original_ngtdm_Busyness",
+    ),
+}
+FROZEN_CANDIDATE_HASHES = {
+    "R_low": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+    "R_high": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+}
+FOLD_SPECIFIC_FEATURES = tuple(
+    GLOBAL_COLUMNS +
+    [RADIOMICS_PREFIXES[block] + feature
+     for block in ("R_low", "R_high")
+     for feature in FROZEN_CANDIDATE_FEATURES[block]])
+
+
+def _candidate_hash(features):
+    canonical = json.dumps(sorted(set(features)), ensure_ascii=False,
+                            separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+class W08ValidationError(ValueError):
+    """Raised for a protocol, provenance, isolation, or model invariant."""
+
+
+class W08NumericalFailure(W08ValidationError):
+    """Raised when a candidate or final model did not obtain a valid fit."""
+
+    def __init__(self, message, audit=None):
+        super(W08NumericalFailure, self).__init__(message)
+        self.audit = audit or {}
+
+
+class W08CandidateSelectionFailure(W08ValidationError):
+    """Raised when no numerically valid, estimable inner candidate exists."""
+
+    def __init__(self, message, audit=None):
+        super(W08CandidateSelectionFailure, self).__init__(message)
+        self.audit = audit or {}
+
+
+_FAILURE_AUDIT_SENSITIVE_KEYS = frozenset((
+    "patient_id", "patient_ids", "identifier", "identifiers",
+    "source_path", "file_path", "path",
+))
+
+
+def _json_safe_failure_value(value, key=None):
+    """Return a JSON-safe, de-identified failure-audit value."""
+    if key is not None and str(key) in _FAILURE_AUDIT_SENSITIVE_KEYS:
+        return None
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, dict):
+        output = {}
+        for item_key, item_value in value.items():
+            if str(item_key) in _FAILURE_AUDIT_SENSITIVE_KEYS:
+                continue
+            output[str(item_key)] = _json_safe_failure_value(
+                item_value, key=item_key)
+        return output
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_failure_value(item) for item in value]
+    if isinstance(value, set):
+        return sorted((_json_safe_failure_value(item) for item in value),
+                      key=lambda item: str(item))
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def serialise_failure_audit(exception):
+    """Serialise numerical-failure context without patient-level identifiers."""
+    return {
+        "exception_class": exception.__class__.__name__,
+        "exception_message": str(exception),
+        "audit": _json_safe_failure_value(getattr(exception, "audit", {}) or {}),
+    }
+
+
+def _attach_failure_context(exception, context):
+    """Add observability context while preserving exception type and message."""
+    audit = dict(getattr(exception, "audit", {}) or {})
+    existing = dict(audit.get("failure_context", {}) or {})
+    existing.update({key: value for key, value in context.items()
+                     if value is not None or key == "non_zero_coefficient_number"})
+    audit["failure_context"] = existing
+    if "failure_stage" in existing:
+        audit["failure_stage"] = existing["failure_stage"]
+    exception.audit = audit
+    return exception
+
+
+def _linear_predictor_clipping_count(audit):
+    clipping = audit.get("linear_predictor_clipping", {}) or {}
+    return int(clipping.get("count", audit.get(
+        "linear_predictor_clipping_count", 0)) or 0)
+
+
+def _feature_block_counts(preprocessor):
+    """Count retained post-preprocessing features by frozen feature block."""
+    blocks = preprocessor.spec["blocks"]
+    counts = OrderedDict()
+    counts["C"] = int(len(preprocessor.clinical.feature_names))
+    if "H_high_fraction" in blocks:
+        counts["H_high_fraction"] = 1
+    if "G" in blocks:
+        counts["G"] = int(len(GLOBAL_COLUMNS))
+    if preprocessor.radiomics is not None:
+        for block in ("R_low", "R_high", "W"):
+            if block in blocks:
+                prefix = RADIOMICS_PREFIXES[block]
+                counts[block] = int(sum(
+                    str(column).startswith(prefix)
+                    for column in preprocessor.radiomics.kept_columns))
+    return dict(counts)
+
+
+def _solver_observability(audit):
+    """Extract stable scalar solver diagnostics for failure records."""
+    audit = audit or {}
+    return {
+        "iterations": audit.get("iterations"),
+        "convergence_status": audit.get(
+            "fit_status", "converged" if audit.get("converged") else "unknown"),
+        "converged": bool(audit.get("converged", False)),
+        "convergence_reason": audit.get("convergence_reason"),
+        "failure_reason": audit.get("failure_reason", ""),
+        "stability_actions": list(audit.get("stability_actions", []) or []),
+        "line_search_backtracking_count": int(
+            audit.get("line_search_backtracking_count", 0) or 0),
+        "linear_predictor_clipping_count": _linear_predictor_clipping_count(audit),
+        "last_objective": audit.get("last_objective"),
+        "last_objective_improvement": audit.get("last_objective_improvement"),
+        "last_coefficient_delta": audit.get("last_coefficient_delta"),
+        "non_zero_coefficient_number": audit.get("nonzero_coefficients"),
+    }
+
+
+def _finalise_fit_audit(audit):
+    """Add scalar observability aliases without changing solver decisions."""
+    audit = dict(audit or {})
+    audit.setdefault("linear_predictor_clipping_count",
+                     _linear_predictor_clipping_count(audit))
+    return audit
+
+
+def _absolute(path):
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _sha256_text(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def canonical_id_hash(ids):
+    """Hash sorted, newline-delimited IDs without exposing the IDs."""
+    values = sorted(str(value).strip() for value in ids)
+    if any(not value for value in values):
+        raise W08ValidationError("identifier hash received a blank ID")
+    return _sha256_text("\n".join(values) + "\n")
+
+
+def _canonical_split_hash(frame):
+    return hashlib.sha256(
+        frame[W07_SPLIT_COLUMNS].to_csv(
+            index=False, line_terminator="\n").encode("utf-8")).hexdigest()
+
+
+def _read_json(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _validate_config(config):
+    required = {"stage", "status", "frozen_protocol_sha256",
+                "frozen_outer_split_sha256", "outer_cv", "inner_cv",
+                "W07A_protocol_sha256", "models", "fixed_runs", "provenance",
+                "extractability_state", "paired_comparators", "coverage_schema",
+                "output_schema", "audit_schema", "fixed_sensitivity_runs",
+                "penalty_semantics", "ridge_sensitivity", "elastic_net_max_iter"}
+    missing = sorted(required - set(config))
+    if missing:
+        raise W08ValidationError("W08 config missing keys: %s" % missing)
+    if config["stage"] != "W08" or config["status"] != W08_STATUS:
+        raise W08ValidationError("W08 config is not implementation-ready")
+    if config["frozen_protocol_sha256"].lower() != W04_PROTOCOL_SHA256:
+        raise W08ValidationError("W08 protocol hash is not the W04 lock")
+    if config["frozen_outer_split_sha256"].lower() != W07_OUTER_SPLIT_SHA256:
+        raise W08ValidationError("W08 outer split hash is not the W07 lock")
+    if not isinstance(config["W07A_protocol_sha256"], str) or \
+            config["W07A_protocol_sha256"].lower() != W07A_PROTOCOL_AMENDMENT_SHA256:
+        raise W08ValidationError("W08 W07A protocol amendment hash is not the fixed lock")
+    outer = config["outer_cv"]
+    if (outer.get("folds"), outer.get("repeats"), outer.get("total_folds")) != (5, 10, 50):
+        raise W08ValidationError("W08 requires 5 folds x 10 repeats")
+    if outer.get("stratify_by") != "DFS_event":
+        raise W08ValidationError("W08 outer stratification must be DFS_event")
+    inner = config["inner_cv"]
+    if inner.get("folds") != 5 or inner.get("stratify_by") != "DFS_event":
+        raise W08ValidationError("W08 inner CV must be 5-fold DFS_event stratified")
+    if list(config.get("alpha_grid", [])) != list(ALPHA_GRID):
+        raise W08ValidationError("W08 alpha grid differs from W04")
+    if type(config.get("elastic_net_max_iter")) is not int or \
+            config["elastic_net_max_iter"] != ELASTIC_NET_MAX_ITER:
+        raise W08ValidationError(
+            "W08 Elastic-Net max_iter differs from the R6-4A fixed budget")
+    execution = config.get("execution", {})
+    if not isinstance(execution, dict) or \
+            execution.get("outer_fold_workers") != L5_DEFAULT_OUTER_FOLD_WORKERS or \
+            execution.get("historical_requested_outer_fold_workers") != \
+            L5_REQUESTED_DEFAULT_OUTER_FOLD_WORKERS or \
+            execution.get("formal_effective_outer_fold_workers") != \
+            FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS or \
+            execution.get("complex_cache_and_parallel_enabled") is not \
+            FORMAL_COMPLEX_LAYER_ENABLED or \
+            tuple(execution.get("allowed_outer_fold_workers", [])) != L5_ALLOWED_WORKERS or \
+            execution.get("checkpoint_schema") != L5_CHECKPOINT_SCHEMA or \
+            execution.get("checkpoint_write_policy") != \
+            L5_CHECKPOINT_WRITE_POLICY or \
+            execution.get("thread_environment") != L5_THREAD_ENVIRONMENT:
+        raise W08ValidationError("W08 L5 execution contract is invalid")
+    if config.get("lambda_grid", {}).get("values_per_alpha") != LAMBDA_COUNT:
+        raise W08ValidationError("W08 lambda grid must contain 100 values per alpha")
+    if config.get("lambda_grid", {}).get("minimum_ratio") != LAMBDA_MIN_RATIO:
+        raise W08ValidationError("W08 lambda minimum ratio differs from W04")
+    if list(config["models"]) != list(MODEL_SPECS):
+        raise W08ValidationError("W08 model set differs from W04")
+    config_runs = tuple(item["run_id"] for item in config["fixed_runs"])
+    if config_runs != FIXED_RUN_IDS:
+        raise W08ValidationError("W08 paired run set differs from W04/W07 comparisons")
+    for item, expected in zip(config["fixed_runs"], FIXED_RUN_DEFINITIONS):
+        if item != expected:
+            raise W08ValidationError("W08 paired run definition differs from the frozen comparison")
+    sensitivity_runs = config["fixed_sensitivity_runs"]
+    if sensitivity_runs != list(FIXED_SENSITIVITY_RUN_DEFINITIONS):
+        raise W08ValidationError(
+            "W08 ridge sensitivity run definitions differ from the P3D freeze")
+    if config["penalty_semantics"] != {
+            key: dict(value) for key, value in RUN_PENALTY_SEMANTICS.items()}:
+        raise W08ValidationError(
+            "W08 run penalty semantics differ from the P3D freeze")
+    ridge = config["ridge_sensitivity"]
+    if not isinstance(ridge, dict) or ridge.get("family") != "pure_ridge_Cox" or \
+            ridge.get("alpha") != 0 or ridge.get("feature_zero_selection") is not False:
+        raise W08ValidationError("W08 ridge sensitivity family semantics are not frozen")
+    if ridge.get("lambda_scale") != (
+            "trace(I0)/p at beta=0 using event-normalized observed information "
+            "in inner-training"):
+        raise W08ValidationError("W08 ridge lambda reference is not the P3D lock")
+    ridge_grid = ridge.get("lambda_relative_grid", {})
+    if (ridge_grid.get("count"), ridge_grid.get("from"), ridge_grid.get("to"),
+            ridge_grid.get("spacing")) != (100, "1e4", "1e-4", "logarithmic"):
+        raise W08ValidationError("W08 ridge lambda grid differs from the P3D lock")
+    if ridge.get("lambda_max_scope") != \
+            "inner-training-only ridge reference and outer-training refit" or \
+            ridge.get("selection_scope") != "outer-training_inner_5fold_only" or \
+            ridge.get("selection_metric") != "mean_inner_validation_Uno_C_index" or \
+            ridge.get("tie_break") != "larger_lambda_within_1e-12" or \
+            ridge.get("nonpositive_lambda_ref") != "hard_fail" or \
+            ridge.get("outer_validation_used_for_lambda") is not False:
+        raise W08ValidationError("W08 ridge selection isolation semantics are incomplete")
+    provenance = config["provenance"]
+    if provenance.get("population_source") != "prognosis_analysis/output/A_modeling/A_modeling_population.csv":
+        raise W08ValidationError("W08 population source is not the W06 A artifact")
+    if provenance.get("outer_split_source") != "prognosis_analysis/output/outer_splits_A.csv":
+        raise W08ValidationError("W08 outer split source is not the W07 artifact")
+    if provenance.get("B_data_read") is not False:
+        raise W08ValidationError("W08 must remain B-blinded")
+    if not isinstance(provenance.get("W07A_protocol_sha256"), str) or \
+            provenance["W07A_protocol_sha256"].lower() != W07A_PROTOCOL_AMENDMENT_SHA256:
+        raise W08ValidationError(
+            "W08 provenance W07A protocol amendment hash is not the fixed lock")
+    for block, expected_hash in FROZEN_CANDIDATE_HASHES.items():
+        if provenance.get("%s_candidate_hash" % block, "").lower() != expected_hash:
+            raise W08ValidationError(
+                "W08 %s candidate hash is not the frozen W03 hash" % block)
+    extractability = config["extractability_state"]
+    expected_extractability_keys = {
+        "source", "fields", "minimumROISize", "states",
+        "zero_is_distinct_from_one_to_nine", "eligibility_stage",
+    }
+    if not isinstance(extractability, dict) or \
+            set(extractability) != expected_extractability_keys:
+        raise W08ValidationError("W08 P3B extractability state fields are incomplete")
+    if extractability["source"] != "P3B":
+        raise W08ValidationError("W08 extractability source must be P3B")
+    if not isinstance(extractability["fields"], list) or \
+            extractability["fields"] != list(P3B_EXTRACTABILITY_FIELDS):
+        raise W08ValidationError("W08 P3B extractability field set differs from P3B")
+    if type(extractability["minimumROISize"]) is not int or \
+            extractability["minimumROISize"] != MINIMUM_ROI_SIZE:
+        raise W08ValidationError("W08 minimumROISize differs from the amendment")
+    if extractability["states"] != dict(P3B_STATE_DEFINITIONS):
+        raise W08ValidationError("W08 P3B state definitions differ from the amendment")
+    if extractability["zero_is_distinct_from_one_to_nine"] is not True:
+        raise W08ValidationError("W08 must keep zero distinct from 1-9 support")
+    if extractability["eligibility_stage"] != \
+            "after_provider_transform_before_any_preprocessing":
+        raise W08ValidationError("W08 eligibility stage is not pre-preprocessing")
+    configured_pairs = config["paired_comparators"]
+    if not isinstance(configured_pairs, list) or len(configured_pairs) != 5 or \
+            configured_pairs != list(PAIRED_COMPARATOR_DEFINITIONS):
+        raise W08ValidationError(
+            "W08 paired comparator definitions differ from the amendment")
+    coverage = config["coverage_schema"]
+    expected_coverage_keys = {
+        "unit", "required_fields", "paired_same_coverage", "paired_same_boundary",
+    }
+    if not isinstance(coverage, dict) or set(coverage) != expected_coverage_keys:
+        raise W08ValidationError("W08 coverage schema fields are incomplete")
+    if coverage["unit"] != "model_run_outer_repeat_fold":
+        raise W08ValidationError("W08 coverage unit is not outer repeat/fold")
+    if not isinstance(coverage["required_fields"], list) or \
+            coverage["required_fields"] != list(P3B_COVERAGE_FIELDS):
+        raise W08ValidationError("W08 coverage required fields differ from the amendment")
+    if coverage["paired_same_coverage"] is not True or \
+            coverage["paired_same_boundary"] is not True:
+        raise W08ValidationError("W08 paired coverage/boundary lock is incomplete")
+    return config
+
+
+def load_config(path=DEFAULT_CONFIG):
+    if _absolute(path) != _absolute(DEFAULT_CONFIG):
+        raise W08ValidationError("W08 accepts only the project-locked config path")
+    return _validate_config(_read_json(path))
+
+
+def load_frozen_a_population():
+    """Read the code-bound W06 A population through the W07 gate."""
+    config = w07.load_config(DEFAULT_W07_CONFIG)
+    return w07.load_a_modeling_population(DEFAULT_POPULATION, config)
+
+
+def load_frozen_outer_splits(population, path=DEFAULT_OUTER_SPLITS):
+    """Read only the code-bound W07 outer split artifact."""
+    if _absolute(path) != _absolute(DEFAULT_OUTER_SPLITS):
+        raise W08ValidationError("W08 accepts only the fixed W07 outer split path")
+    if _absolute(DEFAULT_OUTER_SPLITS) != _absolute(
+            os.path.join(PROJECT_ROOT, "prognosis_analysis", "output",
+                         "outer_splits_A.csv")):
+        raise W08ValidationError("W07 split path resolution changed")
+    if not os.path.isfile(path):
+        raise W08ValidationError("frozen W07 outer split artifact is missing")
+    if _sha256_file(path).lower() != W07_OUTER_SPLIT_SHA256:
+        raise W08ValidationError("W07 outer split artifact hash mismatch")
+    split_frame = pd.read_csv(path, dtype={"patient_id": str})
+    split_frame = _normalise_split_frame(split_frame)
+    w07_config = w07.load_config(DEFAULT_W07_CONFIG)
+    w07.validate_outer_splits(split_frame, population, w07_config)
+    if _canonical_split_hash(split_frame).lower() != W07_OUTER_SPLIT_SHA256:
+        raise W08ValidationError("W07 canonical split hash mismatch")
+    return split_frame[W07_SPLIT_COLUMNS].copy()
+
+
+def _normalise_frame(frame):
+    if not isinstance(frame, pd.DataFrame):
+        raise W08ValidationError("A feature frame must be a pandas DataFrame")
+    data = frame.copy()
+    if "patient_id" not in data.columns:
+        if "影像号" in data.columns:
+            data = data.rename(columns={"影像号": "patient_id"})
+        else:
+            raise W08ValidationError("A feature frame lacks patient_id")
+    data["patient_id"] = data["patient_id"].astype(str).str.strip()
+    if data["patient_id"].eq("").any() or data["patient_id"].duplicated().any():
+        raise W08ValidationError("A feature frame requires unique nonblank IDs")
+    for column in ("DFS_time", "DFS_event"):
+        if column not in data.columns:
+            raise W08ValidationError("A feature frame lacks %s" % column)
+    time = pd.to_numeric(data["DFS_time"], errors="coerce")
+    event = pd.to_numeric(data["DFS_event"], errors="coerce")
+    if time.isna().any() or not np.isfinite(time.to_numpy(dtype=float)).all() or not time.gt(0).all():
+        raise W08ValidationError("A feature frame contains invalid DFS_time")
+    if event.isna().any() or not event.isin([0, 1]).all():
+        raise W08ValidationError("A feature frame contains non-binary DFS_event")
+    data["DFS_time"] = time.astype(float)
+    data["DFS_event"] = event.astype(int)
+    if "split" in data.columns:
+        split = data["split"].astype(str).str.strip()
+        if not split.eq("A").all():
+            raise W08ValidationError("W08 rejects non-A rows before modeling")
+    if "technical_cohort" in data.columns:
+        cohort = data["technical_cohort"].astype(str).str.strip()
+        if not cohort.eq("A393").all():
+            raise W08ValidationError("W08 accepts only technical cohort A393")
+    return data
+
+
+def _normalise_split_frame(split_frame):
+    """Apply the locked split schema and string ID convention before hashing."""
+    if not isinstance(split_frame, pd.DataFrame):
+        raise W08ValidationError("W07 split artifact must be a pandas DataFrame")
+    if list(split_frame.columns) != W07_SPLIT_COLUMNS:
+        raise W08ValidationError("W07 split schema mismatch")
+    data = split_frame.copy()
+    if data["patient_id"].isna().any():
+        raise W08ValidationError("W07 split contains a missing patient ID")
+    data["patient_id"] = data["patient_id"].astype(str).str.strip()
+    if data["patient_id"].eq("").any():
+        raise W08ValidationError("W07 split contains a blank patient ID")
+    for column in ("repeat", "fold", "seed"):
+        values = pd.to_numeric(data[column], errors="coerce")
+        if values.isna().any() or not np.isfinite(values.to_numpy(dtype=float)).all():
+            raise W08ValidationError("W07 split contains an invalid %s" % column)
+        numeric_values = values.to_numpy(dtype=float)
+        if not np.equal(numeric_values, np.floor(numeric_values)).all():
+            raise W08ValidationError("W07 split contains a non-integer %s" % column)
+        data[column] = values.astype(int)
+    data["role"] = data["role"].astype(str).str.strip()
+    return data[W07_SPLIT_COLUMNS].copy()
+
+
+def _validate_population_alignment(data, population):
+    required = {"patient_id", "DFS_time", "DFS_event"}
+    if not required.issubset(population.columns):
+        raise W08ValidationError("W06 A population provenance lacks DFS_time")
+    population = population.copy()
+    if population["patient_id"].isna().any():
+        raise W08ValidationError("W06 A population provenance has missing IDs")
+    population["patient_id"] = population["patient_id"].astype(str).str.strip()
+    if population["patient_id"].eq("").any() or \
+            population["patient_id"].duplicated().any():
+        raise W08ValidationError("W06 A population provenance has invalid IDs")
+    population_time = pd.to_numeric(population["DFS_time"], errors="coerce")
+    population_event = pd.to_numeric(population["DFS_event"], errors="coerce")
+    if population_time.isna().any() or \
+            not np.isfinite(population_time.to_numpy(dtype=float)).all() or \
+            not population_time.gt(0).all():
+        raise W08ValidationError("W06 A population provenance has invalid DFS_time")
+    if population_event.isna().any() or not population_event.isin([0, 1]).all():
+        raise W08ValidationError("W06 A population provenance has invalid DFS_event")
+    population["DFS_time"] = population_time.astype(float)
+    population["DFS_event"] = population_event.astype(int)
+    ids = set(data["patient_id"])
+    expected = set(population["patient_id"])
+    if ids != expected:
+        raise W08ValidationError("A feature frame IDs do not equal the W06 A population")
+    event_map = population.set_index("patient_id")["DFS_event"]
+    observed = data.set_index("patient_id")["DFS_event"]
+    if not observed.eq(event_map.loc[observed.index]).all():
+        raise W08ValidationError("feature-frame DFS_event differs from W06 A population")
+    time_map = population.set_index("patient_id")["DFS_time"]
+    observed_time = data.set_index("patient_id")["DFS_time"]
+    expected_time = pd.to_numeric(time_map.loc[observed_time.index], errors="coerce")
+    if not np.array_equal(observed_time.to_numpy(dtype=float),
+                          expected_time.to_numpy(dtype=float)):
+        raise W08ValidationError("feature-frame DFS_time differs from W06 A population")
+
+
+def _validate_split_frame(split_frame, population):
+    split_frame = _normalise_split_frame(split_frame)
+    try:
+        w07_config = w07.load_config(DEFAULT_W07_CONFIG)
+        summary = w07.validate_outer_splits(split_frame, population, w07_config)
+    except Exception as exc:
+        raise W08ValidationError("W07 split validation failed: %s" % exc)
+    return summary
+
+
+def _has_p3b_extractability_fields(frame):
+    present = set(P3B_EXTRACTABILITY_FIELDS) & set(frame.columns)
+    p3b_specific = set(P3B_EXTRACTABILITY_FIELDS) - {
+        "R_low_structurally_defined", "R_high_structurally_defined"}
+    if not (present & p3b_specific):
+        return False
+    if present != set(P3B_EXTRACTABILITY_FIELDS):
+        missing = sorted(set(P3B_EXTRACTABILITY_FIELDS) - present)
+        raise W08ValidationError(
+            "P3B extractability state is incomplete; missing %s" % missing)
+    return True
+
+
+def _p3b_extractability_categories(frame, required=True):
+    """Validate P3B's eight support fields and return explicit state classes.
+
+    The count is authoritative for the three mutually exclusive classes.  The
+    state text and the two flags are cross-checked against it so a missing or
+    imputed radiomics value can never turn a zero or a 1--9 ROI into an
+    eligible case.
+    """
+    if not _has_p3b_extractability_fields(frame):
+        if required:
+            raise W08ValidationError(
+                "fold-specific radiomics eligibility requires the P3B eight-field state")
+        return None
+    output = pd.DataFrame(index=frame.index)
+    for block in ("R_low", "R_high"):
+        count_name = "%s_voxel_count" % block
+        state_name = "%s_state" % block
+        structural_name = "%s_structurally_defined" % block
+        technical_name = "%s_technically_extractable" % block
+        counts = pd.to_numeric(frame[count_name], errors="coerce")
+        if counts.isna().any():
+            raise W08ValidationError("P3B %s voxel counts contain missing values" % block)
+        count_values = counts.to_numpy(dtype=float)
+        if (not np.isfinite(count_values).all() or
+                not np.equal(count_values, np.floor(count_values)).all() or
+                np.any(count_values < 0)):
+            raise W08ValidationError("P3B %s voxel counts are invalid" % block)
+        counts = counts.astype(int)
+
+        structural = pd.to_numeric(frame[structural_name], errors="coerce")
+        technical = pd.to_numeric(frame[technical_name], errors="coerce")
+        if (structural.isna().any() or technical.isna().any() or
+                not structural.isin([0, 1]).all() or
+                not technical.isin([0, 1]).all()):
+            raise W08ValidationError("P3B %s support flags are invalid" % block)
+
+        category = pd.Series("extractable", index=frame.index, dtype=object)
+        category.loc[counts.eq(0)] = "structural_absence"
+        category.loc[counts.between(1, MINIMUM_ROI_SIZE - 1)] = "technical_small_roi"
+        expected_structural = counts.gt(0).astype(int)
+        expected_technical = counts.ge(MINIMUM_ROI_SIZE).astype(int)
+        if not structural.astype(int).equals(expected_structural):
+            raise W08ValidationError(
+                "P3B %s structural flag disagrees with voxel count" % block)
+        if not technical.astype(int).equals(expected_technical):
+            raise W08ValidationError(
+                "P3B %s extractability flag disagrees with voxel count" % block)
+
+        raw_states = frame[state_name]
+        if raw_states.isna().any():
+            raise W08ValidationError("P3B %s states contain missing values" % block)
+        allowed = set().union(*P3B_STATE_LABELS.values())
+        if not raw_states.astype(str).isin(allowed).all():
+            raise W08ValidationError("P3B %s states contain an unknown label" % block)
+        for state_class, labels in P3B_STATE_LABELS.items():
+            expected = category.eq(state_class)
+            observed = raw_states.astype(str).isin(labels)
+            if not observed.equals(expected):
+                raise W08ValidationError(
+                    "P3B %s state disagrees with voxel count" % block)
+        output[block] = category
+    return output
+
+
+def _legacy_radiomics_categories(frame, block):
+    """Compatibility adapter for pre-P3B synthetic/in-memory fixtures only."""
+    structural_name = "%s_structurally_defined" % block
+    technical_name = "%s_technically_available" % block
+    if structural_name not in frame.columns or technical_name not in frame.columns:
+        raise W08ValidationError(
+            "%s eligibility requires P3B state or legacy explicit availability" % block)
+    structural = pd.to_numeric(frame[structural_name], errors="coerce")
+    technical = pd.to_numeric(frame[technical_name], errors="coerce")
+    if (structural.isna().any() or technical.isna().any() or
+            not structural.isin([0, 1]).all() or
+            not technical.isin([0, 1]).all()):
+        raise W08ValidationError("invalid legacy %s availability flags" % block)
+    if (technical.eq(1) & structural.eq(0)).any():
+        raise W08ValidationError(
+            "legacy %s technical availability cannot exceed structural definition" % block)
+    category = pd.Series("technical_small_roi", index=frame.index, dtype=object)
+    category.loc[structural.eq(0)] = "structural_absence"
+    category.loc[technical.eq(1)] = "extractable"
+    return category
+
+
+def _extractability_categories(frame, required_blocks, require_p3b=False):
+    required_blocks = tuple(required_blocks)
+    if not required_blocks:
+        return None, "not_applicable"
+    p3b = _p3b_extractability_categories(frame, required=require_p3b)
+    if p3b is not None:
+        return p3b.loc[:, list(required_blocks)].copy(), "P3B"
+    output = pd.DataFrame(index=frame.index)
+    for block in required_blocks:
+        output[block] = _legacy_radiomics_categories(frame, block)
+    return output, "legacy_explicit_availability"
+
+
+def _model_level_state(categories, required_blocks, index=None):
+    if not required_blocks:
+        return pd.Series("not_applicable", index=index, dtype=object)
+    output = pd.Series("extractable", index=categories.index, dtype=object)
+    structural = pd.Series(False, index=categories.index)
+    technical = pd.Series(False, index=categories.index)
+    for block in required_blocks:
+        structural |= categories[block].eq("structural_absence")
+        technical |= categories[block].eq("technical_small_roi")
+    output.loc[technical] = "technical_small_roi"
+    output.loc[structural] = "structural_absence"
+    return output
+
+
+def _state_counts(values):
+    return {state: int(values.eq(state).sum()) for state in P3B_STATE_ORDER}
+
+
+def _fold_population_coverage(population_name, required_blocks,
+                              train_frame, validation_frame,
+                              train_categories, validation_categories,
+                              source, train_ids, validation_ids):
+    train_model_state = _model_level_state(
+        train_categories, required_blocks, index=train_frame.index)
+    validation_model_state = _model_level_state(
+        validation_categories, required_blocks, index=validation_frame.index)
+    if required_blocks:
+        train_block_states = {
+            block: _state_counts(train_categories[block])
+            for block in required_blocks
+        }
+        validation_block_states = {
+            block: _state_counts(validation_categories[block])
+            for block in required_blocks
+        }
+        train_model_counts = _state_counts(train_model_state)
+        validation_model_counts = _state_counts(validation_model_state)
+    else:
+        train_block_states = {}
+        validation_block_states = {}
+        train_model_counts = {"not_applicable": int(len(train_frame))}
+        validation_model_counts = {"not_applicable": int(len(validation_frame))}
+    return {
+        "population": population_name,
+        "required_blocks": list(required_blocks),
+        "source": source,
+        "minimumROISize": MINIMUM_ROI_SIZE if required_blocks else None,
+        "eligibility_before_preprocessing": True,
+        "training_opportunities": int(len(train_frame)),
+        "training_eligible_n": int(len(train_ids)),
+        "validation_opportunities": int(len(validation_frame)),
+        "valid_predictions": int(len(validation_ids)),
+        "effective_n": int(len(validation_ids)),
+        "training_model_state_counts": train_model_counts,
+        "validation_model_state_counts": validation_model_counts,
+        "training_block_state_counts": train_block_states,
+        "validation_block_state_counts": validation_block_states,
+        "training_structural_absence": int(train_model_counts.get(
+            "structural_absence", 0)),
+        "training_technical_small_roi_unavailable": int(train_model_counts.get(
+            "technical_small_roi", 0)),
+        "validation_structural_absence": int(validation_model_counts.get(
+            "structural_absence", 0)),
+        "validation_technical_small_roi_unavailable": int(
+            validation_model_counts.get("technical_small_roi", 0)),
+        "validation_extractable": int(validation_model_counts.get(
+            "extractable", validation_model_counts.get("not_applicable", 0))),
+    }
+
+
+def derive_fold_populations(training_frame, validation_frame, population_names=None,
+                            require_p3b=False):
+    """Derive current-fold populations after P3B state consumption.
+
+    ``training_frame`` and ``validation_frame`` are already transformed with
+    one immutable outer-training provider state.  This function is deliberately
+    independent of every imputation, scaling, correlation, and feature
+    selection operation.
+    """
+    names = list(POPULATION_RULES if population_names is None else population_names)
+    unknown = sorted(set(names) - set(POPULATION_RULES))
+    if unknown:
+        raise W08ValidationError("unknown fold population: %s" % unknown)
+    if set(training_frame["patient_id"]) & set(validation_frame["patient_id"]):
+        raise W08ValidationError("fold population input train/validation overlap")
+    required_blocks = tuple(block for block in ("R_low", "R_high")
+                            if any(block in POPULATION_RULES[name] for name in names))
+    train_categories, train_source = _extractability_categories(
+        training_frame, required_blocks, require_p3b=require_p3b)
+    validation_categories, validation_source = _extractability_categories(
+        validation_frame, required_blocks, require_p3b=require_p3b)
+    if train_source != validation_source:
+        raise W08ValidationError("fold train/validation extractability sources differ")
+
+    output = OrderedDict()
+    for population_name in names:
+        required_for_population = tuple(POPULATION_RULES[population_name])
+        train_mask = pd.Series(True, index=training_frame.index)
+        validation_mask = pd.Series(True, index=validation_frame.index)
+        if population_name == "W_available":
+            train_mask &= _required_availability_mask(training_frame, "W")
+            validation_mask &= _required_availability_mask(validation_frame, "W")
+        for block in required_for_population:
+            if block in ("R_low", "R_high"):
+                if train_categories is None or validation_categories is None:
+                    raise W08ValidationError(
+                        "radiomics population lacks explicit fold extractability state")
+                train_mask &= train_categories[block].eq("extractable")
+                validation_mask &= validation_categories[block].eq("extractable")
+        train_ids = training_frame.loc[train_mask, "patient_id"].astype(str).tolist()
+        validation_ids = validation_frame.loc[
+            validation_mask, "patient_id"].astype(str).tolist()
+        coverage_blocks = tuple(block for block in required_for_population
+                                if block in ("R_low", "R_high"))
+        coverage = _fold_population_coverage(
+            population_name, coverage_blocks, training_frame,
+            validation_frame, train_categories, validation_categories,
+            train_source if coverage_blocks else (
+                "explicit_availability" if population_name == "W_available"
+                else "not_applicable"), train_ids, validation_ids)
+        output[population_name] = {
+            "population": population_name,
+            "train_ids": train_ids,
+            "validation_ids": validation_ids,
+            "coverage": coverage,
+        }
+    return output
+
+
+def derive_paired_comparators(selected_runs, population_views):
+    """Validate and index the fixed same-fold paired comparator definitions."""
+    selected = {run["run_id"]: run for run in selected_runs}
+    metadata = {run_id: {"comparison_ids": [], "comparator_run_ids": []}
+                for run_id in selected}
+
+    def view_for(run_id, population_name):
+        # The production caller keys views by fixed population.  Accepting
+        # run-keyed views as well keeps this helper useful for synthetic paired
+        # tests and makes the equality check explicit.
+        return population_views.get(run_id, population_views.get(population_name))
+
+    for pair in PAIRED_COMPARATOR_DEFINITIONS:
+        comparator_run = pair["comparator_run"]
+        radiomics_run = pair["radiomics_run"]
+        if comparator_run not in selected or radiomics_run not in selected:
+            continue
+        if (selected[comparator_run]["population"] != pair["population"] or
+                selected[radiomics_run]["population"] != pair["population"]):
+            raise W08ValidationError(
+                "paired comparator population mismatch for %s" % pair["comparison_id"])
+        comparator_view = view_for(comparator_run, pair["population"])
+        radiomics_view = view_for(radiomics_run, pair["population"])
+        if comparator_view is None or radiomics_view is None:
+            raise W08ValidationError(
+                "paired comparator population is missing for %s" % pair["comparison_id"])
+        if (list(comparator_view["train_ids"]) != list(radiomics_view["train_ids"]) or
+                list(comparator_view["validation_ids"]) !=
+                list(radiomics_view["validation_ids"])):
+            raise W08ValidationError(
+                "paired comparator IDs differ for %s" % pair["comparison_id"])
+        for run_id, other_run_id in ((comparator_run, radiomics_run),
+                                     (radiomics_run, comparator_run)):
+            metadata[run_id]["comparison_ids"].append(pair["comparison_id"])
+            metadata[run_id]["comparator_run_ids"].append(other_run_id)
+    return metadata
+
+
+def _required_availability_mask(frame, block):
+    """Use explicit structural and technical flags; never infer availability."""
+    if block in ("R_low", "R_high") and _has_p3b_extractability_fields(frame):
+        categories = _p3b_extractability_categories(frame, required=True)
+        return categories[block].eq("extractable")
+    structural = "%s_structurally_defined" % block
+    technical = "%s_technically_available" % block
+    available = "%s_available" % block
+    if structural in frame.columns and technical in frame.columns:
+        left = pd.to_numeric(frame[structural], errors="coerce")
+        right = pd.to_numeric(frame[technical], errors="coerce")
+        if left.isna().any() or right.isna().any() or not left.isin([0, 1]).all() or not right.isin([0, 1]).all():
+            raise W08ValidationError("invalid %s structural/technical availability flags" % block)
+        return left.eq(1) & right.eq(1)
+    if available in frame.columns:
+        values = pd.to_numeric(frame[available], errors="coerce")
+        if values.isna().any() or not values.isin([0, 1]).all():
+            raise W08ValidationError("invalid %s availability flag" % block)
+        return values.eq(1)
+    raise W08ValidationError(
+        "%s eligibility requires explicit structural and technical availability flags" % block)
+
+
+def eligible_ids(frame, population_name):
+    if population_name not in POPULATION_RULES:
+        raise W08ValidationError("unknown W07 population: %s" % population_name)
+    mask = pd.Series(True, index=frame.index)
+    for block in POPULATION_RULES[population_name]:
+        mask &= _required_availability_mask(frame, block)
+    return set(frame.loc[mask, "patient_id"])
+
+
+def _block_columns(frame, block):
+    if block == "C":
+        return list(CLINICAL_COLUMNS)
+    if block == "G":
+        return list(GLOBAL_COLUMNS)
+    if block == "H_high_fraction":
+        return ["H_high_fraction"]
+    if block in RADIOMICS_PREFIXES:
+        prefix = RADIOMICS_PREFIXES[block]
+        columns = [column for column in frame.columns
+                   if str(column).startswith(prefix)]
+        if not columns:
+            raise W08ValidationError("%s block has no prefixed features" % block)
+        return columns
+    raise W08ValidationError("unknown predictor block: %s" % block)
+
+
+def validate_feature_schema(frame, models=None, strict=False):
+    models = list(MODEL_SPECS if models is None else models)
+    missing_clinical = sorted(set(CLINICAL_COLUMNS) - set(frame.columns))
+    if missing_clinical:
+        raise W08ValidationError("missing frozen clinical columns: %s" % missing_clinical)
+    needed = set()
+    for model_id in models:
+        if model_id not in MODEL_SPECS:
+            raise W08ValidationError("unknown W04 model: %s" % model_id)
+        for block in MODEL_SPECS[model_id]["blocks"]:
+            if block in ("C", "G", "H_high_fraction"):
+                needed.update(_block_columns(frame, block))
+            elif block in RADIOMICS_PREFIXES:
+                needed.update(_block_columns(frame, block))
+    missing = sorted(needed - set(frame.columns))
+    if missing:
+        raise W08ValidationError("missing W04 predictor columns: %s" % missing[:20])
+    if strict:
+        expected = {"R_low": 49, "R_high": 10, "W": 1130}
+        for block, count in expected.items():
+            if any(block in MODEL_SPECS[mid]["blocks"] for mid in models):
+                actual_columns = _block_columns(frame, block)
+                actual = len(actual_columns)
+                if actual != count:
+                    raise W08ValidationError(
+                        "%s must contain %d frozen features, got %d" %
+                        (block, count, actual))
+                if block in FROZEN_CANDIDATE_FEATURES:
+                    prefix = RADIOMICS_PREFIXES[block]
+                    actual_features = sorted(
+                        column[len(prefix):] for column in actual_columns)
+                    expected_features = sorted(FROZEN_CANDIDATE_FEATURES[block])
+                    if actual_features != expected_features:
+                        raise W08ValidationError(
+                            "%s candidate feature identity differs from W03 freeze" % block)
+                    if _candidate_hash(actual_features) != FROZEN_CANDIDATE_HASHES[block]:
+                        raise W08ValidationError(
+                            "%s candidate feature hash differs from W03 freeze" % block)
+
+
+@dataclass
+class FoldState:
+    """Immutable representation state fitted using outer-training patients."""
+
+    training_id_hash: str
+    seed: int
+    centers: tuple = None
+    boundary: float = None
+    metadata: dict = field(default_factory=dict)
+
+
+class FoldFeatureProvider(object):
+    """Interface for fold-specific habitat/G/radiomics regeneration."""
+
+    # A provider is not formal-capable by declaration alone.  Formal runs
+    # additionally require every fold-specific feature to be present in the
+    # returned state audit and in both transformed frames.
+    formal_capable = False
+    fold_specific_habitat = False
+
+    def representation_cache_identity(self):
+        """Return stable non-patient inputs which bind fold representations.
+
+        Providers which read external technical artifacts must override this
+        method.  The default is intentionally conservative: it prevents two
+        different provider classes from sharing an in-process representation
+        entry, but it does not claim that a generic adapter is reusable across
+        attempts.
+        """
+        return {
+            "provider_module": self.__class__.__module__,
+            "provider_class": self.__class__.__name__,
+            "provider_contract": "generic_fold_provider_v1",
+            "cross_attempt_reuse": False,
+        }
+
+    def representation_cache_audit(self):
+        """Return provider cache evidence without exposing patient IDs."""
+        return {}
+
+    def fit(self, training_ids, seed):  # pragma: no cover - interface contract
+        raise NotImplementedError
+
+    def transform(self, ids, state):  # pragma: no cover - interface contract
+        raise NotImplementedError
+
+
+def _cache_payload_hash(payload):
+    """Hash a JSON-serialisable cache contract without exposing its payload."""
+    try:
+        encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True,
+                             separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise W08ValidationError("cache contract is not JSON serialisable: %s" %
+                                 exc)
+    return _sha256_text(encoded)
+
+
+def _provider_cache_identity(provider):
+    identity = provider.representation_cache_identity()
+    if not isinstance(identity, dict) or not identity:
+        raise W08ValidationError(
+            "provider representation_cache_identity must return a non-empty dict")
+    try:
+        json.dumps(identity, ensure_ascii=True, sort_keys=True,
+                   separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise W08ValidationError(
+            "provider cache identity is not JSON serialisable: %s" % exc)
+    return dict(identity)
+
+
+class FoldRepresentationCache(object):
+    """Fold-local state cache with explicit provenance and invalidation.
+
+    The cache is deliberately in-process.  It avoids repeated boundary fits
+    during one W08 execution while requiring the complete provider identity,
+    feature schema, training membership and K-means seed to match.  A future
+    disk-backed cache must preserve this contract and may not silently reuse a
+    stale entry.
+    """
+
+    SCHEMA = "w08_fold_representation_cache_v1"
+
+    def __init__(self, provider, required_columns):
+        self.provider = provider
+        self.required_columns = tuple(str(column) for column in required_columns)
+        self.provider_identity = _provider_cache_identity(provider)
+        self._entries = {}
+        self._scope_index = {}
+        self._audit = {
+            "schema": self.SCHEMA,
+            "feature_schema": list(self.required_columns),
+            "provider_identity_hash": _cache_payload_hash(
+                self.provider_identity),
+            "entries": 0,
+            "hits": 0,
+            "misses": 0,
+            "invalidations": [],
+        }
+
+    def _key(self, training_ids, seed):
+        return {
+            "schema": self.SCHEMA,
+            "training_id_hash": canonical_id_hash(training_ids),
+            "seed": int(seed),
+            "feature_schema_hash": _cache_payload_hash(
+                list(self.required_columns)),
+            "provider_identity_hash": _cache_payload_hash(
+                self.provider_identity),
+        }
+
+    @staticmethod
+    def _state_has_key(state, key):
+        metadata = state.metadata if isinstance(state.metadata, dict) else {}
+        return metadata.get("representation_cache_key") == key
+
+    def _record_invalidation(self, scope, reason):
+        self._audit["invalidations"].append({
+            "scope": dict(scope),
+            "reason": str(reason),
+            "action": "recomputed",
+        })
+
+    def get_or_fit(self, training_ids, seed):
+        current_identity = _provider_cache_identity(self.provider)
+        if current_identity != self.provider_identity:
+            self.provider_identity = current_identity
+            self._audit["provider_identity_hash"] = _cache_payload_hash(
+                current_identity)
+        key = self._key(training_ids, seed)
+        digest = _cache_payload_hash(key)
+        scope = (key["training_id_hash"], key["seed"])
+        previous_digest = self._scope_index.get(scope)
+        if previous_digest is not None and previous_digest != digest:
+            self._entries.pop(previous_digest, None)
+            self._record_invalidation(
+                {"training_id_hash": key["training_id_hash"],
+                 "seed": key["seed"]},
+                "provider_or_feature_schema_changed")
+        self._scope_index[scope] = digest
+
+        entry = self._entries.get(digest)
+        if entry is not None:
+            state = entry.get("state")
+            if isinstance(state, FoldState) and \
+                    entry.get("key") == key and self._state_has_key(state, key):
+                self._audit["hits"] += 1
+                return state
+            self._entries.pop(digest, None)
+            self._record_invalidation(
+                {"training_id_hash": key["training_id_hash"],
+                 "seed": key["seed"]},
+                "cached_state_contract_mismatch")
+
+        self._audit["misses"] += 1
+        state = self.provider.fit(training_ids, seed)
+        if not isinstance(state, FoldState):
+            raise W08ValidationError("provider.fit must return a FoldState")
+        metadata = dict(state.metadata) if isinstance(state.metadata, dict) else {}
+        metadata.update({
+            "representation_cache_schema": self.SCHEMA,
+            "representation_cache_key": key,
+            "representation_cache_hit": False,
+        })
+        state = FoldState(
+            training_id_hash=state.training_id_hash,
+            seed=state.seed,
+            centers=state.centers,
+            boundary=state.boundary,
+            metadata=metadata)
+        self._entries[digest] = {"key": key, "state": state}
+        self._audit["entries"] = int(len(self._entries))
+        return state
+
+    def audit(self):
+        output = dict(self._audit)
+        output["invalidations"] = [dict(item) for item in
+                                    self._audit["invalidations"]]
+        output["entries"] = int(len(self._entries))
+        return output
+
+
+class FrameFoldFeatureProvider(FoldFeatureProvider):
+    """In-memory provider for tests and authorized A-only upstream adapters.
+
+    ``supervoxel_values`` is optional only for low-dimensional/unit tests.  It
+    intentionally is not a formal-capable adapter: the supplied frame values
+    are not evidence that fold-specific G/radiomics regeneration occurred.
+    A production adapter must implement the explicit provider contract used by
+    ``_validate_fold_provider_state``.
+    """
+
+    def __init__(self, frame, supervoxel_values=None):
+        self.frame = _normalise_frame(frame)
+        self._by_id = self.frame.set_index("patient_id", drop=False)
+        self.supervoxel_values = {
+            str(key).strip(): np.asarray(value, dtype=float).reshape(-1)
+            for key, value in (supervoxel_values or {}).items()
+        }
+        self.fit_calls = []
+        self.transform_calls = []
+        self.formal_capable = False
+        self.fold_specific_habitat = bool(self.supervoxel_values)
+
+    def fit(self, training_ids, seed):
+        ids = sorted(str(value).strip() for value in training_ids)
+        if not ids or any(identifier not in self._by_id.index for identifier in ids):
+            raise W08ValidationError("provider training IDs are not in the A frame")
+        self.fit_calls.append(tuple(ids))
+        if not self.supervoxel_values:
+            return FoldState(canonical_id_hash(ids), int(seed), metadata={
+                "fold_specific_habitat": False,
+                "representation_source": "provided_frame_columns",
+                "feature_sources": {},
+            })
+        flattened = []
+        weights = []
+        for identifier in ids:
+            values = self.supervoxel_values.get(identifier)
+            if values is None or values.size == 0 or not np.isfinite(values).all():
+                raise W08ValidationError("missing/nonfinite supervoxel input for %s" % identifier)
+            flattened.append(values)
+            weights.append(np.full(values.size, 1.0 / float(values.size)))
+        values = np.concatenate(flattened)
+        sample_weights = np.concatenate(weights)
+        if np.unique(values).size < 2:
+            raise W08ValidationError("fold-specific K=2 habitat fit needs two distinct values")
+        validate_frozen_kmeans_parameters()
+        estimator = KMeans(random_state=int(seed),
+                           **KMEANS_PARAMETERS.sklearn_kwargs())
+        estimator.fit(values.reshape(-1, 1), sample_weight=sample_weights)
+        centers = tuple(sorted(float(value) for value in estimator.cluster_centers_.reshape(-1)))
+        boundary = (centers[0] + centers[1]) / 2.0
+        return FoldState(canonical_id_hash(ids), int(seed), centers, boundary, {
+            "fold_specific_habitat": True,
+            "patient_weighting": "each patient total supervoxel weight=1",
+            "supervoxel_count": int(values.size),
+            "representation_source": "unit_test_supervoxel_summary_only",
+            "feature_sources": {
+                column: {
+                    "source": "unit_test_supervoxel_summary",
+                    "fit_training_id_hash": canonical_id_hash(ids),
+                    "validation_ids_used_for_fit": False,
+                }
+                for column in ("H_high_fraction", "sv_median_minus_boundary", "sv_IQR")
+            },
+        })
+
+    def transform(self, ids, state):
+        identifiers = [str(value).strip() for value in ids]
+        if any(identifier not in self._by_id.index for identifier in identifiers):
+            raise W08ValidationError("provider transform IDs are not in the A frame")
+        self.transform_calls.append((tuple(identifiers), state.training_id_hash))
+        rows = self._by_id.loc[identifiers].copy()
+        if state.boundary is not None:
+            if any(identifier not in self.supervoxel_values for identifier in identifiers):
+                raise W08ValidationError("missing supervoxel input during transform")
+            generated = []
+            for identifier in identifiers:
+                values = self.supervoxel_values[identifier]
+                high = values >= state.boundary
+                q25, q75 = np.percentile(values, [25.0, 75.0])
+                generated.append({
+                    "patient_id": identifier,
+                    "H_high_fraction": float(np.mean(high)),
+                    "sv_median_minus_boundary": float(np.median(values) - state.boundary),
+                    "sv_IQR": float(q75 - q25),
+                })
+            generated = pd.DataFrame(generated).set_index("patient_id")
+            for column in ("H_high_fraction", "sv_median_minus_boundary", "sv_IQR"):
+                rows[column] = generated.loc[identifiers, column].to_numpy()
+        return rows.reset_index(drop=True)
+
+
+def _required_fold_specific_columns(models):
+    """Return the fold-fitted G/radiomics columns required by selected models."""
+    required = []
+    for model_id in models:
+        blocks = MODEL_SPECS[model_id]["blocks"]
+        if "G" in blocks:
+            required.extend(GLOBAL_COLUMNS)
+        elif "H_high_fraction" in blocks:
+            required.append("H_high_fraction")
+        for block in ("R_low", "R_high"):
+            if block in blocks:
+                required.extend(
+                    RADIOMICS_PREFIXES[block] + feature
+                    for feature in FROZEN_CANDIDATE_FEATURES[block])
+    return tuple(OrderedDict((column, None) for column in required))
+
+
+def _validate_fold_provider_state(provider, state, training_ids, required_columns):
+    """Validate the explicit, training-only fold feature regeneration contract."""
+    if not isinstance(state, FoldState):
+        raise W08ValidationError("provider.fit must return a FoldState")
+    training_hash = canonical_id_hash(training_ids)
+    if state.training_id_hash != training_hash:
+        raise W08ValidationError("provider training provenance hash mismatch")
+    if not provider.formal_capable:
+        return
+    metadata = state.metadata if isinstance(state.metadata, dict) else {}
+    sources = metadata.get("feature_sources")
+    if not isinstance(sources, dict) or set(sources) != set(required_columns):
+        raise W08ValidationError(
+            "formal provider must audit every required fold-specific feature source")
+    for column in required_columns:
+        record = sources[column]
+        if not isinstance(record, dict) or \
+                record.get("source") != "fold_fit_regenerated" or \
+                record.get("fit_training_id_hash") != training_hash or \
+                record.get("validation_ids_used_for_fit") is not False:
+            raise W08ValidationError(
+                "invalid fold-specific source audit for %s" % column)
+    if metadata.get("validation_ids_used_for_fit") is not False:
+        raise W08ValidationError(
+            "formal provider state must exclude validation IDs from boundary fit")
+
+
+def _validate_fold_provider_output(frame, ids, required_columns, formal_capable):
+    """Ensure transformed outputs contain the audited fold-specific columns."""
+    if not formal_capable:
+        return
+    # A formal-capable provider is the formal radiomics boundary.  Validate all
+    # P3B fields immediately after transform, before eligibility or any model
+    # preprocessing can consume the representation.  This deliberately makes
+    # the legacy availability adapter unreachable on the formal path.
+    _p3b_extractability_categories(frame, required=True)
+    missing = sorted(set(required_columns) - set(frame.columns))
+    if missing:
+        raise W08ValidationError(
+            "formal provider output lacks fold-specific features: %s" % missing[:10])
+
+
+def _as_numeric(values, label):
+    numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
+    if not np.isfinite(numeric).all():
+        raise W08ValidationError("%s contains invalid nonnumeric values" % label)
+    return numeric
+
+
+def _mode_lowest(series, levels=None):
+    values = series.dropna()
+    if values.empty:
+        if levels is None:
+            raise W08ValidationError("cannot impute an all-missing categorical field")
+        return levels[0]
+    counts = values.value_counts()
+    top = counts[counts == counts.max()].index.tolist()
+    if levels is not None:
+        rank = {str(value): index for index, value in enumerate(levels)}
+        return sorted(top, key=lambda value: rank.get(str(value), len(rank)))[0]
+    return sorted(top, key=lambda value: str(value))[0]
+
+
+class ClinicalPreprocessor(object):
+    """Training-only imputation, fixed level encoding, and continuous scaling."""
+
+    def __init__(self):
+        self.feature_names = []
+        self.imputations = {}
+        self.means = {}
+        self.scales = {}
+        self.constant_continuous = []
+
+    def fit(self, frame):
+        missing = sorted(set(CLINICAL_COLUMNS) - set(frame.columns))
+        if missing:
+            raise W08ValidationError("clinical preprocessor missing %s" % missing)
+        self.feature_names = []
+        for column in CLINICAL_CONTINUOUS:
+            numeric = pd.to_numeric(frame[column], errors="coerce").replace(
+                [np.inf, -np.inf], np.nan)
+            finite = numeric[np.isfinite(numeric.to_numpy(dtype=float))]
+            if finite.empty:
+                raise W08ValidationError("clinical continuous field is all missing: %s" % column)
+            median = float(finite.median())
+            filled = numeric.fillna(median).to_numpy(dtype=float)
+            mean = float(np.mean(filled))
+            scale = float(np.std(filled, ddof=0))
+            self.imputations[column] = median
+            self.means[column] = mean
+            self.scales[column] = scale if scale > 0.0 else 1.0
+            if scale == 0.0:
+                self.constant_continuous.append(column)
+            self.feature_names.append(column)
+        for column, levels in CLINICAL_CATEGORICAL.items():
+            values = frame[column].copy()
+            values = values.map(lambda value: value if pd.isna(value) else self._canonical_level(value, levels, column))
+            mode = _mode_lowest(values, levels)
+            self.imputations[column] = mode
+            # Lowest predeclared level is the fixed reference level.
+            for level in levels[1:]:
+                self.feature_names.append("%s=%s" % (column, level))
+        for column in CLINICAL_BINARY:
+            values = pd.to_numeric(frame[column], errors="coerce")
+            nonmissing = values.dropna()
+            if not nonmissing.isin([0, 1]).all():
+                raise W08ValidationError("clinical binary field has invalid levels: %s" % column)
+            mode = _mode_lowest(nonmissing, (0, 1))
+            self.imputations[column] = float(mode)
+            self.feature_names.append(column)
+        return self
+
+    @staticmethod
+    def _canonical_level(value, levels, column):
+        try:
+            numeric = float(value)
+            if numeric.is_integer():
+                value = int(numeric)
+        except (TypeError, ValueError):
+            pass
+        if value not in levels:
+            raise W08ValidationError("invalid %s level: %s" % (column, value))
+        return value
+
+    def transform(self, frame):
+        output = pd.DataFrame(index=frame.index)
+        for column in CLINICAL_CONTINUOUS:
+            values = pd.to_numeric(frame[column], errors="coerce").replace(
+                [np.inf, -np.inf], np.nan).fillna(self.imputations[column])
+            numeric = values.to_numpy(dtype=float)
+            if not np.isfinite(numeric).all():
+                raise W08ValidationError("clinical transform has nonfinite values: %s" % column)
+            output[column] = (numeric - self.means[column]) / self.scales[column]
+        for column, levels in CLINICAL_CATEGORICAL.items():
+            values = frame[column].map(lambda value: self.imputations[column] if pd.isna(value)
+                                       else self._canonical_level(value, levels, column))
+            for level in levels[1:]:
+                output["%s=%s" % (column, level)] = values.eq(level).astype(float).to_numpy()
+        for column in CLINICAL_BINARY:
+            values = pd.to_numeric(frame[column], errors="coerce").fillna(self.imputations[column])
+            if not values.isin([0, 1]).all():
+                raise W08ValidationError("clinical transform has invalid binary values: %s" % column)
+            output[column] = values.astype(float).to_numpy()
+        return output[self.feature_names].reset_index(drop=True)
+
+
+class NumericPreprocessor(object):
+    """Training-only numeric imputation and z-scoring for G or H blocks."""
+
+    def __init__(self, columns):
+        self.columns = list(columns)
+        self.medians = {}
+        self.means = {}
+        self.scales = {}
+
+    def fit(self, frame):
+        for column in self.columns:
+            values = pd.to_numeric(frame[column], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            finite = values.dropna()
+            if finite.empty:
+                raise W08ValidationError("numeric block field is all missing: %s" % column)
+            median = float(finite.median())
+            filled = values.fillna(median).to_numpy(dtype=float)
+            mean = float(np.mean(filled))
+            scale = float(np.std(filled, ddof=0))
+            self.medians[column] = median
+            self.means[column] = mean
+            self.scales[column] = scale if scale > 0.0 else 1.0
+        return self
+
+    def transform(self, frame):
+        output = []
+        for column in self.columns:
+            values = pd.to_numeric(frame[column], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            numeric = values.fillna(self.medians[column]).to_numpy(dtype=float)
+            if not np.isfinite(numeric).all():
+                raise W08ValidationError("numeric transform is nonfinite: %s" % column)
+            output.append((numeric - self.means[column]) / self.scales[column])
+        if not output:
+            return np.empty((len(frame), 0), dtype=float)
+        return np.column_stack(output)
+
+
+class RadiomicsPreprocessor(object):
+    """Frozen-order training-only radiomics imputation/filtering/scaling."""
+
+    def __init__(self, columns):
+        self.input_columns = list(columns)
+        self.imputation_medians = {}
+        self.kept_after_missing = []
+        self.kept_after_variance = []
+        self.kept_columns = []
+        self.means = {}
+        self.scales = {}
+        self.dropped_all_nonfinite = []
+        self.dropped_near_zero_variance = []
+        self.dropped_correlation = []
+
+    @staticmethod
+    def _near_zero(values):
+        unique, counts = np.unique(values, return_counts=True)
+        if unique.size <= 1:
+            return True
+        order = np.argsort(counts)[::-1]
+        first = float(counts[order[0]])
+        second = float(counts[order[1]])
+        ratio = math.inf if second == 0.0 else first / second
+        return (float(unique.size) / float(values.size) < 0.01) and ratio > 100.0
+
+    def fit(self, frame):
+        filled = {}
+        for column in self.input_columns:
+            values = pd.to_numeric(frame[column], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            finite = values.dropna()
+            if finite.empty:
+                self.dropped_all_nonfinite.append(column)
+                continue
+            median = float(finite.median())
+            self.imputation_medians[column] = median
+            filled[column] = values.fillna(median).to_numpy(dtype=float)
+        self.kept_after_missing = [column for column in self.input_columns if column in filled]
+        for column in self.kept_after_missing:
+            if self._near_zero(filled[column]):
+                self.dropped_near_zero_variance.append(column)
+            else:
+                self.kept_after_variance.append(column)
+        # The frozen rule retains the lexicographically first feature in every
+        # correlated group.  Sorting is only for the reduction decision; the
+        # stored output remains in that same deterministic order.
+        ordered = sorted(self.kept_after_variance)
+        retained = []
+        for column in ordered:
+            candidate = filled[column]
+            correlated = False
+            for previous in retained:
+                left = candidate - np.mean(candidate)
+                right = filled[previous] - np.mean(filled[previous])
+                denom = np.sqrt(np.sum(left * left) * np.sum(right * right))
+                corr = 0.0 if denom == 0.0 else float(np.sum(left * right) / denom)
+                if abs(corr) > CORRELATION_THRESHOLD:
+                    correlated = True
+                    break
+            if correlated:
+                self.dropped_correlation.append(column)
+            else:
+                retained.append(column)
+        self.kept_columns = retained
+        for column in self.kept_columns:
+            values = filled[column]
+            self.means[column] = float(np.mean(values))
+            scale = float(np.std(values, ddof=0))
+            self.scales[column] = scale if scale > 0.0 else 1.0
+        return self
+
+    def transform(self, frame):
+        output = []
+        for column in self.kept_columns:
+            values = pd.to_numeric(frame[column], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            numeric = values.fillna(self.imputation_medians[column]).to_numpy(dtype=float)
+            if not np.isfinite(numeric).all():
+                raise W08ValidationError("radiomics transform is nonfinite: %s" % column)
+            output.append((numeric - self.means[column]) / self.scales[column])
+        if not output:
+            raise W08ValidationError("radiomics preprocessing retained no feature")
+        return np.column_stack(output)
+
+
+class ModelPreprocessor(object):
+    """Compose frozen clinical/G/radiomics preprocessing for one model."""
+
+    def __init__(self, model_id):
+        if model_id not in MODEL_SPECS:
+            raise W08ValidationError("unknown model: %s" % model_id)
+        self.model_id = model_id
+        self.spec = MODEL_SPECS[model_id]
+        self.clinical = ClinicalPreprocessor()
+        self.global_block = None
+        self.radiomics = None
+        self.feature_names = []
+
+    def fit(self, frame):
+        blocks = self.spec["blocks"]
+        self.clinical.fit(frame)
+        names = list(self.clinical.feature_names)
+        extra = []
+        if "H_high_fraction" in blocks:
+            extra.append("H_high_fraction")
+        if "G" in blocks:
+            extra.extend(GLOBAL_COLUMNS)
+        if extra:
+            self.global_block = NumericPreprocessor(extra).fit(frame)
+            names.extend(extra)
+        radiomics_columns = []
+        for block in ("R_low", "R_high", "W"):
+            if block in blocks:
+                radiomics_columns.extend(_block_columns(frame, block))
+        if radiomics_columns:
+            self.radiomics = RadiomicsPreprocessor(radiomics_columns).fit(frame)
+            names.extend(self.radiomics.kept_columns)
+        self.feature_names = names
+        return self
+
+    def transform(self, frame):
+        pieces = [self.clinical.transform(frame).to_numpy(dtype=float)]
+        if self.global_block is not None:
+            pieces.append(self.global_block.transform(frame))
+        if self.radiomics is not None:
+            pieces.append(self.radiomics.transform(frame))
+        return np.column_stack(pieces)
+
+    def audit(self):
+        return {
+            "model_id": self.model_id,
+            "feature_names": list(self.feature_names),
+            "clinical_imputations": dict(self.clinical.imputations),
+            "clinical_constant_continuous": list(self.clinical.constant_continuous),
+            "radiomics_input_count": 0 if self.radiomics is None else len(self.radiomics.input_columns),
+            "radiomics_dropped_all_nonfinite": [] if self.radiomics is None else list(self.radiomics.dropped_all_nonfinite),
+            "radiomics_dropped_near_zero_variance": [] if self.radiomics is None else list(self.radiomics.dropped_near_zero_variance),
+            "radiomics_dropped_correlation": [] if self.radiomics is None else list(self.radiomics.dropped_correlation),
+            "radiomics_kept_columns": [] if self.radiomics is None else list(self.radiomics.kept_columns),
+        }
+
+
+def _penalty_audit(run_definition, preprocessor):
+    """Materialise the frozen block penalty mask against fitted columns."""
+    definition = _run_penalty_definition(run_definition)
+    model_id = run_definition["model_id"]
+    blocks = MODEL_SPECS[model_id]["blocks"]
+    block_features = OrderedDict()
+    block_features["C"] = list(preprocessor.clinical.feature_names)
+    if "H_high_fraction" in blocks:
+        block_features["H_high_fraction"] = ["H_high_fraction"]
+    if "G" in blocks:
+        block_features["G"] = list(GLOBAL_COLUMNS)
+    if preprocessor.radiomics is not None:
+        for block in ("R_low", "R_high", "W"):
+            if block in blocks:
+                prefix = RADIOMICS_PREFIXES[block]
+                block_features[block] = [
+                    column for column in preprocessor.radiomics.kept_columns
+                    if str(column).startswith(prefix)]
+    all_features = list(preprocessor.feature_names)
+    penalized_blocks = list(definition["penalized_blocks"])
+    penalized_features = []
+    for block in penalized_blocks:
+        if block not in block_features:
+            raise W08ValidationError(
+                "penalty block %s is absent from %s design" % (block, model_id))
+        penalized_features.extend(block_features[block])
+    penalized_set = set(penalized_features)
+    if len(penalized_set) != len(penalized_features):
+        raise W08ValidationError("penalty block feature names overlap")
+    if not penalized_set.issubset(set(all_features)):
+        raise W08ValidationError("penalty mask contains an unknown feature")
+    return {
+        "model": definition["model"],
+        "model_id": model_id,
+        "family": definition["family"],
+        "penalized_blocks": penalized_blocks,
+        "penalty_semantics": definition["penalty_semantics"],
+        "intercept_semantics": definition["intercept_semantics"],
+        "intercept_in_design_matrix": False,
+        "block_feature_names": dict(block_features),
+        "all_coefficient_features": all_features,
+        "penalized_feature_names": [
+            feature for feature in all_features if feature in penalized_set],
+        "unpenalized_feature_names": [
+            feature for feature in all_features if feature not in penalized_set],
+        "penalty_mask": {
+            feature: bool(feature in penalized_set) for feature in all_features},
+    }
+
+
+@dataclass(frozen=True)
+class _CoxRiskSetLayout(object):
+    """Fold-local, beta-independent Breslow risk-set geometry."""
+
+    sorted_time: object
+    sorted_event: object
+    sorted_X: object
+    event_times: object
+    risk_endpoints: object
+    event_counts: object
+    event_X: object
+    event_count_total: int
+
+
+def _prepare_cox_risk_layout(X, time, event):
+    """Prepare stable time/risk-set geometry once per Cox fit."""
+    X = np.asarray(X, dtype=float)
+    time = np.asarray(time, dtype=float)
+    event = np.asarray(event, dtype=int)
+    if len(X) == 0 or int(np.sum(event)) == 0:
+        raise W08ValidationError("Cox fit requires at least one event")
+    order = np.argsort(-time, kind="mergesort")
+    sorted_time = time[order]
+    sorted_event = event[order]
+    sorted_X = X[order]
+    event_times = np.unique(sorted_time[sorted_event == 1])
+    risk_endpoints = []
+    event_counts = []
+    event_X = []
+    for current in event_times:
+        event_mask = (sorted_time == current) & (sorted_event == 1)
+        risk_endpoints.append(
+            int(np.searchsorted(-sorted_time, -current, side="right")) - 1)
+        event_counts.append(int(np.sum(event_mask)))
+        event_X.append(np.sum(sorted_X[event_mask], axis=0))
+    return _CoxRiskSetLayout(
+        sorted_time=sorted_time,
+        sorted_event=sorted_event,
+        sorted_X=sorted_X,
+        event_times=event_times,
+        risk_endpoints=np.asarray(risk_endpoints, dtype=int),
+        event_counts=np.asarray(event_counts, dtype=int),
+        event_X=tuple(event_X),
+        event_count_total=int(np.sum(event)),
+    )
+
+
+def _cox_components_from_layout(layout, beta):
+    """Return Breslow log-likelihood and score from prepared geometry."""
+    eta = np.clip(np.asarray(layout.sorted_X.dot(beta), dtype=float), -50.0, 50.0)
+    exp_eta = np.exp(eta)
+    cumulative_risk = np.cumsum(exp_eta)
+    cumulative_xrisk = np.cumsum(
+        layout.sorted_X * exp_eta[:, None], axis=0)
+    loglik = 0.0
+    gradient = np.zeros(layout.sorted_X.shape[1], dtype=float)
+    for last, event_count, event_x in zip(
+            layout.risk_endpoints, layout.event_counts, layout.event_X):
+        risk_sum = float(cumulative_risk[last])
+        if not np.isfinite(risk_sum) or risk_sum <= 0.0:
+            raise W08ValidationError("nonfinite Cox risk-set sum")
+        loglik += float(np.dot(event_x, beta)) - event_count * math.log(risk_sum)
+        gradient += event_x - event_count * cumulative_xrisk[last] / risk_sum
+    return float(loglik), gradient
+
+
+def _cox_components(X, time, event, beta):
+    """Return Breslow log-likelihood and score with stable risk-set sums."""
+    return _cox_components_from_layout(
+        _prepare_cox_risk_layout(X, time, event), beta)
+
+
+def _cox_information_from_layout(layout, beta):
+    """Observed Breslow information matrix from prepared geometry."""
+    eta = np.clip(layout.sorted_X.dot(beta), -50.0, 50.0)
+    exp_eta = np.exp(eta)
+    risk = np.cumsum(exp_eta)
+    xrisk = np.cumsum(layout.sorted_X * exp_eta[:, None], axis=0)
+    xxrisk = np.cumsum(
+        (layout.sorted_X[:, :, None] * layout.sorted_X[:, None, :]) *
+        exp_eta[:, None, None], axis=0)
+    information = np.zeros((layout.sorted_X.shape[1],
+                            layout.sorted_X.shape[1]), dtype=float)
+    for last, event_count in zip(layout.risk_endpoints, layout.event_counts):
+        denom = float(risk[last])
+        mean = xrisk[last] / denom
+        covariance = xxrisk[last] / denom - np.outer(mean, mean)
+        information += int(event_count) * covariance
+    return information
+
+
+def _cox_information(X, time, event, beta):
+    """Observed Breslow information matrix for the low-dimensional Cox fit."""
+    return _cox_information_from_layout(
+        _prepare_cox_risk_layout(X, time, event), beta)
+
+
+def _cox_negative_loglik(X, time, event, beta, layout=None):
+    if layout is None:
+        layout = _prepare_cox_risk_layout(X, time, event)
+    loglik, _ = _cox_components_from_layout(layout, beta)
+    return -loglik / float(layout.event_count_total)
+
+
+def _lambda_max(X, time, event, alpha):
+    layout = _prepare_cox_risk_layout(X, time, event)
+    _, score = _cox_components_from_layout(
+        layout, np.zeros(X.shape[1], dtype=float))
+    gradient = -score / float(layout.event_count_total)
+    maximum = float(np.max(np.abs(gradient)))
+    if not np.isfinite(maximum) or maximum <= 0.0:
+        return 1.0
+    return max(maximum / max(float(alpha), 1e-12), 1e-12)
+
+
+def _ridge_lambda_reference(X, time, event):
+    """Return the P3D trace(I0)/p ridge reference from one training frame."""
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2 or X.shape[1] < 1:
+        raise W08ValidationError("ridge lambda reference requires at least one feature")
+    if int(np.sum(np.asarray(event, dtype=int))) < 1:
+        raise W08ValidationError("ridge lambda reference requires an event")
+    information = _cox_information(
+        X, np.asarray(time, dtype=float), np.asarray(event, dtype=int),
+        np.zeros(X.shape[1], dtype=float)) / float(np.sum(event))
+    reference = float(np.trace(information)) / float(X.shape[1])
+    if not np.isfinite(reference) or reference <= 0.0:
+        raise W08ValidationError(
+            "ridge lambda reference is nonpositive or nonfinite")
+    return reference
+
+
+LINEAR_PREDICTOR_CLIP_LOWER = -50.0
+LINEAR_PREDICTOR_CLIP_UPPER = 50.0
+
+
+def _new_clipping_audit():
+    return {
+        "lower": LINEAR_PREDICTOR_CLIP_LOWER,
+        "upper": LINEAR_PREDICTOR_CLIP_UPPER,
+        "count": 0,
+        "contexts": [],
+    }
+
+
+def _record_linear_predictor_clipping(audit, X, beta, context):
+    raw = np.asarray(X, dtype=float).dot(np.asarray(beta, dtype=float))
+    if not np.isfinite(raw).all():
+        raise W08NumericalFailure(
+            "linear predictor is nonfinite before clipping", audit=audit)
+    clipped = (raw < LINEAR_PREDICTOR_CLIP_LOWER) | \
+        (raw > LINEAR_PREDICTOR_CLIP_UPPER)
+    if np.any(clipped):
+        audit["count"] = int(audit.get("count", 0) + int(np.sum(clipped)))
+        contexts = audit.setdefault("contexts", [])
+        if context not in contexts:
+            contexts.append(context)
+    return raw
+
+
+class CoxPHModel(object):
+    """Unpenalized Breslow Cox PH model for C/G models."""
+
+    def __init__(self, max_iter=200, tolerance=1e-8):
+        self.max_iter = int(max_iter)
+        self.tolerance = float(tolerance)
+        self.coef_ = None
+        self.baseline_times_ = None
+        self.baseline_survival_ = None
+        self.fit_audit = {}
+
+    def fit(self, X, time, event):
+        X = np.asarray(X, dtype=float)
+        time = np.asarray(time, dtype=float)
+        event = np.asarray(event, dtype=int)
+        # A model instance may be reused after a prior successful fit.  Clear
+        # all predictive state before starting a new attempt so a failed fit
+        # can never expose stale coefficients or a stale baseline.
+        self.coef_ = None
+        self.baseline_times_ = None
+        self.baseline_survival_ = None
+        self.fit_audit = {}
+        if np.sum(event) < 1:
+            raise W08ValidationError("unpenalized Cox fit requires an event")
+        layout = _prepare_cox_risk_layout(X, time, event)
+        beta = np.zeros(X.shape[1], dtype=float)
+        clipping = _new_clipping_audit()
+        converged = False
+        line_search_backtracking_count = 0
+        last_objective = None
+        last_objective_improvement = None
+        last_coefficient_delta = None
+        for iteration in range(self.max_iter):
+            _record_linear_predictor_clipping(clipping, X, beta, "fit")
+            loglik, score = _cox_components_from_layout(layout, beta)
+            old = -loglik / float(layout.event_count_total)
+            last_objective = old
+            gradient = -score / float(layout.event_count_total)
+            information = _cox_information_from_layout(
+                layout, beta) / float(layout.event_count_total)
+            ridge = 1e-8 * max(1.0, float(np.trace(information)))
+            try:
+                step = np.linalg.solve(information + ridge * np.eye(X.shape[1]), gradient)
+            except np.linalg.LinAlgError:
+                step = gradient
+            if not np.isfinite(step).all():
+                step = np.nan_to_num(step, nan=0.0, posinf=1.0, neginf=-1.0)
+            length = 1.0
+            accepted = False
+            while length >= 1e-8:
+                proposal = beta - length * step
+                _record_linear_predictor_clipping(clipping, X, proposal,
+                                                  "fit_line_search")
+                proposal_loglik, _ = _cox_components_from_layout(
+                    layout, proposal)
+                new = -proposal_loglik / float(layout.event_count_total)
+                if np.isfinite(new) and new <= old + 1e-12:
+                    beta = proposal
+                    last_objective_improvement = old - new
+                    last_coefficient_delta = float(np.max(np.abs(length * step)))
+                    accepted = True
+                    break
+                line_search_backtracking_count += 1
+                length *= 0.5
+            if not accepted:
+                audit = {
+                    "iterations": iteration + 1,
+                    "converged": False,
+                    "fit_status": "non_converged",
+                    "convergence_reason": None,
+                    "failure_reason": "line_search_failed",
+                    "stability_actions": ["line_search_failed"],
+                    "linear_predictor_clipping": clipping,
+                    "line_search_backtracking_count": int(
+                        line_search_backtracking_count),
+                    "last_objective": last_objective,
+                    "last_objective_improvement": last_objective_improvement,
+                    "last_coefficient_delta": last_coefficient_delta,
+                }
+                self.fit_audit = _finalise_fit_audit(audit)
+                raise W08NumericalFailure(
+                    "Unpenalized Cox line search failed", audit=self.fit_audit)
+            if np.max(np.abs(length * step)) < self.tolerance:
+                converged = True
+                break
+        if not converged:
+            audit = {
+                "iterations": self.max_iter,
+                "converged": False,
+                "fit_status": "non_converged",
+                "convergence_reason": None,
+                "failure_reason": "iteration_budget_exhausted",
+                "stability_actions": ["iteration_budget_exhausted"],
+                "linear_predictor_clipping": clipping,
+                "line_search_backtracking_count": int(
+                    line_search_backtracking_count),
+                "last_objective": last_objective,
+                "last_objective_improvement": last_objective_improvement,
+                "last_coefficient_delta": last_coefficient_delta,
+            }
+            self.fit_audit = _finalise_fit_audit(audit)
+            raise W08NumericalFailure(
+                "Unpenalized Cox fit did not converge", audit=self.fit_audit)
+        self.coef_ = beta
+        self.fit_audit = _finalise_fit_audit({
+            "iterations": iteration + 1,
+            "converged": True,
+            "fit_status": "converged",
+            "convergence_reason": "coefficient_delta",
+            "stability_actions": [],
+            "linear_predictor_clipping": clipping,
+            "line_search_backtracking_count": int(
+                line_search_backtracking_count),
+            "last_objective": last_objective,
+            "last_objective_improvement": last_objective_improvement,
+            "last_coefficient_delta": last_coefficient_delta,
+        })
+        self._fit_baseline(X, time, event, layout=layout)
+        return self
+
+    def _fit_baseline(self, X, time, event, layout=None):
+        beta = self.coef_
+        if self.fit_audit:
+            _record_linear_predictor_clipping(
+                self.fit_audit["linear_predictor_clipping"], X, beta, "baseline")
+        if layout is None:
+            layout = _prepare_cox_risk_layout(X, time, event)
+        eta = np.clip(layout.sorted_X.dot(beta), -50.0, 50.0)
+        risk = np.cumsum(np.exp(eta))
+        times = []
+        survival = []
+        cumulative = 0.0
+        for current, last, event_count in zip(
+                layout.event_times, layout.risk_endpoints, layout.event_counts):
+            cumulative += float(event_count) / float(risk[last])
+            times.append(float(current))
+            survival.append(math.exp(-cumulative))
+        self.baseline_times_ = np.asarray(times, dtype=float)
+        self.baseline_survival_ = np.asarray(survival, dtype=float)
+
+    def predict_risk(self, X):
+        if self.coef_ is None or not self.fit_audit.get("converged", False) or \
+                self.fit_audit.get("fit_status") != "converged":
+            raise W08ValidationError("Cox model is not fitted")
+        return np.asarray(X, dtype=float).dot(self.coef_)
+
+    def predict_survival(self, X, horizons):
+        risk = self.predict_risk(X)
+        if self.fit_audit:
+            _record_linear_predictor_clipping(
+                self.fit_audit["linear_predictor_clipping"], X, self.coef_,
+                "prediction_survival")
+        output = {}
+        for name, horizon in horizons.items():
+            index = np.searchsorted(self.baseline_times_, float(horizon), side="right") - 1
+            baseline = 1.0 if index < 0 else float(self.baseline_survival_[index])
+            hazard = -math.log(max(baseline, 1e-300))
+            output[name] = np.exp(-hazard * np.exp(np.clip(risk, -50.0, 50.0)))
+        return output
+
+
+class CoxElasticNetModel(object):
+    """Elastic-Net Cox fit using a deterministic proximal-gradient solver.
+
+    The stable risk-set implementation clips only the linear predictor used in
+    exponentiation to [-50, 50].  This is recorded in ``fit_audit`` when it is
+    encountered.  Candidate paths are never dropped because of a low penalty;
+    a failed line search retries with a smaller step and a minimal ridge
+    stabilization before raising a hard, auditable error.
+    """
+
+    def __init__(self, alpha, penalty, max_iter=ELASTIC_NET_MAX_ITER,
+                 tolerance=ELASTIC_NET_TOLERANCE):
+        self.alpha = float(alpha)
+        self.penalty = float(penalty)
+        self.max_iter = int(max_iter)
+        self.tolerance = float(tolerance)
+        self.coef_ = None
+        self.baseline_times_ = None
+        self.baseline_survival_ = None
+        self.fit_audit = {}
+
+    def _smooth_from_layout(self, layout, beta):
+        loglik, score = _cox_components_from_layout(layout, beta)
+        value = -loglik / float(layout.event_count_total)
+        gradient = -score / float(layout.event_count_total)
+        ridge = self.penalty * (1.0 - self.alpha)
+        value += 0.5 * ridge * float(np.dot(beta, beta))
+        gradient = gradient + ridge * beta
+        return value, gradient
+
+    def _objective_from_layout(self, layout, beta):
+        loglik, _ = _cox_components_from_layout(layout, beta)
+        value = -loglik / float(layout.event_count_total)
+        value += self.penalty * self.alpha * float(np.sum(np.abs(beta)))
+        value += 0.5 * self.penalty * (1.0 - self.alpha) * float(np.dot(beta, beta))
+        return value
+
+    def _smooth(self, X, time, event, beta):
+        return self._smooth_from_layout(
+            _prepare_cox_risk_layout(X, time, event), beta)
+
+    def _objective(self, X, time, event, beta):
+        return self._objective_from_layout(
+            _prepare_cox_risk_layout(X, time, event), beta)
+
+    def fit(self, X, time, event):
+        X = np.asarray(X, dtype=float)
+        time = np.asarray(time, dtype=float)
+        event = np.asarray(event, dtype=int)
+        # Clear predictive state before every attempt so a later numerical
+        # failure cannot expose coefficients or a baseline from an earlier fit.
+        self.coef_ = None
+        self.baseline_times_ = None
+        self.baseline_survival_ = None
+        self.fit_audit = {}
+        if np.sum(event) < 1:
+            raise W08ValidationError("Elastic-Net Cox fit requires an event")
+        layout = _prepare_cox_risk_layout(X, time, event)
+        beta = np.zeros(X.shape[1], dtype=float)
+        clipping = _new_clipping_audit()
+        previous = beta.copy()
+        step = 1.0
+        actions = []
+        converged = False
+        convergence_reason = None
+        line_search_backtracking_count = 0
+        last_objective = None
+        last_objective_improvement = None
+        last_coefficient_delta = None
+        for iteration in range(self.max_iter):
+            _record_linear_predictor_clipping(clipping, X, beta, "fit")
+            loglik_y, score_y = _cox_components_from_layout(layout, beta)
+            negative_loglik_y = -loglik_y / float(layout.event_count_total)
+            ridge = self.penalty * (1.0 - self.alpha)
+            smooth_y = negative_loglik_y
+            smooth_y += 0.5 * ridge * float(np.dot(beta, beta))
+            gradient_y = -score_y / float(layout.event_count_total)
+            gradient_y = gradient_y + ridge * beta
+            previous_objective = negative_loglik_y
+            previous_objective += self.penalty * self.alpha * float(
+                np.sum(np.abs(beta)))
+            previous_objective += 0.5 * self.penalty * (1.0 - self.alpha) * \
+                float(np.dot(beta, beta))
+            accepted = False
+            local_step = step
+            for _ in range(60):
+                proposal = np.sign(beta - local_step * gradient_y) * np.maximum(
+                    np.abs(beta - local_step * gradient_y) - local_step * self.penalty * self.alpha, 0.0)
+                if not np.isfinite(proposal).all():
+                    local_step *= 0.5
+                    line_search_backtracking_count += 1
+                    actions.append("backtrack_nonfinite")
+                    continue
+                _record_linear_predictor_clipping(
+                    clipping, X, proposal, "fit_line_search")
+                delta = proposal - beta
+                quadratic = smooth_y + float(np.dot(gradient_y, delta)) + float(np.dot(delta, delta)) / (2.0 * local_step)
+                proposal_loglik, _ = _cox_components_from_layout(
+                    layout, proposal)
+                actual_negative_loglik = -proposal_loglik / float(
+                    layout.event_count_total)
+                actual_smooth = actual_negative_loglik
+                actual_smooth += 0.5 * ridge * float(np.dot(proposal, proposal))
+                if np.isfinite(actual_smooth) and actual_smooth <= quadratic + 1e-10:
+                    accepted = True
+                    last_coefficient_delta = float(
+                        np.max(np.abs(proposal - beta)))
+                    beta = proposal
+                    step = min(local_step * 1.25, 1e6)
+                    break
+                local_step *= 0.5
+                line_search_backtracking_count += 1
+                actions.append("backtrack_objective")
+            if not accepted:
+                actions.append("line_search_failed")
+                audit = {
+                    "iterations": iteration + 1,
+                    "converged": False,
+                    "fit_status": "non_converged",
+                    "convergence_reason": None,
+                    "failure_reason": "line_search_failed",
+                    "stability_actions": sorted(set(actions)),
+                    "nonzero_coefficients": None,
+                    "linear_predictor_clipping": clipping,
+                    "line_search_backtracking_count": int(
+                        line_search_backtracking_count),
+                    "last_objective": previous_objective,
+                    "last_objective_improvement": last_objective_improvement,
+                    "last_coefficient_delta": last_coefficient_delta,
+                }
+                self.coef_ = None
+                self.fit_audit = _finalise_fit_audit(audit)
+                raise W08NumericalFailure(
+                    "Elastic-Net Cox line search failed", audit=self.fit_audit)
+            objective = actual_negative_loglik
+            objective += self.penalty * self.alpha * float(
+                np.sum(np.abs(beta)))
+            objective += 0.5 * self.penalty * (1.0 - self.alpha) * \
+                float(np.dot(beta, beta))
+            objective_improvement = previous_objective - objective
+            last_objective = objective
+            last_objective_improvement = objective_improvement
+            objective_tolerance = self.tolerance * max(
+                1.0, abs(previous_objective)) * 10.0
+            if np.max(np.abs(beta - previous)) < self.tolerance:
+                converged = True
+                convergence_reason = "coefficient_delta"
+                break
+            if np.isfinite(objective_improvement) and \
+                    -1e-12 <= objective_improvement <= objective_tolerance:
+                converged = True
+                convergence_reason = "objective_stagnation"
+                break
+            previous = beta.copy()
+        if not converged:
+            audit = {
+                "iterations": iteration + 1,
+                "converged": False,
+                "fit_status": "non_converged",
+                "convergence_reason": None,
+                "failure_reason": "iteration_budget_exhausted",
+                "stability_actions": sorted(set(actions + [
+                    "iteration_budget_exhausted"])) or ["stable_path"],
+                "nonzero_coefficients": None,
+                "linear_predictor_clipping": clipping,
+                "line_search_backtracking_count": int(
+                    line_search_backtracking_count),
+                "last_objective": last_objective,
+                "last_objective_improvement": last_objective_improvement,
+                "last_coefficient_delta": last_coefficient_delta,
+            }
+            self.coef_ = None
+            self.fit_audit = _finalise_fit_audit(audit)
+            raise W08NumericalFailure(
+                "Elastic-Net Cox fit did not converge", audit=self.fit_audit)
+        self.coef_ = beta
+        self.fit_audit = _finalise_fit_audit({
+            "iterations": iteration + 1,
+            "converged": True,
+            "fit_status": "converged",
+            "convergence_reason": convergence_reason,
+            "stability_actions": sorted(set(actions)) or ["stable_path"],
+            "nonzero_coefficients": int(np.sum(np.abs(beta) > 1e-10)),
+            "linear_predictor_clipping": clipping,
+            "line_search_backtracking_count": int(
+                line_search_backtracking_count),
+            "last_objective": last_objective,
+            "last_objective_improvement": last_objective_improvement,
+            "last_coefficient_delta": last_coefficient_delta,
+        })
+        self._fit_baseline(X, time, event, layout=layout)
+        return self
+
+    def _fit_baseline(self, X, time, event, layout=None):
+        _record_linear_predictor_clipping(
+            self.fit_audit["linear_predictor_clipping"], X, self.coef_, "baseline")
+        helper = CoxPHModel()
+        helper.coef_ = self.coef_
+        helper._fit_baseline(X, time, event, layout=layout)
+        self.baseline_times_ = helper.baseline_times_
+        self.baseline_survival_ = helper.baseline_survival_
+
+    def predict_risk(self, X):
+        if self.coef_ is None or not self.fit_audit.get("converged", False) or \
+                self.fit_audit.get("fit_status") != "converged":
+            raise W08ValidationError("Elastic-Net model is not fitted")
+        return np.asarray(X, dtype=float).dot(self.coef_)
+
+    def predict_survival(self, X, horizons):
+        risk = self.predict_risk(X)
+        _record_linear_predictor_clipping(
+            self.fit_audit["linear_predictor_clipping"], X, self.coef_,
+            "prediction_survival")
+        output = {}
+        for name, horizon in horizons.items():
+            index = np.searchsorted(self.baseline_times_, float(horizon), side="right") - 1
+            baseline = 1.0 if index < 0 else float(self.baseline_survival_[index])
+            hazard = -math.log(max(baseline, 1e-300))
+            output[name] = np.exp(-hazard * np.exp(np.clip(risk, -50.0, 50.0)))
+        return output
+
+
+class CoxRidgeModel(CoxElasticNetModel):
+    """Pure-ridge Cox model used only by the prespecified P3D sensitivities."""
+
+    def __init__(self, penalty, max_iter=250, tolerance=1e-7):
+        super(CoxRidgeModel, self).__init__(
+            alpha=0.0, penalty=penalty, max_iter=max_iter, tolerance=tolerance)
+
+    def fit(self, X, time, event):
+        super(CoxRidgeModel, self).fit(X, time, event)
+        self.fit_audit.update({
+            "family": "pure_ridge_Cox",
+            "alpha": 0.0,
+            "penalty_semantics": _RIDGE_PENALTY_SEMANTICS,
+        })
+        return self
+
+
+def _require_converged_model(model, context):
+    """Reject any model that cannot be audited as a valid fitted model."""
+    audit = dict(getattr(model, "fit_audit", {}) or {})
+    valid = (audit.get("converged") is True and
+             audit.get("fit_status") == "converged" and
+             getattr(model, "coef_", None) is not None)
+    if valid:
+        return model
+    if not audit.get("failure_reason"):
+        audit["failure_reason"] = (
+            "missing_coefficients" if getattr(model, "coef_", None) is None
+            else "non_converged_model")
+    audit["converged"] = False
+    audit["fit_status"] = "non_converged"
+    model.coef_ = None
+    model.baseline_times_ = None
+    model.baseline_survival_ = None
+    model.fit_audit = audit
+    raise W08NumericalFailure(
+        "%s did not converge" % context, audit=audit)
+
+
+def make_inner_splits(frame, seed, folds=5):
+    events = pd.to_numeric(frame["DFS_event"], errors="coerce").to_numpy(dtype=int)
+    counts = np.bincount(events, minlength=2)
+    if int(np.min(counts)) < int(folds):
+        raise W08ValidationError("inner event gate failed; cannot reduce the five folds")
+    splitter = StratifiedKFold(n_splits=int(folds), shuffle=True, random_state=int(seed))
+    indices = np.arange(len(frame))
+    output = []
+    for train_idx, validation_idx in splitter.split(indices, events):
+        if int(np.sum(events[train_idx])) < 1 or int(np.sum(events[validation_idx])) < 1:
+            raise W08ValidationError("inner train/validation event gate failed")
+        output.append((train_idx, validation_idx))
+    return output
+
+
+@dataclass(frozen=True)
+class _UnoCIndexLayout(object):
+    """Inner-fold censoring weights and comparable pairs, prepared once."""
+
+    event_indices: object
+    weights: object
+    comparable_pairs: object
+
+
+def _km_censoring_survival(train_time, train_event, query, left=True):
+    """Kaplan-Meier estimate of censoring survival G(t), from training only."""
+    time = np.asarray(train_time, dtype=float)
+    censor_event = 1 - np.asarray(train_event, dtype=int)
+    value = 1.0
+    for current in np.unique(time[censor_event == 1]):
+        if (current < query) if left else (current <= query):
+            at_risk = int(np.sum(time >= current))
+            deaths = int(np.sum((time == current) & (censor_event == 1)))
+            if at_risk > 0:
+                value *= (1.0 - float(deaths) / float(at_risk))
+    return max(float(value), 0.0)
+
+
+def harrell_c_index(time, event, risk):
+    time = np.asarray(time, dtype=float)
+    event = np.asarray(event, dtype=int)
+    risk = np.asarray(risk, dtype=float)
+    concordant = tied = comparable = 0.0
+    for i in range(len(time)):
+        if event[i] != 1:
+            continue
+        later = np.where(time > time[i])[0]
+        for j in later:
+            comparable += 1.0
+            if risk[i] > risk[j]:
+                concordant += 1.0
+            elif risk[i] == risk[j]:
+                tied += 1.0
+    if comparable == 0.0:
+        return float("nan")
+    return float((concordant + 0.5 * tied) / comparable)
+
+
+def _prepare_uno_c_index_layout(train_time, train_event,
+                                validation_time, validation_event):
+    """Prepare inner-fold Uno geometry without any candidate risk values."""
+    train_time = np.asarray(train_time, dtype=float)
+    train_event = np.asarray(train_event, dtype=int)
+    time = np.asarray(validation_time, dtype=float)
+    event = np.asarray(validation_event, dtype=int)
+    event_indices = []
+    weights = []
+    comparable_pairs = []
+    for i in range(len(time)):
+        if event[i] != 1:
+            continue
+        censor_survival = _km_censoring_survival(
+            train_time, train_event, time[i], left=True)
+        if censor_survival <= 1e-12:
+            continue
+        event_indices.append(int(i))
+        weights.append(float(1.0 / (censor_survival * censor_survival)))
+        comparable_pairs.append(tuple(
+            int(index) for index in np.where(time > time[i])[0]))
+    return _UnoCIndexLayout(
+        event_indices=tuple(event_indices),
+        weights=tuple(weights),
+        comparable_pairs=tuple(comparable_pairs))
+
+
+def _uno_c_index_from_layout(layout, risk):
+    risk = np.asarray(risk, dtype=float)
+    concordant = tied = comparable = 0.0
+    for i, weight, later in zip(
+            layout.event_indices, layout.weights, layout.comparable_pairs):
+        for j in later:
+            comparable += weight
+            if risk[i] > risk[j]:
+                concordant += weight
+            elif risk[i] == risk[j]:
+                tied += weight
+    if comparable == 0.0:
+        return float("nan")
+    return float((concordant + 0.5 * tied) / comparable)
+
+
+def uno_c_index(train_time, train_event, validation_time, validation_event, risk):
+    layout = _prepare_uno_c_index_layout(
+        train_time, train_event, validation_time, validation_event)
+    return _uno_c_index_from_layout(layout, risk)
+
+
+def _ipcw_weights(train_time, train_event, validation_time, validation_event, horizon):
+    weights = np.zeros(len(validation_time), dtype=float)
+    observed = np.zeros(len(validation_time), dtype=float)
+    for index, (time, event) in enumerate(zip(validation_time, validation_event)):
+        if time <= horizon and event == 1:
+            g = _km_censoring_survival(train_time, train_event, time, left=True)
+            observed[index] = 0.0
+            weights[index] = 0.0 if g <= 1e-12 else 1.0 / g
+        elif time > horizon:
+            g = _km_censoring_survival(train_time, train_event, horizon, left=False)
+            observed[index] = 1.0
+            weights[index] = 0.0 if g <= 1e-12 else 1.0 / g
+    return observed, weights
+
+
+def _safe_metric(value, reason=None):
+    if value is None or not np.isfinite(float(value)):
+        return float("nan"), reason or "not_estimable"
+    return float(value), ""
+
+
+def evaluate_metrics(train_time, train_event, validation_time, validation_event,
+                     risk, survival_predictions, survival_grid=None):
+    result = {}
+    value, reason = _safe_metric(harrell_c_index(validation_time, validation_event, risk))
+    result["harrell_c_index"] = value
+    result["harrell_c_index_reason"] = reason
+    value, reason = _safe_metric(uno_c_index(
+        train_time, train_event, validation_time, validation_event, risk))
+    result["uno_c_index"] = value
+    result["uno_c_index_reason"] = reason
+    brier_values = []
+    for name, horizon in HORIZONS_MONTHS.items():
+        observed, weights = _ipcw_weights(
+            train_time, train_event, validation_time, validation_event, horizon)
+        predicted_survival = np.asarray(survival_predictions[name], dtype=float)
+        if np.sum(weights > 0) == 0:
+            brier = float("nan")
+            auc = float("nan")
+            slope = float("nan")
+            intercept = float("nan")
+            metric_reason = "no_positive_IPCW_weight"
+        else:
+            predicted_risk = 1.0 - predicted_survival
+            residual = observed - predicted_survival
+            brier = float(np.sum(weights * residual * residual) / np.sum(weights))
+            cases = (weights > 0) & (observed == 0)
+            controls = (weights > 0) & (observed == 1)
+            if not np.any(cases) or not np.any(controls):
+                auc = float("nan")
+                auc_reason = "missing_case_or_control"
+            else:
+                numerator = denominator = 0.0
+                for i in np.where(cases)[0]:
+                    for j in np.where(controls)[0]:
+                        pair_weight = weights[i] * weights[j]
+                        denominator += pair_weight
+                        if predicted_risk[i] > predicted_risk[j]:
+                            numerator += pair_weight
+                        elif predicted_risk[i] == predicted_risk[j]:
+                            numerator += 0.5 * pair_weight
+                auc = float("nan") if denominator == 0.0 else numerator / denominator
+                auc_reason = ""
+            x = np.log(np.clip(predicted_risk, 1e-8, 1.0 - 1e-8) /
+                       np.clip(1.0 - predicted_risk, 1e-8, 1.0))
+            valid = weights > 0
+            x_mean = float(np.average(x[valid], weights=weights[valid]))
+            y_mean = float(np.average((1.0 - observed[valid]), weights=weights[valid]))
+            variance = float(np.average((x[valid] - x_mean) ** 2, weights=weights[valid]))
+            slope = float(np.average((x[valid] - x_mean) *
+                                     ((1.0 - observed[valid]) - y_mean),
+                                     weights=weights[valid]) / variance) if variance > 0 else float("nan")
+            intercept = float(y_mean - (0.0 if not np.isfinite(slope) else slope * x_mean))
+            metric_reason = ""
+        result["%s_auc" % name] = auc
+        result["%s_auc_reason" % name] = metric_reason if not np.isfinite(auc) else ""
+        result["%s_brier" % name] = brier
+        result["%s_brier_reason" % name] = metric_reason if not np.isfinite(brier) else ""
+        result["%s_calibration_slope" % name] = slope
+        result["%s_calibration_slope_reason" % name] = metric_reason if not np.isfinite(slope) else ""
+        result["%s_calibration_in_the_large" % name] = intercept
+        result["%s_calibration_in_the_large_reason" % name] = metric_reason if not np.isfinite(intercept) else ""
+        if np.isfinite(brier):
+            brier_values.append((float(horizon), brier))
+    if survival_grid:
+        # Integrate fixed-month IPCW Brier values from 0 through 60 months;
+        # horizon-specific 3/5-year values above remain independently reported.
+        integrated_values = [(0.0, 0.0)]
+        for key, horizon in survival_grid["horizons"].items():
+            observed, weights = _ipcw_weights(
+                train_time, train_event, validation_time, validation_event, horizon)
+            prediction = np.asarray(survival_grid["predictions"][key], dtype=float)
+            if np.sum(weights > 0) == 0:
+                continue
+            residual = observed - prediction
+            integrated_values.append((float(horizon), float(
+                np.sum(weights * residual * residual) / np.sum(weights))))
+        if len(integrated_values) >= 2:
+            integrate = getattr(np, "trapezoid", getattr(np, "trapz", None))
+            result["integrated_brier_5_year"] = float(integrate(
+                [value for _, value in integrated_values],
+                [time for time, _ in integrated_values]) / 60.0)
+            result["integrated_brier_5_year_reason"] = ""
+        else:
+            result["integrated_brier_5_year"] = float("nan")
+            result["integrated_brier_5_year_reason"] = "no_estimable_integrated_grid_horizon"
+    elif len(brier_values) >= 2:
+        integrate = getattr(np, "trapezoid", getattr(np, "trapz", None))
+        result["integrated_brier_5_year"] = float(integrate(
+            [value for _, value in brier_values], [time for time, _ in brier_values]) /
+            (brier_values[-1][0] - brier_values[0][0]))
+        result["integrated_brier_5_year_reason"] = ""
+    else:
+        result["integrated_brier_5_year"] = float("nan")
+        result["integrated_brier_5_year_reason"] = "fewer_than_two_estimable_horizons"
+    return result
+
+
+def _select_candidate(records):
+    valid = [record for record in records
+             if not record.get("candidate_failed", False) and
+             np.isfinite(record["mean_uno_c_index"])]
+    if not valid:
+        raise W08ValidationError("inner Uno C-index is not estimable for any candidate")
+    best = max(record["mean_uno_c_index"] for record in valid)
+    tied = [record for record in valid if best - record["mean_uno_c_index"] <= 1e-12]
+    # Larger lambda means larger ratio; remaining tie is the smaller alpha in
+    # the frozen alpha-grid order (the index is the frozen order).
+    tied.sort(key=lambda record: (-record["lambda_ratio"], record["alpha_index"]))
+    return tied[0]
+
+
+def tune_elastic_net(raw_frame, model_id, inner_seed, lambda_count=LAMBDA_COUNT,
+                     max_iter=ELASTIC_NET_MAX_ITER,
+                     tolerance=ELASTIC_NET_TOLERANCE, failure_context=None):
+    """Tune alpha and lambda using only the supplied outer-training frame."""
+    if model_id not in MODEL_SPECS or MODEL_SPECS[model_id]["family"] != "Elastic_Net_Cox":
+        raise W08ValidationError("inner tuning is only for Elastic-Net models")
+    inner_splits = make_inner_splits(raw_frame, inner_seed, folds=5)
+    ratios = np.geomspace(1.0, LAMBDA_MIN_RATIO, int(lambda_count))
+    records = []
+    stability_actions = []
+    for inner_index, (train_idx, validation_idx) in enumerate(inner_splits, start=1):
+        inner_train = raw_frame.iloc[train_idx].reset_index(drop=True)
+        inner_validation = raw_frame.iloc[validation_idx].reset_index(drop=True)
+        preprocessor = ModelPreprocessor(model_id).fit(inner_train)
+        X_train = preprocessor.transform(inner_train)
+        X_validation = preprocessor.transform(inner_validation)
+        train_time = inner_train["DFS_time"].to_numpy(dtype=float)
+        train_event = inner_train["DFS_event"].to_numpy(dtype=int)
+        validation_time = inner_validation["DFS_time"].to_numpy(dtype=float)
+        validation_event = inner_validation["DFS_event"].to_numpy(dtype=int)
+        uno_layout = _prepare_uno_c_index_layout(
+            train_time, train_event, validation_time, validation_event)
+        censoring = {"train_ids_hash": canonical_id_hash(inner_train["patient_id"]),
+                     "validation_ids_hash": canonical_id_hash(inner_validation["patient_id"])}
+        for alpha_index, alpha in enumerate(ALPHA_GRID):
+            maximum = _lambda_max(X_train, train_time, train_event, alpha)
+            scores = []
+            for lambda_index, ratio in enumerate(ratios):
+                penalty = float(maximum * ratio)
+                record = {
+                    "inner_fold": inner_index,
+                    "alpha": float(alpha),
+                    "alpha_index": int(alpha_index),
+                    "lambda_index": int(lambda_index),
+                    "lambda_ratio": float(ratio),
+                    "inner_lambda_max": float(maximum),
+                    "inner_lambda": penalty,
+                    "uno_c_index": float("nan"),
+                    "inner_train_ids_hash": censoring["train_ids_hash"],
+                    "inner_validation_ids_hash": censoring["validation_ids_hash"],
+                    "candidate_attempted": True,
+                    "candidate_failed": False,
+                    "failure_reason": "",
+                    "converged": False,
+                    "fit_status": "not_started",
+                    "convergence_reason": None,
+                    "stability_actions": [],
+                    "linear_predictor_clipping": _new_clipping_audit(),
+                    "failure_stage": None,
+                    "iterations": None,
+                    "convergence_status": "not_started",
+                    "line_search_backtracking_count": 0,
+                    "linear_predictor_clipping_count": 0,
+                }
+                try:
+                    model = CoxElasticNetModel(
+                            alpha, penalty, max_iter=max_iter,
+                            tolerance=tolerance).fit(
+                            X_train, train_time, train_event)
+                    _require_converged_model(
+                        model, "inner Elastic-Net Cox candidate")
+                    risk = model.predict_risk(X_validation)
+                    if not np.isfinite(risk).all():
+                        raise W08NumericalFailure(
+                            "candidate linear predictor is nonfinite",
+                            audit=model.fit_audit)
+                    score = _uno_c_index_from_layout(uno_layout, risk)
+                    if not np.isfinite(score):
+                        score = float("nan")
+                    record["uno_c_index"] = float(score)
+                    record["converged"] = bool(model.fit_audit.get("converged"))
+                    record["fit_status"] = model.fit_audit.get(
+                        "fit_status", "unknown")
+                    record["convergence_reason"] = model.fit_audit.get(
+                        "convergence_reason")
+                    record["stability_actions"] = list(
+                        model.fit_audit.get("stability_actions", []))
+                    record["linear_predictor_clipping"] = model.fit_audit.get(
+                        "linear_predictor_clipping", _new_clipping_audit())
+                    record.update(_solver_observability(model.fit_audit))
+                    stability_actions.extend(record["stability_actions"])
+                except W08NumericalFailure as exc:
+                    candidate_context = dict(failure_context or {})
+                    candidate_context.update({
+                        "failure_stage": "inner_candidate",
+                        "inner_fold": int(inner_index),
+                        "alpha": float(alpha),
+                        "alpha_index": int(alpha_index),
+                        "lambda_index": int(lambda_index),
+                        "lambda_ratio": float(ratio),
+                        "lambda": float(penalty),
+                        "n_train": int(len(inner_train)),
+                        "train_events": int(np.sum(train_event)),
+                        "n_validation": int(len(inner_validation)),
+                        "validation_events": int(np.sum(validation_event)),
+                        "preprocessing_p": int(len(preprocessor.feature_names)),
+                        "preprocessing_feature_block_counts":
+                            _feature_block_counts(preprocessor),
+                    })
+                    _attach_failure_context(exc, candidate_context)
+                    audit = exc.audit or {}
+                    _attach_failure_context(
+                        exc, dict(candidate_context, **_solver_observability(audit)))
+                    audit = exc.audit or {}
+                    record["candidate_failed"] = True
+                    record["failure_reason"] = str(exc)
+                    record["exception_class"] = exc.__class__.__name__
+                    record["failure_stage"] = "inner_candidate"
+                    record["failure_context"] = dict(
+                        audit.get("failure_context", candidate_context))
+                    record["preprocessing_p"] = int(
+                        candidate_context["preprocessing_p"])
+                    record["preprocessing_feature_block_counts"] = dict(
+                        candidate_context["preprocessing_feature_block_counts"])
+                    record["fit_status"] = audit.get("fit_status", "non_converged")
+                    record["convergence_reason"] = audit.get("convergence_reason")
+                    record["converged"] = False
+                    record["stability_actions"] = list(
+                        audit.get("stability_actions", []))
+                    record["linear_predictor_clipping"] = audit.get(
+                        "linear_predictor_clipping", _new_clipping_audit())
+                    record.update(_solver_observability(audit))
+                    record["failure_reason"] = str(exc)
+                    stability_actions.extend(record["stability_actions"])
+                scores.append(record["uno_c_index"])
+                records.append(record)
+    grouped = {}
+    for record in records:
+        key = (record["alpha_index"], record["lambda_index"])
+        grouped.setdefault(key, []).append(record["uno_c_index"])
+    summary = []
+    for (alpha_index, lambda_index), scores in grouped.items():
+        finite = [score for score in scores if np.isfinite(score)]
+        summary.append({
+            "alpha": float(ALPHA_GRID[alpha_index]),
+            "alpha_index": int(alpha_index),
+            "lambda_index": int(lambda_index),
+            "lambda_ratio": float(ratios[lambda_index]),
+            "mean_uno_c_index": float(np.mean(finite)) if finite else float("nan"),
+            "n_estimable_inner_scores": int(len(finite)),
+            "n_inner_scores": int(len(scores)),
+        })
+    try:
+        selected = _select_candidate(summary)
+    except W08ValidationError as exc:
+        selection_context = dict(failure_context or {})
+        selection_context.update({
+            "failure_stage": "inner_candidate_selection",
+            "inner_seed": int(inner_seed),
+            "candidate_attempts": int(len(records)),
+            "candidate_failures": int(sum(
+                row["candidate_failed"] for row in records)),
+        })
+        raise W08CandidateSelectionFailure(
+            str(exc), audit={
+                "failure_stage": "inner_candidate_selection",
+                "failure_context": selection_context,
+                "candidate_attempts": int(len(records)),
+                "candidate_failures": int(sum(
+                    row["candidate_failed"] for row in records)),
+                "candidate_records": records,
+                "stability_actions": sorted(set(stability_actions)),
+            })
+    selected = dict(selected)
+    selected["candidate_attempts"] = int(len(records))
+    selected["candidate_failures"] = int(sum(
+        row["candidate_failed"] for row in records))
+    selected["inner_folds"] = int(len(inner_splits))
+    selected["lambda_count"] = int(lambda_count)
+    selected["all_inner_records"] = records
+    selected["stability_actions"] = sorted(set(stability_actions)) or ["stable_path"]
+    return selected
+
+
+def tune_ridge(raw_frame, model_id, inner_seed, lambda_count=RIDGE_LAMBDA_COUNT,
+               max_iter=250, tolerance=1e-7, failure_context=None):
+    """Tune a P3D pure-ridge sensitivity using outer-training data only."""
+    if model_id not in ("M0", "M1", "M2"):
+        raise W08ValidationError(
+            "ridge sensitivity tuning is only for M0/M1/M2 blocks")
+    inner_splits = make_inner_splits(raw_frame, inner_seed, folds=5)
+    ratios = np.geomspace(
+        RIDGE_LAMBDA_MAX_RATIO, RIDGE_LAMBDA_MIN_RATIO, int(lambda_count))
+    records = []
+    stability_actions = []
+    for inner_index, (train_idx, validation_idx) in enumerate(inner_splits, start=1):
+        inner_train = raw_frame.iloc[train_idx].reset_index(drop=True)
+        inner_validation = raw_frame.iloc[validation_idx].reset_index(drop=True)
+        preprocessor = ModelPreprocessor(model_id).fit(inner_train)
+        X_train = preprocessor.transform(inner_train)
+        X_validation = preprocessor.transform(inner_validation)
+        train_time = inner_train["DFS_time"].to_numpy(dtype=float)
+        train_event = inner_train["DFS_event"].to_numpy(dtype=int)
+        validation_time = inner_validation["DFS_time"].to_numpy(dtype=float)
+        validation_event = inner_validation["DFS_event"].to_numpy(dtype=int)
+        uno_layout = _prepare_uno_c_index_layout(
+            train_time, train_event, validation_time, validation_event)
+        reference = _ridge_lambda_reference(X_train, train_time, train_event)
+        censoring = {
+            "train_ids_hash": canonical_id_hash(inner_train["patient_id"]),
+            "validation_ids_hash": canonical_id_hash(inner_validation["patient_id"]),
+        }
+        for lambda_index, ratio in enumerate(ratios):
+            penalty = float(reference * ratio)
+            record = {
+                "inner_fold": inner_index,
+                "family": "pure_ridge_Cox",
+                "alpha": 0.0,
+                "alpha_index": 0,
+                "lambda_index": int(lambda_index),
+                "lambda_ratio": float(ratio),
+                "inner_lambda_reference": float(reference),
+                "inner_lambda_max": float(reference),
+                "inner_lambda": penalty,
+                "lambda_reference_scope": "inner_training_only_trace_I0_over_p",
+                "lambda_grid_scope": "inner_training_only",
+                "lambda_fit_scope": "inner_training_only",
+                "uno_c_index": float("nan"),
+                "inner_train_ids_hash": censoring["train_ids_hash"],
+                "inner_validation_ids_hash": censoring["validation_ids_hash"],
+                "outer_validation_used_for_lambda": False,
+                "candidate_attempted": True,
+                "candidate_failed": False,
+                "failure_reason": "",
+                "converged": False,
+                "fit_status": "not_started",
+                "convergence_reason": None,
+                "stability_actions": [],
+                "linear_predictor_clipping": _new_clipping_audit(),
+                "failure_stage": None,
+                "iterations": None,
+                "convergence_status": "not_started",
+                "line_search_backtracking_count": 0,
+                "linear_predictor_clipping_count": 0,
+            }
+            try:
+                model = CoxRidgeModel(
+                    penalty, max_iter=max_iter, tolerance=tolerance).fit(
+                    X_train, train_time, train_event)
+                _require_converged_model(model, "inner ridge Cox candidate")
+                risk = model.predict_risk(X_validation)
+                if not np.isfinite(risk).all():
+                    raise W08NumericalFailure(
+                        "ridge candidate linear predictor is nonfinite",
+                        audit=model.fit_audit)
+                score = _uno_c_index_from_layout(uno_layout, risk)
+                if not np.isfinite(score):
+                    score = float("nan")
+                record["uno_c_index"] = float(score)
+                record["converged"] = bool(model.fit_audit.get("converged"))
+                record["fit_status"] = model.fit_audit.get(
+                    "fit_status", "unknown")
+                record["convergence_reason"] = model.fit_audit.get(
+                    "convergence_reason")
+                record["stability_actions"] = list(
+                    model.fit_audit.get("stability_actions", []))
+                record["linear_predictor_clipping"] = model.fit_audit.get(
+                    "linear_predictor_clipping", _new_clipping_audit())
+                record.update(_solver_observability(model.fit_audit))
+                stability_actions.extend(record["stability_actions"])
+            except W08NumericalFailure as exc:
+                candidate_context = dict(failure_context or {})
+                candidate_context.update({
+                    "failure_stage": "inner_candidate",
+                    "inner_fold": int(inner_index),
+                    "alpha": 0.0,
+                    "alpha_index": 0,
+                    "lambda_index": int(lambda_index),
+                    "lambda_ratio": float(ratio),
+                    "lambda": float(penalty),
+                    "n_train": int(len(inner_train)),
+                    "train_events": int(np.sum(train_event)),
+                    "n_validation": int(len(inner_validation)),
+                    "validation_events": int(np.sum(validation_event)),
+                    "preprocessing_p": int(len(preprocessor.feature_names)),
+                    "preprocessing_feature_block_counts":
+                        _feature_block_counts(preprocessor),
+                })
+                _attach_failure_context(exc, candidate_context)
+                audit = exc.audit or {}
+                _attach_failure_context(
+                    exc, dict(candidate_context, **_solver_observability(audit)))
+                audit = exc.audit or {}
+                record["candidate_failed"] = True
+                record["failure_reason"] = str(exc)
+                record["exception_class"] = exc.__class__.__name__
+                record["failure_stage"] = "inner_candidate"
+                record["failure_context"] = dict(
+                    audit.get("failure_context", candidate_context))
+                record["preprocessing_p"] = int(
+                    candidate_context["preprocessing_p"])
+                record["preprocessing_feature_block_counts"] = dict(
+                    candidate_context["preprocessing_feature_block_counts"])
+                record["fit_status"] = audit.get("fit_status", "non_converged")
+                record["convergence_reason"] = audit.get("convergence_reason")
+                record["converged"] = False
+                record["stability_actions"] = list(
+                    audit.get("stability_actions", []))
+                record["linear_predictor_clipping"] = audit.get(
+                    "linear_predictor_clipping", _new_clipping_audit())
+                record.update(_solver_observability(audit))
+                record["failure_reason"] = str(exc)
+                stability_actions.extend(record["stability_actions"])
+            records.append(record)
+    grouped = {}
+    for record in records:
+        key = record["lambda_index"]
+        grouped.setdefault(key, []).append(record["uno_c_index"])
+    summary = []
+    for lambda_index, scores in grouped.items():
+        finite = [score for score in scores if np.isfinite(score)]
+        summary.append({
+            "family": "pure_ridge_Cox",
+            "alpha": 0.0,
+            "alpha_index": 0,
+            "lambda_index": int(lambda_index),
+            "lambda_ratio": float(ratios[lambda_index]),
+            "mean_uno_c_index": float(np.mean(finite)) if finite else float("nan"),
+            "n_estimable_inner_scores": int(len(finite)),
+            "n_inner_scores": int(len(scores)),
+            "lambda_selection_scope": "outer_training_inner_5fold_only",
+            "outer_validation_used_for_lambda": False,
+            "outer_validation_used_for_selection": False,
+        })
+    try:
+        selected = _select_candidate(summary)
+    except W08ValidationError as exc:
+        selection_context = dict(failure_context or {})
+        selection_context.update({
+            "failure_stage": "inner_candidate_selection",
+            "inner_seed": int(inner_seed),
+            "candidate_attempts": int(len(records)),
+            "candidate_failures": int(sum(
+                row["candidate_failed"] for row in records)),
+        })
+        raise W08CandidateSelectionFailure(
+            str(exc), audit={
+                "failure_stage": "inner_candidate_selection",
+                "failure_context": selection_context,
+                "candidate_attempts": int(len(records)),
+                "candidate_failures": int(sum(
+                    row["candidate_failed"] for row in records)),
+                "candidate_records": records,
+                "stability_actions": sorted(set(stability_actions)),
+            })
+    selected = dict(selected)
+    selected.update({
+        "candidate_attempts": int(len(records)),
+        "candidate_failures": int(sum(row["candidate_failed"] for row in records)),
+        "inner_folds": int(len(inner_splits)),
+        "lambda_count": int(lambda_count),
+        "lambda_grid_max_ratio": RIDGE_LAMBDA_MAX_RATIO,
+        "lambda_grid_min_ratio": RIDGE_LAMBDA_MIN_RATIO,
+        "lambda_grid_scope": "inner_training_only",
+        "lambda_reference_scope": "inner_training_only_trace_I0_over_p_and_outer_training_refit",
+        "all_inner_records": records,
+        "stability_actions": sorted(set(stability_actions)) or ["stable_path"],
+        "lambda_selection_scope": "outer_training_inner_5fold_only",
+        "outer_validation_used_for_lambda": False,
+        "outer_validation_used_for_selection": False,
+    })
+    return selected
+
+
+def _fit_outer_model(train_frame, validation_frame, model_id, inner_seed,
+                     lambda_count=LAMBDA_COUNT,
+                     max_iter=ELASTIC_NET_MAX_ITER,
+                     tolerance=ELASTIC_NET_TOLERANCE,
+                     run_definition=None, failure_context=None):
+    run_definition = dict(run_definition or {
+        "run_id": model_id, "model_id": model_id,
+        "population": MODEL_SPECS[model_id]["population"],
+    })
+    context = dict(failure_context or {})
+    context.update({
+        "run_id": run_definition["run_id"],
+        "model_id": run_definition["model_id"],
+        "population": run_definition["population"],
+        "inner_seed": int(inner_seed),
+        "n_train": int(len(train_frame)),
+        "train_events": int(np.sum(train_frame["DFS_event"].to_numpy(dtype=int))),
+        "n_validation": int(len(validation_frame)),
+        "validation_events": int(
+            np.sum(validation_frame["DFS_event"].to_numpy(dtype=int))),
+    })
+    preprocessor = None
+    stage_context = {}
+    try:
+        penalty_definition = _run_penalty_definition(run_definition)
+        family = penalty_definition["family"]
+        preprocessor = ModelPreprocessor(model_id).fit(train_frame)
+        context.update({
+            "preprocessing_p": int(len(preprocessor.feature_names)),
+            "preprocessing_feature_block_counts":
+                _feature_block_counts(preprocessor),
+        })
+        X_train = preprocessor.transform(train_frame)
+        X_validation = preprocessor.transform(validation_frame)
+        train_time = train_frame["DFS_time"].to_numpy(dtype=float)
+        train_event = train_frame["DFS_event"].to_numpy(dtype=int)
+        if family == "Cox_PH_unpenalized":
+            stage_context = {
+                "failure_stage": "outer_final_refit",
+                "selected_alpha": None,
+                "selected_lambda_ratio": None,
+                "outer_lambda_max": None,
+                "final_lambda": None,
+                "selected_inner_score": None,
+                "retained_feature_number": int(len(preprocessor.feature_names)),
+                "non_zero_coefficient_number": None,
+            }
+            model = CoxPHModel(max_iter=max_iter, tolerance=tolerance).fit(
+                X_train, train_time, train_event)
+            selection = {
+                "alpha": None, "lambda_ratio": None, "lambda": None,
+                "candidate_attempts": 0, "candidate_failures": 0,
+                "inner_folds": 0, "lambda_count": 0,
+                "mean_uno_c_index": None, "stability_actions": [],
+                "family": family,
+                "lambda_selection_scope": "not_applicable_unpenalized_primary",
+                "outer_validation_used_for_lambda": False,
+                "outer_validation_used_for_selection": False,
+            }
+        elif family == "pure_ridge_Cox":
+            selection = tune_ridge(
+                train_frame, model_id, inner_seed, lambda_count=lambda_count,
+                max_iter=max_iter, tolerance=tolerance,
+                failure_context=context)
+            outer_lambda_reference = _ridge_lambda_reference(
+                X_train, train_time, train_event)
+            final_lambda = float(outer_lambda_reference * selection["lambda_ratio"])
+            if not np.isfinite(final_lambda) or final_lambda <= 0.0:
+                raise W08ValidationError("outer ridge lambda is nonpositive or nonfinite")
+            stage_context = {
+                "failure_stage": "outer_final_refit",
+                "selected_alpha": 0.0,
+                "selected_lambda_ratio": float(selection["lambda_ratio"]),
+                "outer_lambda_max": float(outer_lambda_reference),
+                "final_lambda": final_lambda,
+                "selected_inner_score": selection.get("mean_uno_c_index"),
+                "retained_feature_number": int(len(preprocessor.feature_names)),
+                "non_zero_coefficient_number": None,
+            }
+            model = CoxRidgeModel(
+                final_lambda, max_iter=max_iter, tolerance=tolerance).fit(
+                    X_train, train_time, train_event)
+            selection["outer_lambda_reference"] = float(outer_lambda_reference)
+            selection["outer_lambda_max"] = float(outer_lambda_reference)
+            selection["outer_lambda"] = final_lambda
+            selection["lambda_reference_scope"] = (
+                "inner_training_only_trace_I0_over_p_and_outer_training_refit")
+            selection["outer_validation_used_for_lambda"] = False
+            selection["outer_validation_used_for_selection"] = False
+            selection["stability_actions"] = sorted(set(
+                selection["stability_actions"] +
+                model.fit_audit.get("stability_actions", [])))
+        else:
+            selection = tune_elastic_net(
+                train_frame, model_id, inner_seed, lambda_count=lambda_count,
+                max_iter=max_iter, tolerance=tolerance,
+                failure_context=context)
+            outer_lambda_max = _lambda_max(
+                X_train, train_time, train_event, selection["alpha"])
+            final_lambda = float(outer_lambda_max * selection["lambda_ratio"])
+            stage_context = {
+                "failure_stage": "outer_final_refit",
+                "selected_alpha": float(selection["alpha"]),
+                "selected_lambda_ratio": float(selection["lambda_ratio"]),
+                "outer_lambda_max": float(outer_lambda_max),
+                "final_lambda": final_lambda,
+                "selected_inner_score": selection.get("mean_uno_c_index"),
+                "retained_feature_number": int(len(preprocessor.feature_names)),
+                "non_zero_coefficient_number": None,
+            }
+            model = CoxElasticNetModel(
+                selection["alpha"], final_lambda, max_iter=max_iter,
+                tolerance=tolerance).fit(X_train, train_time, train_event)
+            selection["outer_lambda_max"] = float(outer_lambda_max)
+            selection["outer_lambda"] = final_lambda
+            selection["stability_actions"] = sorted(set(
+                selection["stability_actions"] + model.fit_audit.get("stability_actions", [])))
+            selection["family"] = family
+            selection["lambda_selection_scope"] = "outer_training_inner_5fold_only"
+            selection["outer_validation_used_for_lambda"] = False
+            selection["outer_validation_used_for_selection"] = False
+        _require_converged_model(model, "outer %s Cox fit" % model_id)
+        selection["converged"] = bool(model.fit_audit.get("converged", False))
+        selection["fit_status"] = model.fit_audit.get("fit_status", "unknown")
+        selection["convergence_reason"] = model.fit_audit.get("convergence_reason")
+        selection["linear_predictor_clipping"] = model.fit_audit.get(
+            "linear_predictor_clipping", _new_clipping_audit())
+        stage_context["non_zero_coefficient_number"] = (
+            model.fit_audit.get("nonzero_coefficients")
+            if model.fit_audit.get("nonzero_coefficients") is not None
+            else (int(np.sum(np.abs(model.coef_) > 1e-10))
+                  if model.coef_ is not None else None))
+        stage_context["failure_stage"] = "outer_validation_prediction"
+        risk = model.predict_risk(X_validation)
+        if not np.isfinite(risk).all():
+            raise W08NumericalFailure(
+                "outer linear predictor is nonfinite", audit=model.fit_audit)
+        survival = model.predict_survival(X_validation, HORIZONS_MONTHS)
+        grid_horizons = OrderedDict(("month_%d" % month, float(month))
+                                    for month in range(12, 61, 12))
+        survival_grid = {"horizons": grid_horizons,
+                         "predictions": model.predict_survival(X_validation, grid_horizons)}
+        return model, preprocessor, selection, risk, survival, survival_grid
+    except (W08NumericalFailure, W08CandidateSelectionFailure) as exc:
+        enriched = dict(context)
+        enriched.update(stage_context)
+        if isinstance(exc, W08NumericalFailure):
+            enriched.update(_solver_observability(exc.audit))
+        if "failure_stage" not in enriched:
+            enriched["failure_stage"] = (exc.audit or {}).get(
+                "failure_stage", "outer_model_fit")
+        _attach_failure_context(exc, enriched)
+        raise
+
+
+def _outer_fold_rows(split_frame, eligible):
+    eligible = set(eligible)
+    for repeat in sorted(split_frame["repeat"].unique()):
+        for fold in sorted(split_frame["fold"].unique()):
+            current = split_frame[(split_frame["repeat"] == repeat) &
+                                  (split_frame["fold"] == fold)]
+            train_ids = sorted(set(current.loc[current["role"] == "train", "patient_id"]) & eligible)
+            validation_ids = sorted(set(current.loc[current["role"] == "validation", "patient_id"]) & eligible)
+            if set(train_ids) & set(validation_ids):
+                raise W08ValidationError("outer train/validation overlap")
+            if not train_ids or not validation_ids:
+                raise W08ValidationError("outer fold has an empty eligible side")
+            yield int(repeat), int(fold), train_ids, validation_ids
+
+
+def _resolve_runs(models=None, runs=None):
+    if runs is not None and models is not None:
+        raise W08ValidationError("specify either model IDs or fixed run IDs, not both")
+    if runs is not None:
+        by_id = {item["run_id"]: item for item in
+                 FIXED_RUN_DEFINITIONS + FIXED_SENSITIVITY_RUN_DEFINITIONS}
+        selected = []
+        for run_id in runs:
+            if run_id not in by_id:
+                raise W08ValidationError("unknown W08 fixed run: %s" % run_id)
+            selected.append(dict(by_id[run_id]))
+        return selected
+    if models is not None:
+        selected = []
+        for model_id in models:
+            if model_id not in MODEL_SPECS:
+                raise W08ValidationError("unknown W04 model: %s" % model_id)
+            selected.append({"run_id": model_id, "model_id": model_id,
+                             "population": MODEL_SPECS[model_id]["population"]})
+        return selected
+    return [dict(item) for item in FIXED_RUN_DEFINITIONS]
+
+
+def _l5_json_safe(value):
+    """Convert fold results to deterministic JSON without exposing new IDs."""
+    if isinstance(value, dict):
+        return {str(key): _l5_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_l5_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return _l5_json_safe(value.tolist())
+    if isinstance(value, np.generic):
+        return _l5_json_safe(value.item())
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
+
+
+def _l5_environment_fingerprint():
+    """Return the locked runtime identity used by checkpoint validation."""
+    versions = {}
+    for module_name, attribute in (
+            ("numpy", "__version__"), ("pandas", "__version__"),
+            ("sklearn", "__version__"), ("radiomics", "__version__"),
+            ("SimpleITK", "Version_VersionString")):
+        try:
+            module = __import__(module_name)
+            value = getattr(module, attribute)
+            value = value() if callable(value) else value
+            versions[module_name] = str(value)
+        except Exception:
+            versions[module_name] = None
+    environment_path = os.path.join(PROJECT_ROOT, "environment.yml")
+    return {
+        "python": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "versions": versions,
+        "environment_yml_sha256": _sha256_file(environment_path)
+        if os.path.isfile(environment_path) else None,
+    }
+
+
+def _l5_checkpoint_contract(attempt_id, code_commit, split_hash,
+                            selected_runs, config):
+    return {
+        "schema": L5_CHECKPOINT_SCHEMA,
+        "schema_version": L5_CHECKPOINT_VERSION,
+        "attempt_id": str(attempt_id) if attempt_id is not None else None,
+        "code_commit": str(code_commit) if code_commit is not None else None,
+        "outer_split_hash": str(split_hash),
+        "W04_protocol_sha256": W04_PROTOCOL_SHA256,
+        "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
+        "run_ids": [str(item["run_id"]) for item in selected_runs],
+        "elastic_net_max_iter": int(config["elastic_net_max_iter"]),
+        "elastic_net_tolerance": float(ELASTIC_NET_TOLERANCE),
+        "checkpoint_write_policy": L5_CHECKPOINT_WRITE_POLICY,
+        "environment": _l5_environment_fingerprint(),
+    }
+
+
+def _l5_checkpoint_path(checkpoint_root, repeat, fold):
+    return os.path.join(
+        os.path.abspath(os.fspath(checkpoint_root)),
+        "repeat_%d_fold_%d" % (int(repeat), int(fold)),
+        "fold_checkpoint.json")
+
+
+def _l5_result_payload(result):
+    return {
+        "predictions": _l5_json_safe(
+            result["predictions"].to_dict(orient="records")),
+        "fold_results": _l5_json_safe(
+            result["fold_results"].to_dict(orient="records")),
+        "selection_results": _l5_json_safe(
+            result["selection_results"].to_dict(orient="records")),
+    }
+
+
+def _l5_atomic_json(path, payload):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    temporary = path + ".tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2,
+                      sort_keys=True, allow_nan=False)
+            handle.write("\n")
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _l5_validate_fold_rows(result_payload, repeat, fold, selected_runs):
+    if not isinstance(result_payload, dict) or set(result_payload) != {
+            "predictions", "fold_results", "selection_results"}:
+        raise W08ValidationError("L5 checkpoint result keys are invalid")
+    run_ids = [str(item["run_id"]) for item in selected_runs]
+    expected = set(run_ids)
+    for name in ("fold_results", "selection_results"):
+        rows = result_payload.get(name)
+        if not isinstance(rows, list) or len(rows) != len(run_ids):
+            raise W08ValidationError(
+                "L5 checkpoint %s does not contain one row per frozen run" % name)
+        observed = []
+        for row in rows:
+            if not isinstance(row, dict) or row.get("run_id") is None:
+                raise W08ValidationError("L5 checkpoint %s row is invalid" % name)
+            try:
+                row_repeat = int(row.get("repeat", -1))
+                row_fold = int(row.get("fold", -1))
+            except (TypeError, ValueError, OverflowError):
+                raise W08ValidationError(
+                    "L5 checkpoint %s row has invalid outer-fold fields" % name)
+            if row_repeat != int(repeat) or row_fold != int(fold):
+                raise W08ValidationError(
+                    "L5 checkpoint %s row has the wrong outer fold" % name)
+            observed.append(str(row["run_id"]))
+        if set(observed) != expected or len(set(observed)) != len(observed):
+            raise W08ValidationError(
+                "L5 checkpoint %s run coverage is incomplete" % name)
+    predictions = result_payload.get("predictions")
+    if not isinstance(predictions, list):
+        raise W08ValidationError("L5 checkpoint predictions are invalid")
+    for row in predictions:
+        if not isinstance(row, dict):
+            raise W08ValidationError("L5 checkpoint prediction row is invalid")
+        try:
+            row_repeat = int(row.get("repeat", -1))
+            row_fold = int(row.get("fold", -1))
+        except (TypeError, ValueError, OverflowError):
+            raise W08ValidationError(
+                "L5 checkpoint prediction has invalid outer-fold fields")
+        if row_repeat != int(repeat) or row_fold != int(fold):
+            raise W08ValidationError(
+                "L5 checkpoint prediction has the wrong outer fold")
+    return result_payload
+
+
+def _l5_write_checkpoint(checkpoint_root, repeat, fold, result, contract):
+    result_payload = _l5_result_payload(result)
+    _l5_validate_fold_rows(
+        result_payload, repeat, fold,
+        [{"run_id": run_id} for run_id in contract["run_ids"]])
+    checkpoint = {
+        "schema": L5_CHECKPOINT_SCHEMA,
+        "schema_version": L5_CHECKPOINT_VERSION,
+        "status": "complete",
+        "attempt_id": contract["attempt_id"],
+        "code_commit": contract["code_commit"],
+        "repeat": int(repeat),
+        "fold": int(fold),
+        "outer_fold_key": "repeat_%d_fold_%d" % (int(repeat), int(fold)),
+        "contract": contract,
+        "result": result_payload,
+        "result_sha256": _sha256_text(json.dumps(
+            result_payload, ensure_ascii=True, sort_keys=True,
+            separators=(",", ":"))),
+        "result_counts": {
+            name: int(len(result_payload[name]))
+            for name in ("predictions", "fold_results", "selection_results")
+        },
+        "completed_at_epoch": time.time(),
+    }
+    path = _l5_checkpoint_path(checkpoint_root, repeat, fold)
+    _l5_atomic_json(path, checkpoint)
+    return path
+
+
+def _l5_read_checkpoint(path, repeat, fold, contract, selected_runs):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            checkpoint = json.load(handle)
+    except (IOError, OSError, ValueError, TypeError) as exc:
+        raise W08ValidationError(
+            "L5 checkpoint cannot be read: %s" % exc.__class__.__name__)
+    if not isinstance(checkpoint, dict) or \
+            checkpoint.get("schema") != L5_CHECKPOINT_SCHEMA or \
+            checkpoint.get("schema_version") != L5_CHECKPOINT_VERSION or \
+            checkpoint.get("status") != "complete":
+        raise W08ValidationError("L5 checkpoint schema/status is invalid")
+    if checkpoint.get("attempt_id") != contract["attempt_id"] or \
+            checkpoint.get("code_commit") != contract["code_commit"]:
+        raise W08ValidationError("L5 checkpoint attempt/code binding mismatch")
+    if (checkpoint.get("repeat"), checkpoint.get("fold")) != \
+            (int(repeat), int(fold)):
+        raise W08ValidationError("L5 checkpoint outer-fold binding mismatch")
+    if checkpoint.get("contract") != contract:
+        raise W08ValidationError("L5 checkpoint contract mismatch")
+    result_payload = checkpoint.get("result")
+    _l5_validate_fold_rows(result_payload, repeat, fold, selected_runs)
+    digest = _sha256_text(json.dumps(
+        result_payload, ensure_ascii=True, sort_keys=True,
+        separators=(",", ":")))
+    if checkpoint.get("result_sha256") != digest:
+        raise W08ValidationError("L5 checkpoint result digest mismatch")
+    expected_counts = {
+        name: len(result_payload[name])
+        for name in ("predictions", "fold_results", "selection_results")
+    }
+    if checkpoint.get("result_counts") != expected_counts:
+        raise W08ValidationError("L5 checkpoint result counts mismatch")
+    return checkpoint
+
+
+def _l5_result_from_checkpoint(checkpoint):
+    result_payload = checkpoint["result"]
+    return {
+        name: pd.DataFrame(result_payload[name])
+        for name in ("predictions", "fold_results", "selection_results")
+    }
+
+
+def _l5_quarantine_checkpoint(path):
+    invalid = path + ".invalid"
+    suffix = 0
+    while os.path.exists(invalid):
+        suffix += 1
+        invalid = path + ".invalid_%d" % suffix
+    os.replace(path, invalid)
+    return invalid
+
+
+def _l5_worker_job(args):
+    (feature_frame, outer_splits, provider, config, selected_runs,
+     strict_schema, require_fixed_hash, lambda_count, solver_max_iter,
+     solver_tolerance, population, fold_key, worker_cache_root) = args
+    _l5_prepare_worker_environment()
+    # Formal execution keeps the L4/L5 cache layer disabled.  The coordinator
+    # normally passes ``None`` in that mode, but retain this guard here as a
+    # second fail-closed boundary for direct worker calls and future callers.
+    if (worker_cache_root and not require_fixed_hash and
+            getattr(provider, "_complex_cache_enabled", True) and
+            hasattr(provider, "_cache_root")):
+        provider._cache_root = os.path.join(
+            os.path.abspath(os.fspath(worker_cache_root)),
+            "worker_%d_%d" % (int(fold_key[0]), int(fold_key[1])))
+        os.makedirs(provider._cache_root, exist_ok=True)
+    return run_w08_in_memory(
+        feature_frame, outer_splits, provider, config=config,
+        runs=[item["run_id"] for item in selected_runs],
+        strict_schema=strict_schema,
+        require_fixed_hash=require_fixed_hash, lambda_count=lambda_count,
+        max_outer_folds=None, solver_max_iter=solver_max_iter,
+        solver_tolerance=solver_tolerance, population=population,
+        progress_callback=None, outer_fold_selector=tuple(fold_key),
+        outer_fold_workers=1, checkpoint_root=None, _worker_mode=True,
+        complex_layer_enabled=not bool(require_fixed_hash))
+
+
+def _l5_merge_results(fold_results, selection_results, predictions,
+                      selected_runs, split_summary, split_hash, config,
+                      require_fixed_hash, worker_count, resumed_count,
+                      checkpoint_count, checkpoint_contracts,
+                      complex_layer_enabled=True):
+    run_ids = [str(item["run_id"]) for item in selected_runs]
+    run_order = dict((run_id, index) for index, run_id in enumerate(run_ids))
+    fold_results = sorted(
+        fold_results,
+        key=lambda row: (int(row["repeat"]), int(row["fold"]),
+                         run_order[str(row["run_id"])]))
+    selection_results = sorted(
+        selection_results,
+        key=lambda row: (int(row["repeat"]), int(row["fold"]),
+                         run_order[str(row["run_id"])]))
+    predictions = sorted(
+        predictions,
+        key=lambda row: (int(row["repeat"]), int(row["fold"]),
+                         run_order[str(row["run_id"])],
+                         str(row.get("patient_id", ""))))
+    coverage_sources = sorted(set(
+        row["coverage"].get("source") for row in fold_results
+        if isinstance(row.get("coverage"), dict) and
+        row["coverage"].get("source") is not None))
+    audit = {
+        "stage": "W08",
+        "status": W08_STATUS,
+        "formal_run": bool(require_fixed_hash),
+        "runs_requested": list(run_ids),
+        "models_requested": sorted(set(item["model_id"] for item in selected_runs),
+                                    key=lambda item: list(MODEL_SPECS).index(item)),
+        "run_penalty_semantics": {
+            run["run_id"]: _run_penalty_definition(run)
+            for run in selected_runs
+        },
+        "fixed_sensitivity_runs": list(FIXED_SENSITIVITY_RUN_IDS),
+        "outer_split_hash": split_hash,
+        "outer_split_hash_locked": W07_OUTER_SPLIT_SHA256,
+        "W04_protocol_sha256": W04_PROTOCOL_SHA256,
+        "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
+        "outer_split_validation": split_summary,
+        "n_fold_results": int(len(fold_results)),
+        "n_predictions": int(len(predictions)),
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "patient_level_outputs_written": False,
+        "outer_validation_used_for_lambda": False,
+        "outer_validation_used_for_selection": False,
+        "outer_validation_used_for_boundary_fit": False,
+        "outer_validation_used_for_eligibility_threshold_learning": False,
+        "eligibility_source": coverage_sources[0] if len(coverage_sources) == 1
+        else coverage_sources,
+        "eligibility_before_preprocessing": True,
+        "paired_comparators": [dict(item) for item in PAIRED_COMPARATOR_DEFINITIONS
+                                if item["comparator_run"] in set(run_ids) and
+                                item["radiomics_run"] in set(run_ids)],
+        "candidate_attempts": int(sum(
+            row["candidate_attempts"] for row in fold_results)),
+        "candidate_failures": int(sum(
+            row["candidate_failures"] for row in fold_results)),
+        "stability_actions": sorted(set(
+            action for row in fold_results for action in row["stability_actions"])),
+        "linear_predictor_clipping": {
+            "folds_with_clipping": int(sum(
+                bool(row["linear_predictor_clipping"].get("count", 0))
+                for row in fold_results)),
+            "total_clipped_values": int(sum(
+                int(row["linear_predictor_clipping"].get("count", 0))
+                for row in fold_results)),
+        },
+        "L5_execution": {
+            "schema": L5_CHECKPOINT_SCHEMA,
+            "checkpoint_write_policy": L5_CHECKPOINT_WRITE_POLICY,
+            "outer_fold_workers": int(worker_count),
+            "effective_formal_outer_fold_workers": (
+                int(FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS)
+                if require_fixed_hash else None),
+            "complex_layer_enabled": bool(complex_layer_enabled),
+            "resumed_checkpoints": int(resumed_count),
+            "new_checkpoints": int(checkpoint_count),
+            "checkpoint_count": int(len(checkpoint_contracts)),
+            "checkpoint_contract_hashes": [
+                _sha256_text(json.dumps(contract, ensure_ascii=True,
+                                        sort_keys=True, separators=(",", ":")))
+                for contract in checkpoint_contracts
+            ],
+            "thread_environment": dict(L5_THREAD_ENVIRONMENT),
+            "B_data_read": False,
+        },
+    }
+    return {
+        "predictions": pd.DataFrame(predictions),
+        "fold_results": pd.DataFrame(fold_results),
+        "selection_results": pd.DataFrame(selection_results),
+        "audit": audit,
+    }
+
+
+def _l5_run_fold_coordinator(feature_frame, outer_splits, provider, config,
+                             selected_runs, strict_schema, require_fixed_hash,
+                             lambda_count, solver_max_iter, solver_tolerance,
+                             population, split_summary, split_hash,
+                             outer_fold_workers, checkpoint_root, attempt_id,
+                             code_commit, resume, max_outer_folds=None,
+                             progress_callback=None,
+                             complex_layer_enabled=True):
+    if type(outer_fold_workers) is not int or \
+            outer_fold_workers not in L5_ALLOWED_WORKERS:
+        raise W08ValidationError(
+            "outer_fold_workers must be one of %s" % (L5_ALLOWED_WORKERS,))
+    if require_fixed_hash and outer_fold_workers not in L5_ALLOWED_WORKERS:
+        raise W08ValidationError("formal W08 outer worker setting is invalid")
+    folds = [(repeat, fold) for repeat, fold, _, _ in _outer_fold_rows(
+        outer_splits, set(feature_frame["patient_id"]))]
+    if max_outer_folds is not None:
+        if type(max_outer_folds) is not int or max_outer_folds < 1:
+            raise W08ValidationError("L5 max_outer_folds is invalid")
+        if require_fixed_hash:
+            raise W08ValidationError("formal W08 cannot truncate the 50 outer folds")
+        folds = folds[:int(max_outer_folds)]
+    if not folds:
+        raise W08ValidationError("W08 has no eligible outer folds")
+    if checkpoint_root is None and resume:
+        raise W08ValidationError("L5 resume requires a checkpoint root")
+    if checkpoint_root is not None:
+        checkpoint_root = os.path.abspath(os.fspath(checkpoint_root))
+        os.makedirs(checkpoint_root, exist_ok=True)
+    contract = _l5_checkpoint_contract(
+        attempt_id, code_commit, split_hash, selected_runs, config)
+    completed = {}
+    resumed_count = 0
+    if checkpoint_root is not None:
+        for repeat, fold in folds:
+            path = _l5_checkpoint_path(checkpoint_root, repeat, fold)
+            if not os.path.isfile(path):
+                continue
+            if not resume:
+                raise W08ValidationError(
+                    "L5 checkpoint exists; explicit resume is required")
+            try:
+                checkpoint = _l5_read_checkpoint(
+                    path, repeat, fold, contract, selected_runs)
+            except W08ValidationError:
+                if resume:
+                    _l5_quarantine_checkpoint(path)
+                    continue
+                raise
+            completed[(repeat, fold)] = _l5_result_from_checkpoint(checkpoint)
+            resumed_count += 1
+    if resume and checkpoint_root is not None:
+        unexpected = []
+        for name in os.listdir(checkpoint_root):
+            if name.endswith(".json") and name != "fold_checkpoint.json":
+                unexpected.append(name)
+        if unexpected:
+            raise W08ValidationError(
+                "L5 checkpoint root contains unsupported JSON state")
+
+    pending = [fold for fold in folds if fold not in completed]
+    _l5_prepare_worker_environment()
+    worker_cache_root = None
+    if checkpoint_root is not None and complex_layer_enabled:
+        worker_cache_root = os.path.abspath(os.path.join(
+            checkpoint_root, os.pardir, "slic_cache"))
+    base_args = (feature_frame, outer_splits, provider, config,
+                 tuple(selected_runs), strict_schema, require_fixed_hash,
+                 lambda_count, solver_max_iter, solver_tolerance, population,
+                 None, worker_cache_root)
+    active_results = {}
+    new_checkpoint_count = 0
+    completed_count = len(completed)
+
+    def emit_completed_progress():
+        if progress_callback is not None:
+            try:
+                progress_callback(**{
+                    "status": "running",
+                    "current_repeat": None,
+                    "current_fold": None,
+                    "current_run": None,
+                    "completed_outer_folds": int(completed_count),
+                    "total_outer_folds": int(len(folds)),
+                    "completed_runs_in_fold": int(len(selected_runs)),
+                    "total_runs_in_fold": int(len(selected_runs)),
+                })
+            except Exception:
+                pass
+
+    def accept_completed_result(fold_key, result):
+        nonlocal completed_count, new_checkpoint_count
+        if checkpoint_root is not None:
+            _l5_write_checkpoint(
+                checkpoint_root, fold_key[0], fold_key[1], result, contract)
+            new_checkpoint_count += 1
+        active_results[fold_key] = result
+        completed_count += 1
+        emit_completed_progress()
+
+    if completed_count:
+        emit_completed_progress()
+
+    def submit_args(fold_key):
+        args = list(base_args)
+        args[-2] = tuple(fold_key)
+        return tuple(args)
+
+    if pending and outer_fold_workers == 1:
+        for fold_key in pending:
+            result = _l5_worker_job(submit_args(fold_key))
+            accept_completed_result(fold_key, result)
+    elif pending:
+        executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=int(outer_fold_workers),
+            mp_context=multiprocessing.get_context("spawn"))
+        futures = {}
+        pending_index = 0
+        coordinator_error = None
+        try:
+            while pending_index < len(pending) and len(futures) < outer_fold_workers:
+                fold_key = pending[pending_index]
+                pending_index += 1
+                futures[executor.submit(_l5_worker_job,
+                                         submit_args(fold_key))] = fold_key
+            while futures:
+                done, _ = concurrent.futures.wait(
+                    list(futures), return_when=concurrent.futures.FIRST_COMPLETED)
+                for future in done:
+                    fold_key = futures.pop(future)
+                    try:
+                        accept_completed_result(fold_key, future.result())
+                    except BaseException as exc:
+                        if coordinator_error is None:
+                            coordinator_error = exc
+                if coordinator_error is not None:
+                    for future in futures:
+                        future.cancel()
+                    break
+                while pending_index < len(pending) and len(futures) < outer_fold_workers:
+                    fold_key = pending[pending_index]
+                    pending_index += 1
+                    futures[executor.submit(_l5_worker_job,
+                                             submit_args(fold_key))] = fold_key
+        except BaseException as exc:
+            coordinator_error = exc
+            for future in futures:
+                future.cancel()
+        finally:
+            # On Windows, wait=False can close the process-pool queue while
+            # its management thread is still polling the pipe.  Waiting for
+            # already-running workers gives a clean, fail-closed shutdown;
+            # no new futures are submitted after the exception.
+            executor.shutdown(wait=True)
+        if coordinator_error is not None:
+            # A sibling may have completed while another worker failed.  Read
+            # those already-submitted futures after the clean shutdown so a
+            # validated successful fold is still recoverable.
+            for future, fold_key in list(futures.items()):
+                try:
+                    result = future.result()
+                except BaseException:
+                    continue
+                try:
+                    accept_completed_result(fold_key, result)
+                except BaseException:
+                    continue
+            raise coordinator_error
+
+    checkpoint_contracts = []
+    fold_results = []
+    selection_results = []
+    predictions = []
+    for fold_key in folds:
+        if fold_key in active_results:
+            result = active_results[fold_key]
+        else:
+            result = completed[fold_key]
+        fold_results.extend(result["fold_results"].to_dict(orient="records"))
+        selection_results.extend(
+            result["selection_results"].to_dict(orient="records"))
+        predictions.extend(result["predictions"].to_dict(orient="records"))
+        checkpoint_contracts.append(contract)
+    if len(completed) + len(active_results) != len(folds):
+        raise W08ValidationError("L5 did not cover every outer fold")
+    merged = _l5_merge_results(
+        fold_results, selection_results, predictions, selected_runs,
+        split_summary, split_hash, config, require_fixed_hash,
+        outer_fold_workers, resumed_count, new_checkpoint_count,
+        checkpoint_contracts, complex_layer_enabled=complex_layer_enabled)
+    expected_rows = len(folds) * len(selected_runs)
+    if len(merged["fold_results"]) != expected_rows or \
+            len(merged["selection_results"]) != expected_rows:
+        raise W08ValidationError("L5 result row coverage is incomplete")
+    if require_fixed_hash and len(folds) != 50:
+        raise W08ValidationError("formal W08 L5 fold coverage is not 50")
+    return merged
+
+
+def run_w08_in_memory(feature_frame, outer_splits, provider, config=None,
+                      models=None, runs=None, strict_schema=False, require_fixed_hash=False,
+                      lambda_count=LAMBDA_COUNT, max_outer_folds=None,
+                      solver_max_iter=None, solver_tolerance=None,
+                      population=None, progress_callback=None,
+                      outer_fold_workers=1, checkpoint_root=None,
+                      attempt_id=None, code_commit=None, resume=False,
+                      outer_fold_selector=None, _worker_mode=False,
+                      complex_layer_enabled=True):
+    """Run W08 against an already-authorized A-only frame without file I/O.
+
+    ``max_outer_folds`` exists solely for synthetic/preflight tests.  It is
+    rejected when ``require_fixed_hash`` is true, so a formal run cannot be
+    accidentally truncated.
+    """
+    if type(outer_fold_workers) is not int or \
+            outer_fold_workers not in L5_ALLOWED_WORKERS:
+        raise W08ValidationError(
+            "outer_fold_workers must be one of %s" % (L5_ALLOWED_WORKERS,))
+    if require_fixed_hash:
+        if outer_fold_workers != FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS:
+            raise W08ValidationError(
+                "formal W08 must use the effective serial outer-fold setting")
+        # Formal W08 is fail-closed against accidentally re-enabling the
+        # L4/L5 cache and process-pool layer.
+        complex_layer_enabled = FORMAL_COMPLEX_LAYER_ENABLED
+    elif type(complex_layer_enabled) is not bool:
+        raise W08ValidationError("complex_layer_enabled must be boolean")
+    config = _validate_config(config or load_config())
+    if solver_max_iter is None:
+        solver_max_iter = int(config["elastic_net_max_iter"])
+    if solver_tolerance is None:
+        solver_tolerance = ELASTIC_NET_TOLERANCE
+    if require_fixed_hash and int(solver_max_iter) != int(
+            config["elastic_net_max_iter"]):
+        raise W08ValidationError(
+            "formal W08 must use the registered Elastic-Net max_iter")
+    if require_fixed_hash and float(solver_tolerance) != \
+            ELASTIC_NET_TOLERANCE:
+        raise W08ValidationError(
+            "formal W08 must use tolerance=1e-7")
+    selected_runs = _resolve_runs(models=models, runs=runs)
+    selected_models = sorted(set(item["model_id"] for item in selected_runs),
+                             key=lambda item: list(MODEL_SPECS).index(item))
+    if require_fixed_hash and max_outer_folds is not None:
+        raise W08ValidationError("formal W08 cannot truncate the 50 outer folds")
+    data = _normalise_frame(feature_frame)
+    if not isinstance(provider, FoldFeatureProvider):
+        raise W08ValidationError("W08 requires a FoldFeatureProvider")
+    if require_fixed_hash and not provider.formal_capable:
+        raise W08ValidationError(
+            "formal W08 requires an explicit fold-feature regeneration provider")
+    if population is None:
+        if require_fixed_hash:
+            raise W08ValidationError(
+                "formal W08 requires the code-bound W06 A population provenance")
+        population = pd.DataFrame({
+            "patient_id": data["patient_id"].tolist(),
+            "DFS_time": data["DFS_time"].astype(float).tolist(),
+            "DFS_event": data["DFS_event"].astype(int).tolist(),
+        })
+    else:
+        population = population.copy()
+        if "patient_id" not in population.columns:
+            raise W08ValidationError("W06 A population provenance lacks patient_id")
+        population["patient_id"] = population["patient_id"].astype(str).str.strip()
+        if "DFS_time" not in population.columns or "DFS_event" not in population.columns:
+            raise W08ValidationError("W06 A population provenance lacks endpoint columns")
+        population["DFS_time"] = pd.to_numeric(
+            population["DFS_time"], errors="coerce")
+        population["DFS_event"] = pd.to_numeric(
+            population["DFS_event"], errors="coerce")
+    _validate_population_alignment(data, population)
+    validate_feature_schema(
+        data, selected_models, strict=(strict_schema or require_fixed_hash))
+    outer_splits = _normalise_split_frame(outer_splits)
+    split_summary = _validate_split_frame(outer_splits, population)
+    split_hash = _canonical_split_hash(outer_splits)
+    if require_fixed_hash and split_hash.lower() != W07_OUTER_SPLIT_SHA256:
+        raise W08ValidationError("W08 outer splits are not the W07 fixed artifact")
+    required_fold_columns = _required_fold_specific_columns(selected_models)
+    total_outer_folds = int(
+        outer_splits[["repeat", "fold"]].drop_duplicates().shape[0])
+
+    def emit_progress(**payload):
+        if progress_callback is not None:
+            try:
+                progress_callback(dict(payload))
+            except Exception:
+                # Progress is observability only; a broken observer must not
+                # change the model calculation or its return semantics.
+                pass
+
+    emit_progress(
+        status="running", current_repeat=None, current_fold=None,
+        current_run=None, completed_outer_folds=0,
+        total_outer_folds=total_outer_folds, completed_runs_in_fold=0,
+        total_runs_in_fold=len(selected_runs))
+
+    id_to_row = data.set_index("patient_id", drop=False)
+    if outer_fold_selector is not None:
+        selector = tuple(int(value) for value in outer_fold_selector)
+        if len(selector) != 2 or selector not in set(
+                (int(repeat), int(fold)) for repeat, fold, _, _ in
+                _outer_fold_rows(outer_splits, set(data["patient_id"]))):
+            raise W08ValidationError("L5 outer fold selector is invalid")
+    else:
+        selector = None
+    if not _worker_mode and (checkpoint_root is not None or resume or
+                             int(outer_fold_workers) > 1):
+        return _l5_run_fold_coordinator(
+            data, outer_splits, provider, config, selected_runs,
+            strict_schema, require_fixed_hash, lambda_count, solver_max_iter,
+            solver_tolerance, population, split_summary, split_hash,
+            int(outer_fold_workers), checkpoint_root, attempt_id, code_commit,
+            resume, max_outer_folds=max_outer_folds,
+            progress_callback=emit_progress,
+            complex_layer_enabled=complex_layer_enabled)
+    population_names = list(OrderedDict(
+        (run["population"], None) for run in selected_runs))
+    predictions = []
+    fold_results = []
+    selection_results = []
+    representation_cache = (FoldRepresentationCache(
+        provider, required_fold_columns)
+        if complex_layer_enabled else None)
+    fold_count = 0
+    # The full outer split is traversed first.  Fold-specific eligibility is
+    # intentionally derived only after both provider transforms have consumed
+    # the same training-derived state.
+    for repeat, fold, outer_train_ids, outer_validation_ids in _outer_fold_rows(
+            outer_splits, set(data["patient_id"])):
+        if selector is not None and (int(repeat), int(fold)) != selector:
+            continue
+        if max_outer_folds is not None and fold_count >= int(max_outer_folds):
+            break
+        emit_progress(
+            status="running", current_repeat=int(repeat),
+            current_fold=int(fold), current_run=None,
+            completed_outer_folds=int(fold_count),
+            total_outer_folds=total_outer_folds,
+            completed_runs_in_fold=0, total_runs_in_fold=len(selected_runs))
+        outer_seed = 12345 + repeat - 1
+        inner_seed = 12345 + 1000 + 10 * (repeat - 1) + fold
+        kmeans_seed = 12345 + 2000 + 10 * (repeat - 1) + fold
+        solver_seed = 12345 + 3000 + 10 * (repeat - 1) + fold
+        state = (representation_cache.get_or_fit(outer_train_ids, kmeans_seed)
+                 if representation_cache is not None else
+                 provider.fit(outer_train_ids, kmeans_seed))
+        _validate_fold_provider_state(
+            provider, state, outer_train_ids, required_fold_columns)
+        train_repr = _normalise_frame(provider.transform(outer_train_ids, state))
+        validation_repr = _normalise_frame(
+            provider.transform(outer_validation_ids, state))
+        _validate_fold_provider_output(
+            train_repr, outer_train_ids, required_fold_columns, provider.formal_capable)
+        _validate_fold_provider_output(
+            validation_repr, outer_validation_ids, required_fold_columns,
+            provider.formal_capable)
+        if (set(train_repr["patient_id"]) != set(outer_train_ids) or
+                set(validation_repr["patient_id"]) != set(outer_validation_ids)):
+            raise W08ValidationError("provider representation changed outer fold membership")
+        train_repr = train_repr.set_index("patient_id").loc[
+            outer_train_ids].reset_index()
+        validation_repr = validation_repr.set_index("patient_id").loc[
+            outer_validation_ids].reset_index()
+
+        fold_populations = derive_fold_populations(
+            train_repr, validation_repr, population_names=population_names,
+            require_p3b=bool(provider.formal_capable))
+        paired_metadata = derive_paired_comparators(
+            selected_runs, fold_populations)
+        for run in selected_runs:
+            run_id = run["run_id"]
+            emit_progress(
+                status="running", current_repeat=int(repeat),
+                current_fold=int(fold), current_run=run_id,
+                completed_outer_folds=int(fold_count),
+                total_outer_folds=total_outer_folds,
+                completed_runs_in_fold=int(
+                    sum(1 for item in fold_results
+                        if item["repeat"] == repeat and
+                        item["fold"] == fold)),
+                total_runs_in_fold=len(selected_runs))
+            model_id = run["model_id"]
+            population_name = run["population"]
+            view = fold_populations[population_name]
+            train_ids = list(view["train_ids"])
+            validation_ids = list(view["validation_ids"])
+            coverage = dict(view["coverage"])
+            if not train_ids or not validation_ids:
+                raise W08ValidationError(
+                    "outer eligibility gate failed for %s repeat=%d fold=%d population=%s"
+                    % (run_id, repeat, fold, population_name))
+            event_train = id_to_row.loc[train_ids, "DFS_event"].to_numpy(dtype=int)
+            event_validation = id_to_row.loc[
+                validation_ids, "DFS_event"].to_numpy(dtype=int)
+            if np.sum(event_train) < 1 or np.sum(event_validation) < 1:
+                raise W08ValidationError(
+                    "outer event gate failed for %s repeat=%d fold=%d population=%s"
+                    % (run_id, repeat, fold, population_name))
+
+            train_model = train_repr.set_index("patient_id").loc[train_ids].reset_index()
+            validation_model = validation_repr.set_index(
+                "patient_id").loc[validation_ids].reset_index()
+            model, preprocessor, selection, risk, survival, survival_grid = _fit_outer_model(
+                train_model, validation_model, model_id, inner_seed,
+                lambda_count=lambda_count, max_iter=solver_max_iter,
+                tolerance=solver_tolerance, run_definition=run,
+                failure_context={
+                    "repeat": int(repeat),
+                    "outer_fold": int(fold),
+                    "fold": int(fold),
+                })
+            penalty_audit = _penalty_audit(run, preprocessor)
+            train_time = train_model["DFS_time"].to_numpy(dtype=float)
+            train_event = train_model["DFS_event"].to_numpy(dtype=int)
+            valid_time = validation_model["DFS_time"].to_numpy(dtype=float)
+            valid_event = validation_model["DFS_event"].to_numpy(dtype=int)
+            metrics = evaluate_metrics(train_time, train_event, valid_time,
+                                       valid_event, risk, survival, survival_grid)
+            fold_id_hash = canonical_id_hash(train_ids)
+            validation_id_hash = canonical_id_hash(validation_ids)
+            outer_train_hash = canonical_id_hash(outer_train_ids)
+            outer_validation_hash = canonical_id_hash(outer_validation_ids)
+            pair_info = paired_metadata.get(
+                run_id, {"comparison_ids": [], "comparator_run_ids": []})
+            coverage["valid_predictions"] = int(len(risk))
+            coverage["effective_n"] = int(len(risk))
+            fold_result = {
+                "run_id": run_id, "model_id": model_id, "population": population_name,
+                "repeat": repeat, "fold": fold, "outer_seed": outer_seed,
+                "inner_seed": inner_seed, "fold_kmeans_seed": kmeans_seed,
+                "model_solver_seed": solver_seed,
+                "n_train": len(train_ids), "n_validation": len(validation_ids),
+                "train_events": int(np.sum(train_event)),
+                "validation_events": int(np.sum(valid_event)),
+                "training_id_hash": fold_id_hash,
+                "validation_id_hash": validation_id_hash,
+                "outer_training_id_hash": outer_train_hash,
+                "outer_validation_id_hash": outer_validation_hash,
+                "eligible_population_id_hash": canonical_id_hash(
+                    train_ids + validation_ids),
+                "outer_split_hash": split_hash,
+                "W04_protocol_sha256": W04_PROTOCOL_SHA256,
+                "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
+                "centers": list(state.centers) if state.centers is not None else None,
+                "boundary": state.boundary,
+                "representation_metadata": state.metadata,
+                "preprocessing_audit": preprocessor.audit(),
+                "selected_alpha": selection.get("alpha"),
+                "selected_lambda_ratio": selection.get("lambda_ratio"),
+                "selected_lambda": selection.get("outer_lambda"),
+                "selected_lambda_reference": selection.get(
+                    "outer_lambda_reference"),
+                "selected_lambda_max": selection.get("outer_lambda_max"),
+                "family": penalty_audit["family"],
+                "penalized_blocks": list(penalty_audit["penalized_blocks"]),
+                "penalty_semantics": penalty_audit["penalty_semantics"],
+                "intercept_semantics": penalty_audit["intercept_semantics"],
+                "penalty_audit": penalty_audit,
+                "lambda_selection_scope": selection.get(
+                    "lambda_selection_scope"),
+                "lambda_reference_scope": selection.get(
+                    "lambda_reference_scope",
+                    "not_applicable_unpenalized_primary"),
+                "outer_validation_used_for_lambda": selection.get(
+                    "outer_validation_used_for_lambda", False),
+                "selected_features": [
+                    name for name, coefficient in zip(
+                        preprocessor.feature_names, model.coef_)
+                    if abs(float(coefficient)) > 1e-10
+                ],
+                "candidate_attempts": selection.get("candidate_attempts", 0),
+                "candidate_failures": selection.get("candidate_failures", 0),
+                "inner_folds": selection.get("inner_folds", 0),
+                "stability_actions": selection.get("stability_actions", []),
+                "converged": selection.get("converged", False),
+                "fit_status": selection.get("fit_status", "unknown"),
+                "convergence_reason": selection.get("convergence_reason"),
+                "linear_predictor_clipping": selection.get(
+                    "linear_predictor_clipping", _new_clipping_audit()),
+                "outer_validation_used_for_selection": False,
+                "outer_validation_used_for_boundary_fit": False,
+                "outer_validation_used_for_eligibility_threshold_learning": False,
+                "eligibility_before_preprocessing": True,
+                "R_low_candidate_hash": config["provenance"]["R_low_candidate_hash"],
+                "R_high_candidate_hash": config["provenance"]["R_high_candidate_hash"],
+                "coverage": coverage,
+                "validation_opportunities": coverage["validation_opportunities"],
+                "valid_predictions": coverage["valid_predictions"],
+                "effective_n": coverage["effective_n"],
+                "training_opportunities": coverage["training_opportunities"],
+                "training_eligible_n": coverage["training_eligible_n"],
+                "coverage_model_state_counts": coverage["validation_model_state_counts"],
+                "coverage_block_state_counts": coverage["validation_block_state_counts"],
+                "validation_structural_absence": coverage[
+                    "validation_structural_absence"],
+                "validation_technical_small_roi_unavailable": coverage[
+                    "validation_technical_small_roi_unavailable"],
+                "paired_comparison_ids": list(pair_info["comparison_ids"]),
+                "paired_comparator_run_ids": list(pair_info["comparator_run_ids"]),
+                "paired_training_id_hash": fold_id_hash if pair_info[
+                    "comparison_ids"] else None,
+                "paired_validation_id_hash": validation_id_hash if pair_info[
+                    "comparison_ids"] else None,
+                "paired_boundary": state.boundary if pair_info[
+                    "comparison_ids"] else None,
+            }
+            fold_result.update(metrics)
+            fold_results.append(fold_result)
+            selection_results.append({
+                "run_id": run_id, "model_id": model_id, "population": population_name,
+                "repeat": repeat, "fold": fold,
+                "training_id_hash": fold_id_hash,
+                "validation_id_hash": validation_id_hash,
+                "outer_training_id_hash": outer_train_hash,
+                "outer_validation_id_hash": outer_validation_hash,
+                "inner_seed": inner_seed,
+                "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
+                "selected_alpha": selection.get("alpha"),
+                "selected_lambda_ratio": selection.get("lambda_ratio"),
+                "selected_lambda": selection.get("outer_lambda"),
+                "selected_lambda_reference": selection.get(
+                    "outer_lambda_reference"),
+                "selected_lambda_max": selection.get("outer_lambda_max"),
+                "family": penalty_audit["family"],
+                "penalized_blocks": list(penalty_audit["penalized_blocks"]),
+                "penalty_semantics": penalty_audit["penalty_semantics"],
+                "intercept_semantics": penalty_audit["intercept_semantics"],
+                "penalty_audit": penalty_audit,
+                "lambda_selection_scope": selection.get(
+                    "lambda_selection_scope"),
+                "lambda_reference_scope": selection.get(
+                    "lambda_reference_scope",
+                    "not_applicable_unpenalized_primary"),
+                "outer_validation_used_for_lambda": selection.get(
+                    "outer_validation_used_for_lambda", False),
+                "inner_mean_uno_c_index": selection.get("mean_uno_c_index"),
+                "candidate_attempts": selection.get("candidate_attempts", 0),
+                "candidate_failures": selection.get("candidate_failures", 0),
+                "converged": selection.get("converged", False),
+                "fit_status": selection.get("fit_status", "unknown"),
+                "convergence_reason": selection.get("convergence_reason"),
+                "linear_predictor_clipping": selection.get(
+                    "linear_predictor_clipping", _new_clipping_audit()),
+                "outer_validation_used_for_selection": False,
+                "outer_validation_used_for_boundary_fit": False,
+                "outer_validation_used_for_eligibility_threshold_learning": False,
+                "paired_comparison_ids": list(pair_info["comparison_ids"]),
+                "paired_comparator_run_ids": list(pair_info["comparator_run_ids"]),
+                "validation_opportunities": coverage["validation_opportunities"],
+                "valid_predictions": coverage["valid_predictions"],
+                "effective_n": coverage["effective_n"],
+                "inner_records": selection.get("all_inner_records", []),
+            })
+            for identifier, prediction, observed_time, observed_event in zip(
+                    validation_model["patient_id"], risk, valid_time, valid_event):
+                predictions.append({
+                    "run_id": run_id, "model_id": model_id, "population": population_name,
+                    "repeat": repeat, "fold": fold,
+                    "patient_id": identifier, "DFS_time": float(observed_time),
+                    "DFS_event": int(observed_event), "risk_score": float(prediction),
+                    "training_id_hash": fold_id_hash,
+                    "validation_id_hash": validation_id_hash,
+                    "outer_training_id_hash": outer_train_hash,
+                    "outer_validation_id_hash": outer_validation_hash,
+                    "outer_split_hash": split_hash,
+                    "paired_comparison_ids": list(pair_info["comparison_ids"]),
+                    "outer_validation_used_for_boundary_fit": False,
+                    "outer_validation_used_for_eligibility_threshold_learning": False,
+                    "outer_validation_used_for_selection": False,
+                })
+        fold_count += 1
+        emit_progress(
+            status="running", current_repeat=None, current_fold=None,
+            current_run=None, completed_outer_folds=int(fold_count),
+            total_outer_folds=total_outer_folds,
+            completed_runs_in_fold=len(selected_runs),
+            total_runs_in_fold=len(selected_runs))
+
+    coverage_sources = sorted(set(
+        row["coverage"].get("source") for row in fold_results
+        if isinstance(row.get("coverage"), dict)))
+    audit = {
+        "stage": "W08",
+        "status": W08_STATUS,
+        "formal_run": bool(require_fixed_hash and max_outer_folds is None),
+        "runs_requested": [run["run_id"] for run in selected_runs],
+        "models_requested": selected_models,
+        "run_penalty_semantics": {
+            run["run_id"]: _run_penalty_definition(run)
+            for run in selected_runs
+        },
+        "fixed_sensitivity_runs": list(FIXED_SENSITIVITY_RUN_IDS),
+        "outer_split_hash": split_hash,
+        "outer_split_hash_locked": W07_OUTER_SPLIT_SHA256,
+        "W04_protocol_sha256": W04_PROTOCOL_SHA256,
+        "W07A_protocol_sha256": W07A_PROTOCOL_AMENDMENT_SHA256,
+        "outer_split_validation": split_summary,
+        "n_fold_results": int(len(fold_results)),
+        "n_predictions": int(len(predictions)),
+        "B_data_read": False,
+        "B_reader_invoked": False,
+        "B_source_opened": False,
+        "B_statistics_generated": False,
+        "patient_level_outputs_written": False,
+        "outer_validation_used_for_lambda": False,
+        "outer_validation_used_for_selection": False,
+        "outer_validation_used_for_boundary_fit": False,
+        "outer_validation_used_for_eligibility_threshold_learning": False,
+        "eligibility_source": coverage_sources[0] if len(coverage_sources) == 1
+        else coverage_sources,
+        "eligibility_before_preprocessing": True,
+        "paired_comparators": [dict(item) for item in PAIRED_COMPARATOR_DEFINITIONS
+                                if item["comparator_run"] in {
+                                    run["run_id"] for run in selected_runs} and
+                                item["radiomics_run"] in {
+                                    run["run_id"] for run in selected_runs}],
+        "candidate_attempts": int(sum(
+            row["candidate_attempts"] for row in fold_results)),
+        "candidate_failures": int(sum(row["candidate_failures"] for row in fold_results)),
+        "stability_actions": sorted(set(
+            action for row in fold_results for action in row["stability_actions"])),
+        "linear_predictor_clipping": {
+            "folds_with_clipping": int(sum(
+                bool(row["linear_predictor_clipping"].get("count", 0))
+                for row in fold_results)),
+            "total_clipped_values": int(sum(
+                int(row["linear_predictor_clipping"].get("count", 0))
+                for row in fold_results)),
+        },
+        "representation_cache": (
+            representation_cache.audit()
+            if representation_cache is not None else {
+                "enabled": False,
+                "disposition": "disabled_for_formal_serial_execution",
+                "entries": 0,
+                "hits": 0,
+                "misses": 0,
+                "invalidations": [],
+            }),
+        "complex_layer": {
+            "enabled": bool(complex_layer_enabled),
+            "formal_effective_outer_fold_workers": (
+                int(FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS)
+                if require_fixed_hash else None),
+            "process_pool_used": False,
+        },
+    }
+    provider_cache_audit = getattr(provider, "representation_cache_audit", None)
+    if callable(provider_cache_audit):
+        audit["provider_cache"] = provider_cache_audit()
+    return {
+        "predictions": pd.DataFrame(predictions),
+        "fold_results": pd.DataFrame(fold_results),
+        "selection_results": pd.DataFrame(selection_results),
+        "audit": audit,
+    }
+
+
+def run_w08(feature_frame, provider, config_path=DEFAULT_CONFIG,
+            strict_schema=True, progress_callback=None,
+            outer_fold_workers=FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS,
+            checkpoint_root=None, attempt_id=None, code_commit=None,
+            resume=False):
+    """Formal entry point: load only locked W06/W07 artifacts, then run in memory."""
+    if outer_fold_workers != FORMAL_EFFECTIVE_OUTER_FOLD_WORKERS:
+        raise W08ValidationError(
+            "formal W08 outer_fold_workers must be the effective serial setting")
+    config = load_config(config_path)
+    population = load_frozen_a_population()
+    outer_splits = load_frozen_outer_splits(population)
+    data = _normalise_frame(feature_frame)
+    _validate_population_alignment(data, population)
+    return run_w08_in_memory(
+        data, outer_splits, provider, config=config,
+        strict_schema=strict_schema, require_fixed_hash=True,
+        lambda_count=LAMBDA_COUNT,
+        solver_max_iter=int(config["elastic_net_max_iter"]),
+        solver_tolerance=ELASTIC_NET_TOLERANCE, population=population,
+        progress_callback=progress_callback,
+        outer_fold_workers=outer_fold_workers,
+        checkpoint_root=checkpoint_root, attempt_id=attempt_id,
+        code_commit=code_commit, resume=resume,
+        complex_layer_enabled=FORMAL_COMPLEX_LAYER_ENABLED)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="W08 A-only nested CV library entry point; feature input is an authorized in-memory adapter")
+    parser.add_argument("--config", default=DEFAULT_CONFIG, help=argparse.SUPPRESS)
+    parser.add_argument("--dry-run", action="store_true",
+                        help="validate the locked W08 config without opening patient data")
+    args = parser.parse_args()
+    config = load_config(args.config)
+    if not args.dry_run:
+        raise SystemExit("W08 requires an authorized A-only feature-frame adapter; no patient data were opened")
+    print(json.dumps({"stage": "W08", "status": config["status"],
+                      "B_data_read": False, "patient_level_outputs_written": False},
+                     ensure_ascii=False, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,21 @@
+repeat_id,fold,imputation,model,message
+1,5,1,model3,from glmnet C++ code (error code -30093); Numerical error at 93th lambda value; solutions for larger values of lambda returned
+1,5,2,model3,from glmnet C++ code (error code -30089); Numerical error at 89th lambda value; solutions for larger values of lambda returned
+1,5,3,model3,from glmnet C++ code (error code -30095); Numerical error at 95th lambda value; solutions for larger values of lambda returned
+1,5,4,model3,from glmnet C++ code (error code -30094); Numerical error at 94th lambda value; solutions for larger values of lambda returned
+1,5,5,model3,from glmnet C++ code (error code -30088); Numerical error at 88th lambda value; solutions for larger values of lambda returned
+1,5,6,model3,from glmnet C++ code (error code -30095); Numerical error at 95th lambda value; solutions for larger values of lambda returned
+1,5,7,model3,from glmnet C++ code (error code -30100); Numerical error at 100th lambda value; solutions for larger values of lambda returned
+1,5,8,model3,from glmnet C++ code (error code -30090); Numerical error at 90th lambda value; solutions for larger values of lambda returned
+1,5,9,model3,from glmnet C++ code (error code -30096); Numerical error at 96th lambda value; solutions for larger values of lambda returned
+1,5,10,model3,from glmnet C++ code (error code -30090); Numerical error at 90th lambda value; solutions for larger values of lambda returned
+1,5,11,model3,from glmnet C++ code (error code -30092); Numerical error at 92th lambda value; solutions for larger values of lambda returned
+1,5,12,model3,from glmnet C++ code (error code -30091); Numerical error at 91th lambda value; solutions for larger values of lambda returned
+1,5,13,model3,from glmnet C++ code (error code -30094); Numerical error at 94th lambda value; solutions for larger values of lambda returned
+1,5,14,model3,from glmnet C++ code (error code -30096); Numerical error at 96th lambda value; solutions for larger values of lambda returned
+1,5,15,model3,from glmnet C++ code (error code -30089); Numerical error at 89th lambda value; solutions for larger values of lambda returned
+1,5,16,model3,from glmnet C++ code (error code -30091); Numerical error at 91th lambda value; solutions for larger values of lambda returned
+1,5,17,model3,from glmnet C++ code (error code -30088); Numerical error at 88th lambda value; solutions for larger values of lambda returned
+1,5,18,model3,from glmnet C++ code (error code -30087); Numerical error at 87th lambda value; solutions for larger values of lambda returned
+1,5,19,model3,from glmnet C++ code (error code -30091); Numerical error at 91th lambda value; solutions for larger values of lambda returned
+1,5,20,model3,from glmnet C++ code (error code -30094); Numerical error at 94th lambda value; solutions for larger values of lambda returned

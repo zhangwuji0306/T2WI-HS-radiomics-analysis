@@ -1,0 +1,32 @@
+{
+  "B_data_read": false,
+  "B_reader_invoked": false,
+  "B_source_opened": false,
+  "B_statistics_generated": false,
+  "P5_technical_preflight": "PASS",
+  "all_paired_populations_equal": true,
+  "all_required_runs_estimable": true,
+  "bindings_verified": true,
+  "certificate_generated_at_utc": "2026-09-05T20:21:51Z",
+  "code_commit": "77cddd970f176533fd44fe1fbaaac880651fc84f",
+  "code_commit_at_release": "77cddd970f176533fd44fe1fbaaac880651fc84f",
+  "compatibility_provenance": {
+    "compatibility_code_path": "prognosis_analysis/scripts/w08_formal_run_a.py",
+    "compatibility_code_sha256": "37bee9152aec365b8bbe0586d1169ab8870de45b99ad159b1c2642a14cdfa882",
+    "compatibility_config_path": "prognosis_analysis/configs/w02_habitat_radiomics.json",
+    "compatibility_config_sha256": "4b74b8cabd90a8e7ae1d269abc13fd8f423e1b192f3fbb2effafab1c9cb5342f",
+    "compatibility_reason": "PyRadiomics 3.0.1 strict <= semantics and precheck count>=10",
+    "effective_backend_minimum_size": null,
+    "precheck_count_threshold": ">=10",
+    "protocol_minimumROISize": 10,
+    "pyradiomics_version": "3.0.1",
+    "scientific_minimumROISize": 10
+  },
+  "completed_fold_units": 50,
+  "frozen_fold_units": 50,
+  "patient_level_outputs_written": false,
+  "performance_generated": false,
+  "stage": "G3",
+  "status": "PASS",
+  "successor_of": "prognosis_analysis/output/p5_technical_preflight_A"
+}

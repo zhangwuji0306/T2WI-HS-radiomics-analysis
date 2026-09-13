@@ -1,0 +1,30 @@
+{
+  "B_data_read": false,
+  "B_reader_invoked": false,
+  "B_source_opened": false,
+  "B_statistics_generated": false,
+  "R_high_candidate_hash": "a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce",
+  "R_low_candidate_hash": "a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0",
+  "aggregate_only": true,
+  "all_paired_populations_equal": true,
+  "all_required_runs_estimable": true,
+  "binding_hashes": {
+    "P4R_reconciliation": "f5c6e14b098717d65b7709c6e8f10feb63c325b929fda64d3b2ccefa52a0cf6b",
+    "W03_candidate_freeze": "ae3ed731308d4915675678258bc1c23d9a9e9e493fec4dd57745e7049a3b5cb2",
+    "W04_modeling_protocol": "888a4bbc871548fbef9cacc767d00cc9f01ed68d4396e20ee2063a0c098c3dfe",
+    "W07A_amendment_json": "0ca857a7b22c5b948c675f9970cc07b5a908c3f486be3f5656c86e20b5479f14",
+    "W07A_protocol": "adc8665ed5bc639353744bc6f2aa22ab421cf0a88e457057123ee29fbf7bcc70",
+    "W07_outer_split_artifact": "24764ee31381621d6a71098a00277743b126a8f00c382afb89d819357ece6502",
+    "W07_outer_split_config": "535f0aa7caef877727dc08bb70741b1c96ed4542230b5cfbf173eeff48677217"
+  },
+  "fold_units": 50,
+  "minimumROISize": 10,
+  "outer_folds": 5,
+  "outer_repeats": 10,
+  "patient_level_outputs_written": false,
+  "performance_generated": false,
+  "required_runs": 17,
+  "run_rows": 850,
+  "stage": "P5",
+  "status": "technical_only_complete"
+}

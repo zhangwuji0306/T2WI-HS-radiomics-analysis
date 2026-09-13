@@ -1,0 +1,13 @@
+combo,batch,n_total,n_icc_pass,n_icc_drop,n_missing_drop,n_var_drop,n_corr_drop,n_kept
+muscle_f0.25,original,107,50,57,0,0,26,24
+muscle_f0.25,wavelet,856,196,660,0,0,79,117
+muscle_f0.25,log,321,122,199,0,0,66,56
+muscle_f0.1,original,107,55,52,0,0,30,25
+muscle_f0.1,wavelet,856,210,646,0,0,95,115
+muscle_f0.1,log,321,126,195,0,0,74,52
+zscore_f0.1,original,107,15,92,0,0,6,9
+zscore_f0.1,wavelet,856,369,487,0,0,121,248
+zscore_f0.1,log,321,126,195,0,0,44,82
+zscore_f0.25,original,107,22,85,0,0,8,14
+zscore_f0.25,wavelet,856,360,496,0,0,125,235
+zscore_f0.25,log,321,120,201,0,0,36,84

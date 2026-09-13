@@ -1,0 +1,5 @@
+prognosis_analysis/primary/protocol.json text eol=lf
+prognosis_analysis/primary/PRIMARY_V2_EVIDENCE_MANIFEST.json text eol=lf
+prognosis_analysis/primary/model_freeze_lock.json text eol=lf
+prognosis_analysis/primary/external_validation_registration.json text eol=lf
+archive/** -text

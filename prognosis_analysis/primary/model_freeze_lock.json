@@ -1,0 +1,117 @@
+{
+  "schema_version": "1.0",
+  "artifact_id": "PRIMARY_V2_CANONICAL_MODEL_FREEZE",
+  "status": "FROZEN_CANONICAL_PROMOTED",
+  "source": "promoted_from_FT04",
+  "source_ref": "refs/heads/codex/ft-validation",
+  "source_commit": "3c1eb3b702831a17f2265ba0ce42d7ce3ddf3d34",
+  "original_FT04_hash": "bb0c00b49b68cc31eb3899a9099ca8330551a7c2afd0ff3f849abc091a80c2d2",
+  "original_FT04_identity_sha256": "10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e",
+  "Primary_v2_protocol_hash": "8d0e8239558ad9ecd2f5605bc1ecce29ef93f7769452319c3c804cda20b28e89",
+  "promotion_date": "2026-09-13",
+  "no_refit": true,
+  "no_B_tuning": true,
+  "model_order": ["M0", "M1", "M2", "M3L", "M3H", "M4", "M5"],
+  "models": {
+    "M0": {
+      "model_id": "M0", "population": "main", "predictor_blocks": ["C"],
+      "eligible_n": 393, "event_count": 89,
+      "model_input_hash": "cdf404f4108e7146f0189727754e796ac24b15ed12a3491cc090f37966c95997",
+      "transformed_feature_count": 13,
+      "transformed_feature_order_sha256": "ae2a5ba3b64d4d1b0acc6150313f3fbc80b25d33aeb1de8ba2dd8b5717a7ec2a",
+      "state_sha256": "6a4284bec1388bab893076eb54096ec9aaad59126ad419c1ec107985b9a413da",
+      "selection": {"alpha": null, "candidate_attempts": 0, "candidate_failures": 0, "inner_folds": 0, "lambda_count": 0, "lambda_ratio": null, "lambda_selection_scope": "not_applicable_unpenalized", "outer_lambda": null, "outer_validation_used_for_lambda": false, "outer_validation_used_for_selection": false},
+      "coefficients_available_in_promoted_record": false,
+      "coefficient_verification": "requires protected runtime verification"
+    },
+    "M1": {
+      "model_id": "M1", "population": "main", "predictor_blocks": ["C", "H_high_fraction"],
+      "eligible_n": 393, "event_count": 89,
+      "model_input_hash": "95c264232efe65618ab179f0c76b34fe94efc561235da47be32fd49cf257267e",
+      "transformed_feature_count": 14,
+      "transformed_feature_order_sha256": "bd59430d7db97fcb624efb962bd26f80ce74e8c0958efa558c70711a3c2406cc",
+      "state_sha256": "2d4eb86a95f2c5f768012d48db52fd1eb584ecfec3b4eca214d19cdd64c55710",
+      "selection": {"alpha": null, "candidate_attempts": 0, "candidate_failures": 0, "inner_folds": 0, "lambda_count": 0, "lambda_ratio": null, "lambda_selection_scope": "not_applicable_unpenalized", "outer_lambda": null, "outer_validation_used_for_lambda": false, "outer_validation_used_for_selection": false},
+      "coefficients_available_in_promoted_record": false,
+      "coefficient_verification": "requires protected runtime verification"
+    },
+    "M2": {
+      "model_id": "M2", "population": "main", "predictor_blocks": ["C", "G"],
+      "eligible_n": 393, "event_count": 89,
+      "model_input_hash": "f149759eb44392e1fbec3c2712a00147fdfef8c5e65616b0b09b506d3664b905",
+      "transformed_feature_count": 19,
+      "transformed_feature_order_sha256": "a6d49ce5a860693c766b496be2d8e3170e89ed8660639ed4d0ac89962b472eec",
+      "state_sha256": "fa98601cb14d51d7fd5ebc648e185c24f1aac5751dae7818768ce1699ee02e7c",
+      "selection": {"alpha": null, "candidate_attempts": 0, "candidate_failures": 0, "inner_folds": 0, "lambda_count": 0, "lambda_ratio": null, "lambda_selection_scope": "not_applicable_unpenalized", "outer_lambda": null, "outer_validation_used_for_lambda": false, "outer_validation_used_for_selection": false},
+      "coefficients_available_in_promoted_record": false,
+      "coefficient_verification": "requires protected runtime verification"
+    },
+    "M3L": {
+      "model_id": "M3L", "population": "R_low", "predictor_blocks": ["C", "G", "R_low"],
+      "eligible_n": 391, "event_count": 88,
+      "model_input_hash": "ca2deebcac6ba6285c1671ff7a4a9c4b34b752a33b6331be1096b3a6bac96336",
+      "transformed_feature_count": 36,
+      "transformed_feature_order_sha256": "7454d7040e138f081e6390dd891b9ee11a908c5f6434ad542144e95f965d7e94",
+      "state_sha256": "ae2112008a9e5cd2715fd4da12de26ee0f3422f5f01284423355fea29e138b21",
+      "selection": {"alpha": 1.0, "candidate_attempts": 100, "candidate_failures": 0, "inner_folds": 5, "lambda_count": 20, "lambda_ratio": 0.012742749857031341, "lambda_selection_scope": "outer_training_inner_5fold_only", "outer_lambda": 0.005944677103907005, "outer_validation_used_for_lambda": false, "outer_validation_used_for_selection": false},
+      "coefficients_available_in_promoted_record": false,
+      "coefficient_verification": "requires protected runtime verification"
+    },
+    "M3H": {
+      "model_id": "M3H", "population": "R_high", "predictor_blocks": ["C", "G", "R_high"],
+      "eligible_n": 356, "event_count": 84,
+      "model_input_hash": "0b3f13e9ec559b114df8bdbc5e748c69ed91738843ab6094cb22875d38768175",
+      "transformed_feature_count": 25,
+      "transformed_feature_order_sha256": "034a4fde7f02d16ae5532778ff6b33ef1bb645dd4e712025000d149bd4e1b969",
+      "state_sha256": "add312861f2fc61c581cd836e99c489961e7def9324fe098c94f019ae46a544f",
+      "selection": {"alpha": 1.0, "candidate_attempts": 100, "candidate_failures": 0, "inner_folds": 5, "lambda_count": 20, "lambda_ratio": 0.012742749857031341, "lambda_selection_scope": "outer_training_inner_5fold_only", "outer_lambda": 0.0060338370242686975, "outer_validation_used_for_lambda": false, "outer_validation_used_for_selection": false},
+      "coefficients_available_in_promoted_record": false,
+      "coefficient_verification": "requires protected runtime verification"
+    },
+    "M4": {
+      "model_id": "M4", "population": "dual_radiomics", "predictor_blocks": ["C", "G", "R_low", "R_high"],
+      "eligible_n": 354, "event_count": 83,
+      "model_input_hash": "8ab6b406519f325fc26fbd3619b7c73f9b5f7b6d38938aed3fbd2817849928c3",
+      "transformed_feature_count": 42,
+      "transformed_feature_order_sha256": "57b466db58da7f222a6c769144d173b18b6270b7b5bfc24ea3b6db6b0582a2d4",
+      "state_sha256": "5ba85f247cf97d4b94ddd796e5134cd55afb0b902335674ee98516b78768a649",
+      "selection": {"alpha": 1.0, "candidate_attempts": 100, "candidate_failures": 0, "inner_folds": 5, "lambda_count": 20, "lambda_ratio": 0.23357214690901226, "lambda_selection_scope": "outer_training_inner_5fold_only", "outer_lambda": 0.11277441313072628, "outer_validation_used_for_lambda": false, "outer_validation_used_for_selection": false},
+      "coefficients_available_in_promoted_record": false,
+      "coefficient_verification": "requires protected runtime verification"
+    },
+    "M5": {
+      "model_id": "M5", "population": "W_Original_available", "predictor_blocks": ["C", "W_Original"],
+      "eligible_n": 393, "event_count": 89,
+      "model_input_hash": "19e44a9c0aba0430d4453849cb1595bfbf34a58d9c6a58f20f55fd81abb84063",
+      "transformed_feature_count": 50,
+      "transformed_feature_order_sha256": "d62ad8a20a44f1ea01a464e047a64cc40a344d218db268f6c928f1783f27fd3c",
+      "state_sha256": "d58e97f55d1dfb9e7cec08ab4d45f1b1cb1bb845f010dbb95587ed79b09f3ea3",
+      "selection": {"alpha": 1.0, "candidate_attempts": 100, "candidate_failures": 0, "inner_folds": 5, "lambda_count": 20, "lambda_ratio": 0.14384498882876628, "lambda_selection_scope": "outer_training_inner_5fold_only", "outer_lambda": 0.0684167151716075, "outer_validation_used_for_lambda": false, "outer_validation_used_for_selection": false},
+      "coefficients_available_in_promoted_record": false,
+      "coefficient_verification": "requires protected runtime verification"
+    }
+  },
+  "verification": {
+    "status": "requires protected runtime verification",
+    "scope": "coefficients/features/lambda/model identity against FT04 protected states",
+    "patient_level_coefficients_copied": false,
+    "patient_level_predictions_copied": false,
+    "no_coefficients_fabricated": true
+  },
+  "provenance": {
+    "protocol_path": "prognosis_analysis/primary/protocol.json",
+    "source_lock_path": "prognosis_analysis/ft/FT_model_freeze_lock.json",
+    "source_lock_serialized_sha256": "bb0c00b49b68cc31eb3899a9099ca8330551a7c2afd0ff3f849abc091a80c2d2",
+    "source_lock_identity_sha256": "10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e",
+    "fixed_full_A_habitat": true,
+    "outer_validation_design": "single repeat-1 five-fold",
+    "alpha": 1.0,
+    "lambda_selection_scope": "outer-training_inner_5fold_only",
+    "B_mode": "frozen prediction only",
+    "state_binding": {
+      "source_field": "FT04.models.<model_id>.sha256",
+      "verification_scope": "protected FT04 runtime state identity only; coefficient body is not copied",
+      "status": "identity_only_protected_runtime_required"
+    }
+  }
+}
