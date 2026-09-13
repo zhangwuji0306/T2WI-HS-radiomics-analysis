@@ -1,6 +1,6 @@
 ﻿# AGENTS.md — 项目智能体工作约定
 
-本文件为在本项目（直肠癌T2WI生境分析，方法见`生境分析方案与工作流.md`）内工作的智能体约定。
+本文件为在本项目（直肠癌T2WI生境分析，当前方法见`habitat_analysis/README.md`和`prognosis_analysis/primary/README.md`）内工作的智能体约定。
 
 ## 一、运行与监测约定
 
@@ -32,4 +32,4 @@
 - 本地 conda 不在 PATH 时，先运行 `tools/run_t2_radiomics.ps1` 自动定位环境并核对锁定版本；脚本执行通过其 `-PythonArguments` 参数调用，避免依赖本机绝对路径。
 - 本地涉及 SimpleITK 的脚本经本机配置的 ASCII junction 调用；该路径仅适用于本地 Windows，不得写入云端命令或作为仓库内的通用路径。
 - Codex 云端使用 Linux/Bash 环境；云端依赖由根目录 `setup.sh` 和 `requirements-cloud.txt` 提供，使用仓库相对路径。
-- 当前入口见`项目说明.md`；科学主协议为`T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md`，当前唯一执行SOP为`T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md`；参数与方法锁定见`组学分析方案.md`（预处理与整块肿瘤特征技术规范）、`生境分析方案与工作流.md`及`habitat_analysis/analysis_freeze.md`。当前分析输出仅写入本地`habitat_analysis/output/`和`prognosis_analysis/output/`对应阶段目录，均不得提交。
+- 当前入口见`项目说明.md`、`PROJECT_STATUS.md`、`prognosis_analysis/primary/README.md`和`prognosis_analysis/primary/protocol.json`；固定 habitat、队列和特征定义见`habitat_analysis/README.md`、`habitat_analysis/configs/`、`habitat_analysis/freeze_lock.json`、`habitat_analysis/feature_dictionary.md`及`feature_extract/configs/`。当前阶段为 Primary v2 完成后的示例分析、次要结局分析和敏感性分析；当前分析输出仅写入本地`habitat_analysis/output/`和`prognosis_analysis/output/`对应阶段目录，均不得提交。

@@ -34,7 +34,7 @@ Primary v2 保留原 FT 科学框架中的全部模型和预设比较，不因�
 - 高维模型固定 `alpha=1`；lambda 只能在外层训练数据内部通过 training-only CV 选择。
 - B 不再用于新的 tuning、feature selection、coefficient refit、cutoff optimization、habitat refit 或任何 B→A 反馈。
 
-具体合同见 [prognosis_analysis/primary/protocol.json](/E:/MAC/202608%E7%BB%84%E5%AD%A6%E5%88%86%E6%9E%90/prognosis_analysis/primary/protocol.json) 和 [prognosis_analysis/primary/README.md](/E:/MAC/202608%E7%BB%84%E5%AD%A6%E5%88%86%E6%9E%90/prognosis_analysis/primary/README.md)。
+具体合同见 [prognosis_analysis/primary/protocol.json](../../prognosis_analysis/primary/protocol.json) 和 [prognosis_analysis/primary/README.md](../../prognosis_analysis/primary/README.md)。
 
 ## V2-00 — Freeze current history
 

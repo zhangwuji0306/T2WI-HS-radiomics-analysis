@@ -1,39 +1,25 @@
 {
   "schema": {
     "id": "prognosis_execution_status",
-    "version": "1.0",
-    "status_kind": "mutable_aggregate_execution_state"
+    "version": "2.0",
+    "status_kind": "current_project_state"
   },
-  "recorded_on": "2026-09-08",
-  "execution": {
-    "stage": "W08",
-    "gate": "HOLD",
-    "formal_w08_started": true,
-    "last_attempt_status": "failed"
+  "recorded_on": "2026-09-13",
+  "primary_v2": {
+    "status": "complete",
+    "method": "Primary Prognostic Analysis v2",
+    "fixed_full_a_habitat": true,
+    "fixed_repeat_1_five_fold_a_validation": true,
+    "full_a_model_freeze": true,
+    "frozen_b_external_validation": true
   },
-  "last_attempt": {
-    "attempt_id": "attempt_1788767255363180_2b9b67ce07e0",
-    "status": "failed",
-    "failure_stage": "external_execution_interruption",
-    "failure_reason_summary": "External execution session interrupted before formal W08 result writing.",
-    "code_commit_at_attempt": "c8e3da270d148cbead8913ed511be86c06df911f"
-  },
-  "b_access": {
-    "B_data_read": false,
-    "B_reader_invoked": false,
-    "B_source_opened": false,
-    "B_statistics_generated": false
-  },
-  "model_freeze_lock": {
-    "present": false,
-    "status": "absent"
-  },
-  "outputs": {
-    "final_outputs_generated": false
-  },
-  "repository": {
-    "baseline_head": "78e24da5109938fadf5ae41510994d6471c6a629",
-    "last_known_repository_head": "12e5c040d8b1f94be458cae0f94c33530e6db902",
-    "status_recorded_at_head": "12e5c040d8b1f94be458cae0f94c33530e6db902"
+  "next_stage": [
+    "example_analysis",
+    "secondary_endpoint_analysis",
+    "sensitivity_analysis"
+  ],
+  "data_boundary": {
+    "patient_level_data_local_only": true,
+    "analysis_outputs_local_only": true
   }
 }

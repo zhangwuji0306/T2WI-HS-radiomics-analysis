@@ -5,16 +5,13 @@
 ## 当前主线
 
 ```text
-MRI/radiomics freeze
-→ full-A habitat freeze
-→ candidate freeze
-→ Primary v2 fixed 5-fold A validation
-→ full-A model freeze
-→ frozen B external validation
-→ final interpretation
+Primary v2 complete
+→ example analysis
+→ secondary endpoint analysis
+→ sensitivity analysis
 ```
 
-当前方法为 **Primary Prognostic Analysis v2**。Formal W08 v1 已归档并标记为 `archived / superseded`，旧 W08/G3/R5/R6 记录不再是 active next step。FT validation v1 已归档，是 Primary v2 的历史开发来源，不是当前活动分析树。
+当前正式方法为 **Primary Prognostic Analysis v2**。Formal W08 v1 和 FT validation v1 均为历史来源，分别保存在 `archive/formal_nested_cv_v1/` 和 `archive/ft_validation_v1/`，不作为当前执行入口。
 
 ## Primary v2 固定合同
 
@@ -41,20 +38,22 @@ GitHub/Codex 仓库只保存代码、配置、方法文档和不含原始影像�
 - `feature_extract/configs/`：PyRadiomics 及技术敏感性参数。
 - `habitat_analysis/`：固定 habitat 方法、配置、队列定义和冻结规则。
 - `prognosis_analysis/primary/`：Primary v2 当前协议、验证、冻结和外部验证代码。
+- `prognosis_analysis/scripts/`：当前 Primary v2 和后续分析仍复用的建模、预处理和 habitat radiomics 依赖。
 - `manuscript/methodology_defense/`：方法学证据归档。
 - `archive/formal_nested_cv_v1/`：Formal W08 v1 历史协议与审查归档。
 - `archive/ft_validation_v1/`：FT validation v1 安全聚合证据归档。
-- `archive/protocol_history/`：更早的协议历史。
+- `archive/protocol_history/`：Pre-W08、方法换轨和其他历史协议/审查记录。
+- `archive/project_status_history/`：过期的项目与运行状态文件。
 
-当前科学主协议为根目录的《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》；当前 Primary v2 合同见《T2WI-HS-radiomics-analysis Primary v2 正式分析方案书与串行执行工作流.md》及 `prognosis_analysis/primary/protocol.json`。归档内容不作为当前分析输入。
+当前正式合同见 `prognosis_analysis/primary/README.md` 和 `prognosis_analysis/primary/protocol.json`；固定 full-A habitat、特征提取和队列定义见各自 active 目录。归档内容不作为当前分析输入。
 
 ## 环境与检查
 
 本地影像组学环境为 conda `t2_radiomics`，固定版本见 `environment.yml`。若 PowerShell 无法直接识别 `conda`，使用 `tools/run_t2_radiomics.ps1`。
 
 ```powershell
-.\tools\run_t2_radiomics.ps1 -PythonArguments @('-m','compileall','-q','feature_extract/scripts','prognosis_analysis/primary')
-.\tools\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','discover','-s','tests','-p','test_*.py')
+.\tools\run_t2_radiomics.ps1 -PythonArguments @('-m','compileall','-q','feature_extract/scripts','habitat_analysis/scripts','prognosis_analysis/primary','prognosis_analysis/scripts')
+.\tools\run_t2_radiomics.ps1 -PythonArguments @('-m','unittest','-q','prognosis_analysis.primary.test_equivalence')
 ```
 
 真实影像分析及患者级结果只在本地受控环境执行；提交前检查待提交文件，确认不含患者隐私、绝对路径、凭据或大文件。

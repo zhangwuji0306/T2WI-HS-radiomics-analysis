@@ -2,7 +2,7 @@
 
 本目录保存已完成或被当前执行协议替代的任务书和方法审阅报告，用于追溯代码修复、方法审阅及冻结前决策。归档文件不作为当前任务清单、参数选择依据或分析脚本输入。
 
-当前科学主协议为项目根目录的《T2WI-HS-radiomics-analysis 后续探索性预后分析与双阶段冻结任务书.md》；当前唯一执行SOP为项目根目录的《T2WI-HS-radiomics-analysis Pre-W08 整改、协议补丁与后续 A-only 建模分包工作流.md》。
+当前正式方法为 `prognosis_analysis/primary/README.md` 和 `prognosis_analysis/primary/protocol.json`；本目录内的文件均不再作为当前执行入口。
 
 ## 历史执行工作流
 

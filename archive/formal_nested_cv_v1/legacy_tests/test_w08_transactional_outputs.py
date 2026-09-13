@@ -243,7 +243,7 @@ class W08TransactionalOutputTests(unittest.TestCase):
                     "failure_context": {
                         "run_id": "M3L",
                         "patient_id": "PATIENT-003",
-                        "source_path": r"C:\private\patient-003\scan.nii.gz",
+                        "source_path": "<LOCAL_PATH>/patient-003/scan.nii.gz",
                         "failure_stage": "outer_final_refit",
                         "non_zero_coefficient_number": None,
                         "iterations": 11,

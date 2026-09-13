@@ -3,7 +3,8 @@
 ## Active method and protocol
 
 - Active method: `Primary Prognostic Analysis v2`.
-- Active protocol: `T2WI-HS-radiomics-analysis Primary v2 正式分析方案书与串行执行工作流.md`.
+- Active protocol: `prognosis_analysis/primary/protocol.json`.
+- Active method explanation: `prognosis_analysis/primary/README.md`.
 - Machine-readable contract: `prognosis_analysis/primary/protocol.json`.
 - Active long-term branch: `main`.
 
@@ -30,6 +31,8 @@ The tags are immutable recovery points. The transition commit history remains tr
 
 ## Active upstream assets intentionally not archived
 
-The following remain active or reusable upstream assets: `feature_extract/` scripts and configs; `habitat_analysis/` configs, cohort definitions, freeze locks and scripts; `prognosis_analysis/primary/`; the clinical schema and generic provenance utilities; the current scientific master protocol; the Pre-W08 upstream SOP; `environment.yml`, `requirements-cloud.txt`, `setup.sh`, `tools/` and regression tests.
+The following remain active or reusable upstream assets: `feature_extract/` scripts and configs; `habitat_analysis/` configs, cohort definitions, freeze locks, feature dictionary, scripts and fixed full-A habitat caches; `prognosis_analysis/primary/`; the current reusable dataset/QC and habitat-radiomics scripts; the current Cox engine and its `w07_outer_splits.py` / `w08_kmeans_parameters.py` dependencies; `environment.yml`, `requirements-cloud.txt`, `setup.sh` and `tools/`.
 
-The untracked Primary v2 scheme book and `_codex_ft_run_*` transition contracts are preserved locally as required and are not included in this archive commit. Patient-level data, raw imaging, ROI, clinical/pathology/outcome source tables, mapping files and all output directories are outside this reference and remain excluded.
+The active analysis sequence after Primary v2 is example analysis, secondary endpoint analysis and sensitivity analysis. Historical W08/Pre-W08/FT runners, tests and status files are not active dependencies.
+
+`_codex_ft_run_*` transition contracts are local historical material and are not part of the active analysis tree. Patient-level data, raw imaging, ROI, clinical/pathology/outcome source tables, mapping files and all output directories are outside this reference and remain excluded.

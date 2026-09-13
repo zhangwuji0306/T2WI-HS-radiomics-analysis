@@ -14,6 +14,8 @@ archive/*
 !archive/protocol_history/
 archive/protocol_history/*
 !archive/protocol_history/README.md
+!archive/protocol_history/*.md
+!archive/protocol_history/*.json
 !archive/protocol_history/三十二、具体执行工作流：从 formal PASS 至 A-only model freeze.md
 !archive/protocol_history/n_init_equivalence_cancelled/
 !archive/protocol_history/n_init_equivalence_cancelled/**
@@ -85,6 +87,7 @@ archive/protocol_history/*
 !archive/ft_validation_v1/T2WI-HS 生境预后快速验证（FT）方案书.md
 !archive/project_status_history/
 !archive/project_status_history/PROJECT_STATUS_pre_v2.md
+!archive/project_status_history/execution_status_pre_primary_v2.json
 *.csv
 *.xlsx
 *.xls

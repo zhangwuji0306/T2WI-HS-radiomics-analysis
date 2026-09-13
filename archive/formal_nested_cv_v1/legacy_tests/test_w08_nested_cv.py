@@ -532,7 +532,7 @@ class W08NestedCVTests(unittest.TestCase):
                     "run_id": "M3L",
                     "n_train": np.int64(24),
                     "patient_ids": ["PATIENT-001"],
-                    "source_path": r"C:\private\patient-001\scan.nii.gz",
+                    "source_path": "<LOCAL_PATH>/patient-001/scan.nii.gz",
                 },
                 "last_objective": np.float64(np.nan),
             })
