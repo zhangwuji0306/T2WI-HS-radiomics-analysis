@@ -122,6 +122,9 @@ def validate_frozen_b_predictors(feature_frame, model_id, lock,
     if lock.get("models", {}).get(model_id, {}).get("coefficient_verification") != \
             "requires protected runtime verification":
         raise ExternalValidationError("model identity verification state is invalid")
+    base_frame_n = _validate_b_frame_completeness(
+        feature_frame, cohort_identity, cohort_identity_hash,
+        external_registration, evidence_manifest, protocol_path)
     checked = va.validate_predictor_frame(
         feature_frame, [model_id], cohort="B", require_outcome=False)
     population = va.MODEL_SPECS[model_id]["population"]
@@ -135,6 +138,8 @@ def validate_frozen_b_predictors(feature_frame, model_id, lock,
         "model_id": model_id,
         "population": population,
         "gate": {
+            "B_base_frame_n": base_frame_n,
+            "B_base_frame_completeness_validated": True,
             "frozen_model_validated_before_predict": True,
             "frozen_prediction_only": True,
             "outcome_required_for_predict": False,
@@ -147,6 +152,48 @@ def validate_frozen_b_predictors(feature_frame, model_id, lock,
             "B_to_A_feedback": False,
         },
     }
+
+
+def _validate_b_frame_completeness(feature_frame, cohort_identity,
+                                   cohort_identity_hash, external_registration,
+                                   evidence_manifest,
+                                   protocol_path=va.DEFAULT_PROTOCOL):
+    """Bind the actual B predictor frame to the authorized FT06 denominator."""
+    if not isinstance(feature_frame, pd.DataFrame):
+        raise ExternalValidationError("B feature frame must be a DataFrame")
+    protocol = va.load_protocol(protocol_path)
+    expected = va._cohort_identity_entry(protocol, "FT06_authorized_B")
+    manifest_b = evidence_manifest.get("cohort_identities", {}).get(
+        "FT06_authorized_B", {}) if isinstance(evidence_manifest, dict) else {}
+    registration_b = external_registration.get("authorized_B_cohort", {}) \
+        if isinstance(external_registration, dict) else {}
+    authorized_n = expected.get("n")
+    if authorized_n != 163 or manifest_b.get("n") != authorized_n or \
+            registration_b.get("n") != authorized_n:
+        raise ExternalValidationError(
+            "B frame denominator is not the authorized FT06 B=163 cohort")
+    expected_hash = expected.get("identity_sha256")
+    if cohort_identity != expected.get("identity_token") or \
+            not isinstance(cohort_identity_hash, str) or \
+            cohort_identity_hash.lower() != str(expected_hash).lower():
+        raise ExternalValidationError("B frame identity is not the authorized FT06 identity")
+    if len(feature_frame) != authorized_n:
+        raise ExternalValidationError(
+            "B feature frame must contain exactly the authorized FT06 B=163 rows")
+
+    # Input frames may carry optional identity attrs; when present, they must
+    # agree with the explicit gate arguments rather than override them.
+    attrs = getattr(feature_frame, "attrs", {})
+    if not isinstance(attrs, dict):
+        raise ExternalValidationError("B feature frame attrs are invalid")
+    frame_token = attrs.get("cohort_identity_token")
+    frame_hash = attrs.get("cohort_identity_sha256")
+    if (frame_token is not None or frame_hash is not None) and \
+            (frame_token != cohort_identity or
+             not isinstance(frame_hash, str) or
+             frame_hash.lower() != cohort_identity_hash.lower()):
+        raise ExternalValidationError("B feature frame attrs do not match frozen identity")
+    return int(authorized_n)
 
 
 def _runtime_model_identity(model, state):
@@ -324,6 +371,8 @@ def build_external_registration(ft06_aggregate, ft06_json_sha256,
                 "sha256": ft06_report_sha256.lower(),
             },
             "immutable": True,
+            "patient_level_predictions_copied": False,
+            "patient_level_metrics_copied": False,
         },
         "protocol_sha256": va.sha256_file(protocol_path),
         "model_freeze": {

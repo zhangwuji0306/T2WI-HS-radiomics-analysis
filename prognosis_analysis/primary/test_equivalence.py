@@ -162,6 +162,37 @@ def _primary_metadata():
         load("model_freeze_lock.json"), load("external_validation_registration.json")
 
 
+def synthetic_b_predictor_frame(n=163):
+    """Create a de-identified B frame with the frozen predictor schema."""
+    frame = synthetic_frame(n).copy()
+    frame["patient_id"] = ["SYN-B-%03d" % (index + 1) for index in range(n)]
+    return frame
+
+
+def synthetic_ft06_aggregate():
+    """Create only the non-patient-level FT06 fields required by the builder."""
+    return {
+        "status": "COMPLETE",
+        "final_disposition": "FT-INCONCLUSIVE",
+        "gate": {
+            "status": "AUTHORIZED",
+            "no_fit": True,
+            "no_lambda_tuning": True,
+            "no_feature_selection": True,
+            "no_cutoff_tuning": True,
+            "no_habitat_refit": True,
+            "no_radiomics_reextraction": True,
+            "b_to_a_feedback": False,
+        },
+        "safety": {"predict_only": True},
+        "validation": {
+            "all_predictions_frozen_state_only": True,
+            "b_outcome_read_after_gate": True,
+        },
+        "cohort": {"n": 163, "events": 42, "censored": 121},
+    }
+
+
 def _must_reject(callback):
     try:
         callback()
@@ -219,6 +250,69 @@ def test_synthetic_cohort_identity_boundaries():
     _must_reject(lambda: va.validate_b_cohort_binding(
         va.B_COHORT_IDENTITY_TOKEN, va.B_COHORT_IDENTITY_SHA256,
         tampered, registration))
+
+
+def test_b_frame_completeness_is_bound_to_ft06_denominator():
+    """Correct B metadata cannot authorize a truncated or expanded frame."""
+    manifest, lock, registration = _primary_metadata()
+    token = va.B_COHORT_IDENTITY_TOKEN
+    digest = va.B_COHORT_IDENTITY_SHA256
+
+    accepted = validate_external.validate_frozen_b_predictors(
+        synthetic_b_predictor_frame(163), "M3L", lock, token, digest,
+        registration, manifest)
+    assert len(accepted["frame"]) == 163
+    assert accepted["eligible_n"] == 161
+
+    for row_count in (1, 162, 164):
+        _must_reject(lambda row_count=row_count:
+                     validate_external.validate_frozen_b_predictors(
+                         synthetic_b_predictor_frame(row_count), "M3L", lock,
+                         token, digest, registration, manifest))
+
+    duplicate = synthetic_b_predictor_frame(163)
+    duplicate.loc[162, "patient_id"] = duplicate.loc[0, "patient_id"]
+    _must_reject(lambda: validate_external.validate_frozen_b_predictors(
+        duplicate, "M3L", lock, token, digest, registration, manifest))
+
+    with_wrong_attrs = synthetic_b_predictor_frame(163)
+    with_wrong_attrs.attrs["cohort_identity_token"] = token
+    with_wrong_attrs.attrs["cohort_identity_sha256"] = "0" * 64
+    _must_reject(lambda: validate_external.validate_frozen_b_predictors(
+        with_wrong_attrs, "M3L", lock, token, digest, registration, manifest))
+
+    cross_cohort = synthetic_b_predictor_frame(163)
+    cross_cohort["A__synthetic_leak"] = 0
+    _must_reject(lambda: validate_external.validate_frozen_b_predictors(
+        cross_cohort, "M3L", lock, token, digest, registration, manifest))
+
+    _must_reject(lambda: validate_external.validate_frozen_b_predictors(
+        synthetic_b_predictor_frame(163), "M3L", lock,
+        "B107_technical_screening_reference", "0" * 64,
+        registration, manifest))
+
+
+def test_external_registration_builder_is_self_consistent():
+    """A synthetic aggregate built from fixed metadata validates unchanged."""
+    manifest, lock, static_registration = _primary_metadata()
+    source = static_registration["source"]
+    built = validate_external.build_external_registration(
+        synthetic_ft06_aggregate(), source["aggregate"]["sha256"],
+        source["report"]["sha256"], lock, source["ref"],
+        source_commit=source["commit"], registration_date="2026-09-13")
+    assert built["source"]["patient_level_predictions_copied"] is False
+    assert built["source"]["patient_level_metrics_copied"] is False
+    assert validate_external.validate_external_registration(
+        built, lock, manifest) is True
+
+    tampered = copy.deepcopy(built)
+    tampered["source"]["patient_level_predictions_copied"] = True
+    _must_reject(lambda: validate_external.validate_external_registration(
+        tampered, lock, manifest))
+    tampered = copy.deepcopy(built)
+    tampered["source"]["patient_level_metrics_copied"] = True
+    _must_reject(lambda: validate_external.validate_external_registration(
+        tampered, lock, manifest))
 
 
 class _SyntheticRuntimeModel(object):
