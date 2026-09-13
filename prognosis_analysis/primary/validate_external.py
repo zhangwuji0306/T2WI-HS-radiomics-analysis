@@ -21,9 +21,9 @@ class ExternalValidationError(va.PrimaryValidationError):
 
 
 FORBIDDEN_B_ACTIONS = (
-    "feature_selection", "lambda_tuning", "coefficient_refit",
-    "cutoff_optimization", "habitat_refit", "radiomics_candidate_reselection",
-    "B_to_A_feedback",
+    "B feature selection", "B lambda tuning", "B coefficient refit",
+    "B cutoff optimization", "B habitat refit",
+    "B radiomics candidate re-selection", "B to A feedback",
 )
 
 
@@ -37,11 +37,88 @@ def load_canonical_lock(path):
     return lock
 
 
-def validate_frozen_b_predictors(feature_frame, model_id, lock):
+def validate_external_registration(registration, lock, evidence_manifest,
+                                   protocol_path=va.DEFAULT_PROTOCOL):
+    """Validate the complete non-patient-level FT06 provenance handoff."""
+    protocol = va.load_protocol(protocol_path)
+    va.validate_evidence_manifest(evidence_manifest, protocol_path)
+    refit_freeze.validate_canonical_lock(lock, protocol_path)
+    if not isinstance(registration, dict) or \
+            registration.get("artifact_id") != \
+            "PRIMARY_V2_EXTERNAL_VALIDATION_REGISTRATION" or \
+            registration.get("status") != "REGISTERED_FT06_EVIDENCE":
+        raise ExternalValidationError("external registration identity/status mismatch")
+    if registration.get("protocol_sha256") != va.sha256_file(protocol_path):
+        raise ExternalValidationError("external registration protocol hash mismatch")
+    expected_registry = protocol["evidence_registry"]
+    source = registration.get("source", {})
+    if source.get("ref") != expected_registry["source_git_ref"] or \
+            source.get("commit") != expected_registry["source_git_commit"] or \
+            source.get("immutable") is not True or \
+            source.get("patient_level_predictions_copied") is not False or \
+            source.get("patient_level_metrics_copied") is not False:
+        raise ExternalValidationError("external registration source binding mismatch")
+    expected_ft06 = expected_registry["FT06"]
+    if source.get("aggregate") != expected_ft06["aggregate_json"] or \
+            source.get("report") != expected_ft06["report"]:
+        raise ExternalValidationError("FT06 source path/hash mismatch")
+    expected_lock_hash = va.canonical_json_hash(lock)
+    model_freeze = registration.get("model_freeze", {})
+    if model_freeze.get("canonical_lock_path") != \
+            "prognosis_analysis/primary/model_freeze_lock.json" or \
+            model_freeze.get("canonical_lock_sha256") != expected_lock_hash or \
+            model_freeze.get("B_prediction_was_frozen_before_B_evaluation") is not True or \
+            model_freeze.get("frozen_model_identity_source") != "promoted FT04 lock identity":
+        raise ExternalValidationError("external registration model-freeze binding mismatch")
+    expected_timing = {
+        "Primary_v2_promotion_decision_occurred_after_FT_B_results_were_available": True,
+        "FT03_results_visible_at_decision": True,
+        "FT06_results_visible_at_decision": True,
+        "retrospective_prespecification_claim": False,
+    }
+    if registration.get("promotion_timing") != expected_timing:
+        raise ExternalValidationError("external registration promotion timing is invalid")
+    expected_b = va._cohort_identity_entry(protocol, "FT06_authorized_B")
+    if registration.get("authorized_B_cohort") != {
+            "n": 163,
+            "DFS_events": 42,
+            "DFS_censored": 121,
+            "identity_token": expected_b["identity_token"],
+            "identity_sha256": expected_b["identity_sha256"],
+            "identity_source": "FT06 aggregate cohort object",
+            "technical_screening_reference_B_n": 107,
+            "denominator_not_technical_screening_B107": True,
+    }:
+        raise ExternalValidationError("external registration B identity is invalid")
+    if registration.get("allowed_sequence") != [
+            "load frozen model", "load frozen-compatible B predictors",
+            "predict", "evaluate"]:
+        raise ExternalValidationError("external registration sequence is invalid")
+    if registration.get("forbidden_actions") != list(FORBIDDEN_B_ACTIONS):
+        raise ExternalValidationError("external registration forbidden actions were altered")
+    if registration.get("patient_level_material_copied") is not False or \
+            registration.get("predictions_and_metrics_recomputed") is not False:
+        raise ExternalValidationError("external registration contains patient-level promotion")
+    return True
+
+
+def validate_frozen_b_predictors(feature_frame, model_id, lock,
+                                 cohort_identity=None,
+                                 cohort_identity_hash=None,
+                                 external_registration=None,
+                                 evidence_manifest=None,
+                                 protocol_path=va.DEFAULT_PROTOCOL):
     """Validate B predictors only after a validated frozen model is supplied."""
     if model_id not in va.MODEL_SPECS:
         raise ExternalValidationError("unknown frozen model: %s" % model_id)
-    refit_freeze.validate_canonical_lock(lock)
+    try:
+        validate_external_registration(
+            external_registration, lock, evidence_manifest, protocol_path)
+        va.validate_b_cohort_binding(
+            cohort_identity, cohort_identity_hash, evidence_manifest,
+            external_registration, protocol_path)
+    except va.PrimaryValidationError as exc:
+        raise ExternalValidationError(str(exc))
     if lock.get("models", {}).get(model_id, {}).get("coefficient_verification") != \
             "requires protected runtime verification":
         raise ExternalValidationError("model identity verification state is invalid")
@@ -72,27 +149,51 @@ def validate_frozen_b_predictors(feature_frame, model_id, lock):
     }
 
 
+def _runtime_model_identity(model, state):
+    keys = ("model_id", "population", "model_input_hash",
+            "transformed_feature_order_sha256", "state_sha256")
+    identity = getattr(model, "primary_v2_identity", None)
+    if isinstance(identity, dict):
+        return identity
+    if all(hasattr(model, key) for key in keys):
+        return {key: getattr(model, key) for key in keys}
+    identity = state.get("runtime_model_identity") if isinstance(state, dict) else None
+    if isinstance(identity, dict):
+        return identity
+    raise ExternalValidationError(
+        "runtime model object lacks the complete Primary v2 identity")
+
+
 def _validate_protected_state(state, model_id, lock):
     if not isinstance(state, dict):
         raise ExternalValidationError("protected frozen state must be a dict")
-    if state.get("model_id") != model_id:
-        raise ExternalValidationError("protected state model identity mismatch")
     expected = lock["models"][model_id]
-    state_order_hash = state.get("feature_order_sha256", state.get(
-        "transformed_feature_order_sha256"))
-    if state.get("model_input_hash") != expected.get("model_input_hash") or \
-            state_order_hash != expected.get("transformed_feature_order_sha256"):
-        raise ExternalValidationError("protected state does not match frozen identity")
     model = state.get("model")
     preprocessor = state.get("preprocessor")
     if model is None or preprocessor is None:
         raise ExternalValidationError("protected runtime model/preprocessor is required")
+    identity = _runtime_model_identity(model, state)
+    for field in ("model_id", "population", "model_input_hash",
+                  "transformed_feature_order_sha256", "state_sha256"):
+        if identity.get(field) != expected.get(field):
+            raise ExternalValidationError(
+                "protected runtime %s does not match frozen identity" % field)
+    feature_names = getattr(preprocessor, "feature_names", None)
+    if feature_names is not None and \
+            va.canonical_json_hash(list(feature_names)) != \
+            expected.get("transformed_feature_order_sha256"):
+        raise ExternalValidationError("protected preprocessor feature order is not frozen")
     return model, preprocessor
 
 
-def predict_frozen(feature_frame, model_id, protected_state, lock):
+def predict_frozen(feature_frame, model_id, protected_state, lock,
+                   cohort_identity=None, cohort_identity_hash=None,
+                   external_registration=None, evidence_manifest=None,
+                   protocol_path=va.DEFAULT_PROTOCOL):
     """Predict with an already frozen model; no B fitting or outcome read occurs."""
-    gate = validate_frozen_b_predictors(feature_frame, model_id, lock)
+    gate = validate_frozen_b_predictors(
+        feature_frame, model_id, lock, cohort_identity, cohort_identity_hash,
+        external_registration, evidence_manifest, protocol_path)
     model, preprocessor = _validate_protected_state(protected_state, model_id, lock)
     selected = gate["frame"].loc[gate["eligible_mask"]].reset_index(drop=True)
     try:
@@ -113,6 +214,8 @@ def predict_frozen(feature_frame, model_id, protected_state, lock):
     if not np.isfinite(output.iloc[:, 1:].to_numpy(dtype=float)).all():
         raise ExternalValidationError("frozen B survival prediction is invalid")
     output.attrs["model_id"] = model_id
+    output.attrs["cohort_identity_token"] = cohort_identity
+    output.attrs["cohort_identity_sha256"] = cohort_identity_hash
     output.attrs["frozen_prediction_only"] = True
     output.attrs["B_outcome_read_before_predict"] = False
     return output
@@ -160,10 +263,16 @@ def evaluate_frozen_predictions(predictions, outcome_frame, model_id, lock):
 
 def build_external_registration(ft06_aggregate, ft06_json_sha256,
                                 ft06_report_sha256, lock, source_ref,
-                                source_commit="3c1eb3b702831a17f2265ba0ce42d7ce3ddf3d34",
-                                registration_date="2026-09-13"):
+                                source_commit=va.FT_SOURCE_COMMIT,
+                                registration_date="2026-09-13",
+                                protocol_path=va.DEFAULT_PROTOCOL):
     """Register FT06 without copying its patient-level predictions or metrics."""
-    refit_freeze.validate_canonical_lock(lock)
+    protocol = va.load_protocol(protocol_path)
+    refit_freeze.validate_canonical_lock(lock, protocol_path)
+    expected_registry = protocol["evidence_registry"]
+    if source_ref != expected_registry["source_git_ref"] or \
+            source_commit != expected_registry["source_git_commit"]:
+        raise ExternalValidationError("FT06 source ref/commit is not the accepted binding")
     if not isinstance(ft06_aggregate, dict) or ft06_aggregate.get("status") != "COMPLETE":
         raise ExternalValidationError("FT06 source is not complete")
     if ft06_aggregate.get("final_disposition") != "FT-INCONCLUSIVE":
@@ -186,10 +295,19 @@ def build_external_registration(ft06_aggregate, ft06_json_sha256,
     cohort = ft06_aggregate.get("cohort", {})
     if cohort.get("n") != 163 or cohort.get("events") != 42 or cohort.get("censored") != 121:
         raise ExternalValidationError("FT06 authorized B cohort identity mismatch")
-    va.validate_asset_record({"path": "prognosis_analysis/ft/FT06_B_validation.json",
-                              "sha256": ft06_json_sha256}, "FT06 aggregate")
-    va.validate_asset_record({"path": "prognosis_analysis/ft/FT06_B_validation_report.md",
-                              "sha256": ft06_report_sha256}, "FT06 report")
+    expected_ft06 = expected_registry["FT06"]
+    aggregate_record = va.validate_asset_record({
+        "path": "prognosis_analysis/ft/FT06_B_validation.json",
+        "sha256": ft06_json_sha256,
+    }, "FT06 aggregate")
+    report_record = va.validate_asset_record({
+        "path": "prognosis_analysis/ft/FT06_B_validation_report.md",
+        "sha256": ft06_report_sha256,
+    }, "FT06 report")
+    if aggregate_record != expected_ft06["aggregate_json"] or \
+            report_record != expected_ft06["report"]:
+        raise ExternalValidationError("FT06 source path/hash is not the accepted binding")
+    expected_b = va._cohort_identity_entry(protocol, "FT06_authorized_B")
     return {
         "schema_version": "1.0",
         "artifact_id": "PRIMARY_V2_EXTERNAL_VALIDATION_REGISTRATION",
@@ -207,12 +325,12 @@ def build_external_registration(ft06_aggregate, ft06_json_sha256,
             },
             "immutable": True,
         },
-        "protocol_sha256": lock["Primary_v2_protocol_hash"],
+        "protocol_sha256": va.sha256_file(protocol_path),
         "model_freeze": {
-            "canonical_lock_artifact": "prognosis_analysis/primary/model_freeze_lock.json",
-            "canonical_lock_hash": va.sha256_text(json.dumps(lock, ensure_ascii=False,
-                                                               sort_keys=True, separators=(",", ":"))),
+            "canonical_lock_path": "prognosis_analysis/primary/model_freeze_lock.json",
+            "canonical_lock_sha256": va.canonical_json_hash(lock),
             "B_prediction_was_frozen_before_B_evaluation": True,
+            "frozen_model_identity_source": "promoted FT04 lock identity",
         },
         "promotion_timing": {
             "Primary_v2_promotion_decision_occurred_after_FT_B_results_were_available": True,
@@ -224,9 +342,16 @@ def build_external_registration(ft06_aggregate, ft06_json_sha256,
             "n": 163,
             "DFS_events": 42,
             "DFS_censored": 121,
+            "identity_token": expected_b["identity_token"],
+            "identity_sha256": expected_b["identity_sha256"],
             "identity_source": "FT06 aggregate cohort object",
+            "technical_screening_reference_B_n": 107,
             "denominator_not_technical_screening_B107": True,
         },
+        "allowed_sequence": [
+            "load frozen model", "load frozen-compatible B predictors",
+            "predict", "evaluate",
+        ],
         "patient_level_material_copied": False,
         "predictions_and_metrics_recomputed": False,
         "forbidden_actions": list(FORBIDDEN_B_ACTIONS),
@@ -240,7 +365,7 @@ def main(argv=None):  # pragma: no cover - requires explicit non-repository FT s
     parser.add_argument("--ft06-report-sha256", required=True)
     parser.add_argument("--lock", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--source-ref", default="refs/heads/codex/ft-validation")
+    parser.add_argument("--source-ref", default=va.FT_SOURCE_REF)
     args = parser.parse_args(argv)
     aggregate = json.load(open(args.ft06_json, "r", encoding="utf-8"))
     lock = load_canonical_lock(args.lock)

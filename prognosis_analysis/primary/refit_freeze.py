@@ -44,6 +44,10 @@ def _load_json(path, label):
 def _model_identity(summary, model_id):
     if not isinstance(summary, dict):
         raise PrimaryFreezeError("FT04 model summary is not an object: %s" % model_id)
+    source_summary = "state_sha256" not in summary and "sha256" in summary
+    if source_summary:
+        summary = dict(summary)
+        summary["state_sha256"] = summary["sha256"]
     missing = [field for field in MODEL_IDENTITY_FIELDS if field not in summary]
     if missing:
         raise PrimaryFreezeError("FT04 model summary is incomplete for %s: %s" % (model_id, missing))
@@ -51,35 +55,68 @@ def _model_identity(summary, model_id):
         raise PrimaryFreezeError("FT04 model identity key mismatch: %s" % model_id)
     if summary.get("predictor_blocks") != list(va.MODEL_SPECS[model_id]["blocks"]):
         raise PrimaryFreezeError("FT04 predictor blocks differ for %s" % model_id)
+    expected_population = va.MODEL_SPECS[model_id]["population"]
+    if summary.get("population") != expected_population:
+        # FT04 stored the whole-tumour availability population as W_Original.
+        # It is converted once at promotion; the active Primary v2 token is
+        # W_Original_available everywhere else.
+        if not source_summary or model_id != "M5" or summary.get("population") != "W_Original":
+            raise PrimaryFreezeError("FT04 population differs for %s" % model_id)
     selection = summary["selection"]
     if not isinstance(selection, dict):
         raise PrimaryFreezeError("FT04 selection state is invalid for %s" % model_id)
     if va.MODEL_SPECS[model_id]["penalized"]:
         if selection.get("alpha") != va.ALPHA or \
                 selection.get("lambda_selection_scope") != "outer_training_inner_5fold_only" or \
-                selection.get("outer_validation_used_for_lambda") is not False:
+                selection.get("outer_validation_used_for_lambda") is not False or \
+                selection.get("outer_validation_used_for_selection") is not False or \
+                selection.get("inner_folds") != va.INNER_FOLDS or \
+                selection.get("lambda_count") != va.LAMBDA_COUNT:
             raise PrimaryFreezeError("FT04 penalized state is not Primary v2 compatible: %s" % model_id)
+        for field in ("lambda_ratio", "outer_lambda"):
+            value = selection.get(field)
+            if not isinstance(value, (int, float)) or not va.np.isfinite(float(value)) or value <= 0:
+                raise PrimaryFreezeError("FT04 penalized lambda state is invalid: %s" % model_id)
     else:
         if selection.get("alpha") is not None or \
-                selection.get("outer_validation_used_for_lambda") is not False:
+                selection.get("lambda_selection_scope") != "not_applicable_unpenalized" or \
+                selection.get("outer_validation_used_for_lambda") is not False or \
+                selection.get("outer_validation_used_for_selection") is not False or \
+                selection.get("inner_folds") != 0 or selection.get("lambda_count") != 0:
             raise PrimaryFreezeError("FT04 unpenalized state is not Primary v2 compatible: %s" % model_id)
+        if selection.get("lambda_ratio") is not None or selection.get("outer_lambda") is not None:
+            raise PrimaryFreezeError("FT04 unpenalized lambda state is invalid: %s" % model_id)
+    for field in ("model_input_hash", "transformed_feature_order_sha256", "state_sha256"):
+        if not isinstance(summary.get(field), str) or \
+                not va.re.fullmatch(r"[0-9a-fA-F]{64}", summary[field]):
+            raise PrimaryFreezeError("FT04 %s is not a SHA-256: %s" % (field, model_id))
+    if not isinstance(summary.get("transformed_feature_count"), int) or \
+            summary["transformed_feature_count"] <= 0:
+        raise PrimaryFreezeError("FT04 transformed feature count is invalid: %s" % model_id)
     result = {field: copy.deepcopy(summary[field]) for field in MODEL_IDENTITY_FIELDS}
+    result["population"] = expected_population
     result["coefficients_available_in_promoted_record"] = False
     result["coefficient_verification"] = "requires protected runtime verification"
     return result
 
 
 def build_promoted_lock(ft04_lock, protocol_path=va.DEFAULT_PROTOCOL,
-                        source_ref="refs/heads/codex/ft-validation",
-                        source_commit="3c1eb3b702831a17f2265ba0ce42d7ce3ddf3d34",
+                        source_ref=va.FT_SOURCE_REF,
+                        source_commit=va.FT_SOURCE_COMMIT,
                         serialized_lock_sha256=None,
                         lock_identity_sha256=None,
                         promotion_date="2026-09-13"):
     """Build a non-patient-level Primary v2 lock from an accepted FT04 lock."""
+    if not isinstance(ft04_lock, dict):
+        raise PrimaryFreezeError("FT04 lock must be a JSON object")
     protocol = va.load_protocol(protocol_path)
     if ft04_lock.get("status") != "FROZEN" or \
             ft04_lock.get("not_formal_model_freeze_lock") is not True:
         raise PrimaryFreezeError("source is not the accepted exploratory FT04 frozen state")
+    expected_ref = protocol["evidence_registry"]["source_git_ref"]
+    expected_commit = protocol["evidence_registry"]["source_git_commit"]
+    if source_ref != expected_ref or source_commit != expected_commit:
+        raise PrimaryFreezeError("FT04 source ref/commit is not the accepted binding")
     if list(ft04_lock.get("model_order", [])) != list(va.MODEL_SPECS):
         raise PrimaryFreezeError("FT04 model order differs from Primary v2")
     if ft04_lock.get("validation", {}).get("b_data_read") is not False:
@@ -123,12 +160,19 @@ def build_promoted_lock(ft04_lock, protocol_path=va.DEFAULT_PROTOCOL,
             "alpha": va.ALPHA,
             "lambda_selection_scope": "outer-training_inner_5fold_only",
             "B_mode": "frozen prediction only",
+            "state_binding": {
+                "source_field": "FT04.models.<model_id>.sha256",
+                "verification_scope": "protected FT04 runtime state identity only; coefficient body is not copied",
+                "status": "identity_only_protected_runtime_required",
+            },
         },
     }
 
 
 def validate_canonical_lock(lock, protocol_path=va.DEFAULT_PROTOCOL):
-    va.load_protocol(protocol_path)
+    if not isinstance(lock, dict):
+        raise PrimaryFreezeError("canonical lock must be a JSON object")
+    protocol = va.load_protocol(protocol_path)
     if lock.get("status") != "FROZEN_CANONICAL_PROMOTED" or \
             lock.get("source") != "promoted_from_FT04":
         raise PrimaryFreezeError("canonical lock identity/status mismatch")
@@ -136,8 +180,33 @@ def validate_canonical_lock(lock, protocol_path=va.DEFAULT_PROTOCOL):
         raise PrimaryFreezeError("canonical lock is bound to a different Primary v2 protocol")
     if lock.get("no_refit") is not True or lock.get("no_B_tuning") is not True:
         raise PrimaryFreezeError("canonical lock does not declare no-refit/no-B-tuning")
+    expected_registry = protocol["evidence_registry"]
+    if lock.get("source_ref") != expected_registry["source_git_ref"] or \
+            lock.get("source_commit") != expected_registry["source_git_commit"]:
+        raise PrimaryFreezeError("canonical lock source ref/commit mismatch")
+    expected_ft04 = expected_registry["FT04"]
+    if lock.get("original_FT04_hash") != expected_ft04["serialized_lock_sha256"] or \
+            lock.get("original_FT04_identity_sha256") != expected_ft04["lock_identity_sha256"]:
+        raise PrimaryFreezeError("canonical lock FT04 source hash mismatch")
     if lock.get("model_order") != list(va.MODEL_SPECS):
         raise PrimaryFreezeError("canonical lock model order mismatch")
+    verification = lock.get("verification", {})
+    if verification.get("status") != "requires protected runtime verification" or \
+            verification.get("patient_level_coefficients_copied") is not False or \
+            verification.get("patient_level_predictions_copied") is not False or \
+            verification.get("no_coefficients_fabricated") is not True:
+        raise PrimaryFreezeError("canonical lock verification boundary is invalid")
+    provenance = lock.get("provenance", {})
+    if provenance.get("source_lock_path") != "prognosis_analysis/ft/FT_model_freeze_lock.json" or \
+            provenance.get("source_lock_serialized_sha256") != expected_ft04["serialized_lock_sha256"] or \
+            provenance.get("source_lock_identity_sha256") != expected_ft04["lock_identity_sha256"]:
+        raise PrimaryFreezeError("canonical lock provenance source binding mismatch")
+    if provenance.get("state_binding") != {
+            "source_field": "FT04.models.<model_id>.sha256",
+            "verification_scope": "protected FT04 runtime state identity only; coefficient body is not copied",
+            "status": "identity_only_protected_runtime_required",
+    }:
+        raise PrimaryFreezeError("canonical lock state provenance is incomplete")
     for model_id in va.MODEL_SPECS:
         _model_identity(lock.get("models", {}).get(model_id), model_id)
     return True

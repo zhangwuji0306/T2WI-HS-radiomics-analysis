@@ -9,6 +9,7 @@ from __future__ import absolute_import
 import json
 import os
 import sys
+import copy
 
 import numpy as np
 import pandas as pd
@@ -16,10 +17,14 @@ import pandas as pd
 try:
     from . import validate_assets as va
     from .run_cv import CanonicalPreprocessor, fit_canonical_model, run_cv_for_testing
+    from . import final_report, refit_freeze, validate_external
 except (ImportError, ValueError):  # pragma: no cover - direct script execution
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import validate_assets as va
     from run_cv import CanonicalPreprocessor, fit_canonical_model, run_cv_for_testing
+    import final_report
+    import refit_freeze
+    import validate_external
 
 
 def synthetic_frame(n=50):
@@ -146,6 +151,102 @@ def test_synthetic_equivalence():
     """Pytest-compatible assertion for the same synthetic-only entry point."""
     result = run_equivalence_checks()
     assert all(value != "FAIL" for value in result["checks"].values())
+
+
+def _primary_metadata():
+    root = os.path.dirname(os.path.abspath(__file__))
+    def load(name):
+        with open(os.path.join(root, name), "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    return load("PRIMARY_V2_EVIDENCE_MANIFEST.json"), \
+        load("model_freeze_lock.json"), load("external_validation_registration.json")
+
+
+def _must_reject(callback):
+    try:
+        callback()
+    except va.PrimaryValidationError:
+        return
+    raise AssertionError("tampered metadata was accepted")
+
+
+def test_fail_closed_promotion_metadata():
+    """Synthetic metadata tampering must never reach final-report generation."""
+    manifest, lock, registration = _primary_metadata()
+
+    tampered = copy.deepcopy(manifest)
+    tampered["protocol_sha256"] = "0" * 64
+    _must_reject(lambda: final_report.build_final_report(tampered, lock, registration))
+
+    tampered = copy.deepcopy(registration)
+    tampered["promotion_timing"]["FT06_results_visible_at_decision"] = False
+    _must_reject(lambda: final_report.build_final_report(manifest, lock, tampered))
+
+    tampered = copy.deepcopy(registration)
+    tampered["source"]["ref"] = "refs/heads/unauthorized-synthetic-source"
+    _must_reject(lambda: final_report.build_final_report(manifest, lock, tampered))
+
+    tampered = copy.deepcopy(registration)
+    tampered["source"]["report"]["sha256"] = "f" * 64
+    _must_reject(lambda: final_report.build_final_report(manifest, lock, tampered))
+
+    tampered = copy.deepcopy(lock)
+    tampered["models"]["M5"]["population"] = "W_Original"
+    _must_reject(lambda: final_report.build_final_report(manifest, tampered, registration))
+
+
+def test_synthetic_cohort_identity_boundaries():
+    """Cohort gates use non-patient tokens and reject subset/B107 substitutions."""
+    manifest, lock, registration = _primary_metadata()
+    synthetic_frame = pd.DataFrame({"patient_id": ["SYN-A-001", "SYN-A-002"]})
+    synthetic_split = pd.DataFrame({
+        "patient_id": ["SYN-A-001", "SYN-A-002", "SYN-A-003"],
+    })
+    _must_reject(lambda: va.validate_frame_matches_frozen_ids(
+        synthetic_frame, synthetic_split, "synthetic A"))
+    _must_reject(lambda: va.validate_a_cohort_binding(
+        synthetic_frame, synthetic_split, "wrong-synthetic-A-token", "0" * 64,
+        manifest))
+    _must_reject(lambda: va.validate_b_cohort_binding(
+        "B107_technical_screening_reference", "0" * 64, manifest,
+        registration))
+    _must_reject(lambda: validate_external.validate_frozen_b_predictors(
+        pd.DataFrame({"patient_id": ["SYN-B-001"]}), "M0", lock,
+        "B107_technical_screening_reference", "0" * 64,
+        registration, manifest))
+    tampered = copy.deepcopy(manifest)
+    tampered["cohort_identities"]["FT06_authorized_B"]["n"] = 107
+    _must_reject(lambda: va.validate_b_cohort_binding(
+        va.B_COHORT_IDENTITY_TOKEN, va.B_COHORT_IDENTITY_SHA256,
+        tampered, registration))
+
+
+class _SyntheticRuntimeModel(object):
+    def __init__(self, identity):
+        self.primary_v2_identity = dict(identity)
+
+
+def test_synthetic_runtime_model_identity_gate():
+    """The runtime model object, not only input/order claims, is identity-bound."""
+    _, lock, _ = _primary_metadata()
+    expected = dict(lock["models"]["M5"])
+    state = {
+        "model": _SyntheticRuntimeModel(expected),
+        "preprocessor": object(),
+    }
+    validate_external._validate_protected_state(state, "M5", lock)
+    for field, value in (
+            ("model_id", "M4"),
+            ("population", "main"),
+            ("model_input_hash", "0" * 64),
+            ("transformed_feature_order_sha256", "0" * 64),
+            ("state_sha256", "0" * 64)):
+        identity = dict(expected)
+        identity[field] = value
+        tampered = {"model": _SyntheticRuntimeModel(identity),
+                    "preprocessor": object()}
+        _must_reject(lambda tampered=tampered:
+                     validate_external._validate_protected_state(tampered, "M5", lock))
 
 
 if __name__ == "__main__":  # pragma: no cover

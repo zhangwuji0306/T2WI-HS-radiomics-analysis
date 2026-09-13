@@ -57,6 +57,22 @@
     },
     "denominator_scope_note": "The upstream technical-screening reference records a lenient target of A393/B107, whereas the promoted FT06 external-validation record authorizes 163 B cases. This contract preserves both source-specific identities and does not assert that B107 and the FT06 authorized B=163 denominator are the same cohort. Any future implementation must bind the B validation input to the FT06 authorized cohort identity rather than silently reconciling the labels."
   },
+  "cohort_identities": {
+    "primary_A_modeling": {
+      "identity_token": "A393_W06_endpoint_QC_exact_frozen_modeling_population",
+      "identity_sha256": "5fd90ac407400d59f4a8ae5f1d492de99b6b0e12eb62ff9bdb33800d9884afe3",
+      "n": 393,
+      "DFS_events": 89,
+      "DFS_censored": 304
+    },
+    "FT06_authorized_B": {
+      "identity_token": "B163_FT06_authorized_frozen_compatible_external_validation_cohort",
+      "identity_sha256": "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583",
+      "n": 163,
+      "DFS_events": 42,
+      "DFS_censored": 121
+    }
+  },
   "endpoint": {
     "primary": "DFS",
     "time_column": "DFS_time",
@@ -187,7 +203,7 @@
       ],
       "family": "LASSO-Cox",
       "alpha": 1,
-      "population": "R_low-eligible"
+      "population": "R_low"
     },
     {
       "id": "M3H",
@@ -198,7 +214,7 @@
       ],
       "family": "LASSO-Cox",
       "alpha": 1,
-      "population": "R_high-eligible"
+      "population": "R_high"
     },
     {
       "id": "M4",
@@ -210,7 +226,7 @@
       ],
       "family": "LASSO-Cox",
       "alpha": 1,
-      "population": "dual-radiomics eligible"
+      "population": "dual_radiomics"
     },
     {
       "id": "M5",
@@ -220,7 +236,7 @@
       ],
       "family": "LASSO-Cox",
       "alpha": 1,
-      "population": "W_Original-available"
+      "population": "W_Original_available"
     }
   ],
   "primary_comparisons": [

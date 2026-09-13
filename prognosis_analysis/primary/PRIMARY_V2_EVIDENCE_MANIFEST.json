@@ -5,7 +5,7 @@
   "protocol_id": "PRIMARY_ANALYSIS_V2",
   "protocol_version": "2.0",
   "protocol_path": "prognosis_analysis/primary/protocol.json",
-  "protocol_sha256": "1d29ce34b4e4cef1c2956fdcf86f525a8e28ee3161afa3e5165e5cac106fec27",
+  "protocol_sha256": "8d0e8239558ad9ecd2f5605bc1ecce29ef93f7769452319c3c804cda20b28e89",
   "promotion": {
     "source": "accepted FT03/FT04/FT06 evidence",
     "recomputation": false,
@@ -38,7 +38,9 @@
         "n": 393,
         "DFS_events": 89,
         "DFS_censored": 304,
-        "validation": "single repeat-1 outer five-fold; A-only"
+        "validation": "single repeat-1 outer five-fold; A-only",
+        "identity_token": "A393_W06_endpoint_QC_exact_frozen_modeling_population",
+        "identity_sha256": "5fd90ac407400d59f4a8ae5f1d492de99b6b0e12eb62ff9bdb33800d9884afe3"
       },
       "promotion_disposition": "aggregate/report binding only; no result recomputation"
     },
@@ -68,6 +70,8 @@
         "n": 163,
         "DFS_events": 42,
         "DFS_censored": 121,
+        "identity_token": "B163_FT06_authorized_frozen_compatible_external_validation_cohort",
+        "identity_sha256": "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583",
         "source_identity": "FT06 authorized frozen-compatible B validation cohort",
         "technical_screening_B107_is_not_merged": true
       },
@@ -114,12 +118,20 @@
     "primary_A_modeling": {
       "source_path": "prognosis_analysis/output/modeling_v2/dataset_primary_raw_A.csv",
       "identity": "exact frozen W06 A393 population; 89 DFS events; 304 censored",
-      "identity_sha256": "5fd90ac407400d59f4a8ae5f1d492de99b6b0e12eb62ff9bdb33800d9884afe3"
+      "identity_sha256": "5fd90ac407400d59f4a8ae5f1d492de99b6b0e12eb62ff9bdb33800d9884afe3",
+      "identity_token": "A393_W06_endpoint_QC_exact_frozen_modeling_population",
+      "n": 393,
+      "DFS_events": 89,
+      "DFS_censored": 304
     },
     "FT06_authorized_B": {
       "source_path": "prognosis_analysis/ft/FT06_B_validation.json",
       "identity": "authorized FT06 B=163; 42 DFS events; 121 censored",
       "identity_sha256": "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583",
+      "identity_token": "B163_FT06_authorized_frozen_compatible_external_validation_cohort",
+      "n": 163,
+      "DFS_events": 42,
+      "DFS_censored": 121,
       "not_the_same_as_technical_screening_B107": true
     }
   },

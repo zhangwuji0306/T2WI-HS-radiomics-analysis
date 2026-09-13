@@ -7,7 +7,7 @@
   "source_commit": "3c1eb3b702831a17f2265ba0ce42d7ce3ddf3d34",
   "original_FT04_hash": "bb0c00b49b68cc31eb3899a9099ca8330551a7c2afd0ff3f849abc091a80c2d2",
   "original_FT04_identity_sha256": "10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e",
-  "Primary_v2_protocol_hash": "1d29ce34b4e4cef1c2956fdcf86f525a8e28ee3161afa3e5165e5cac106fec27",
+  "Primary_v2_protocol_hash": "8d0e8239558ad9ecd2f5605bc1ecce29ef93f7769452319c3c804cda20b28e89",
   "promotion_date": "2026-09-13",
   "no_refit": true,
   "no_B_tuning": true,
@@ -80,7 +80,7 @@
       "coefficient_verification": "requires protected runtime verification"
     },
     "M5": {
-      "model_id": "M5", "population": "W_Original", "predictor_blocks": ["C", "W_Original"],
+      "model_id": "M5", "population": "W_Original_available", "predictor_blocks": ["C", "W_Original"],
       "eligible_n": 393, "event_count": 89,
       "model_input_hash": "19e44a9c0aba0430d4453849cb1595bfbf34a58d9c6a58f20f55fd81abb84063",
       "transformed_feature_count": 50,
@@ -99,10 +99,19 @@
     "no_coefficients_fabricated": true
   },
   "provenance": {
+    "protocol_path": "prognosis_analysis/primary/protocol.json",
+    "source_lock_path": "prognosis_analysis/ft/FT_model_freeze_lock.json",
+    "source_lock_serialized_sha256": "bb0c00b49b68cc31eb3899a9099ca8330551a7c2afd0ff3f849abc091a80c2d2",
+    "source_lock_identity_sha256": "10a2c1fe2de9a36a074a604ea4966537b22cbb7191b8e04a71a1469ac508b56e",
     "fixed_full_A_habitat": true,
     "outer_validation_design": "single repeat-1 five-fold",
     "alpha": 1.0,
     "lambda_selection_scope": "outer-training_inner_5fold_only",
-    "B_mode": "frozen prediction only"
+    "B_mode": "frozen prediction only",
+    "state_binding": {
+      "source_field": "FT04.models.<model_id>.sha256",
+      "verification_scope": "protected FT04 runtime state identity only; coefficient body is not copied",
+      "status": "identity_only_protected_runtime_required"
+    }
   }
 }

@@ -409,12 +409,18 @@ def _serializable_result(result):
 
 def run_cv(frame, split, model_ids=None, protocol_path=va.DEFAULT_PROTOCOL,
            production=False, output_path=None, include_paired=True,
-           lambda_count=va.LAMBDA_COUNT, max_iter=3000, tolerance=1e-7):
+           lambda_count=va.LAMBDA_COUNT, max_iter=3000, tolerance=1e-7,
+           cohort_identity=None, cohort_identity_hash=None,
+           evidence_manifest=None):
     """Run the canonical A-only validation path on explicit in-memory inputs."""
     protocol = va.load_protocol(protocol_path)
     checked = va.validate_predictor_frame(
         frame, model_ids=model_ids, cohort="A", require_outcome=True)
     checked_split = va.validate_split(split, frame=checked, production=production)
+    if production:
+        va.validate_a_cohort_binding(
+            checked, checked_split, cohort_identity, cohort_identity_hash,
+            evidence_manifest, protocol_path)
     model_ids = list(va.MODEL_SPECS if model_ids is None else model_ids)
     if set(model_ids) == set(va.MODEL_SPECS):
         selected_runs = list(va.RUN_DEFINITIONS)
@@ -505,11 +511,24 @@ def main(argv=None):  # pragma: no cover - production CLI requires protected inp
     parser = argparse.ArgumentParser(description="Primary v2 A-only CV")
     parser.add_argument("--frame", required=True, help="authorised local A feature CSV")
     parser.add_argument("--split", required=True, help="frozen repeat-1 split CSV")
+    parser.add_argument("--manifest", required=True,
+                        help="accepted Primary v2 evidence manifest JSON")
+    parser.add_argument("--cohort-identity", required=True,
+                        help="frozen non-patient-level A cohort identity token")
+    parser.add_argument("--cohort-identity-sha256", required=True,
+                        help="frozen A cohort identity SHA-256")
     parser.add_argument("--output", required=True, help="local transactional aggregate output")
     args = parser.parse_args(argv)
     frame = pd.read_csv(args.frame)
     split = pd.read_csv(args.split)
-    run_cv(frame, split, production=True, output_path=args.output)
+    with open(args.manifest, "r", encoding="utf-8") as handle:
+        evidence_manifest = json.load(handle)
+    run_cv(
+        frame, split, production=True, output_path=args.output,
+        cohort_identity=args.cohort_identity,
+        cohort_identity_hash=args.cohort_identity_sha256,
+        evidence_manifest=evidence_manifest,
+    )
     return 0
 
 

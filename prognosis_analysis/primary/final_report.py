@@ -11,9 +11,11 @@ import numpy as np
 try:
     from . import validate_assets as va
     from . import refit_freeze
+    from . import validate_external
 except (ImportError, ValueError):  # pragma: no cover - direct script execution
     import validate_assets as va
     import refit_freeze
+    import validate_external
 
 
 class FinalReportError(va.PrimaryValidationError):
@@ -66,12 +68,11 @@ def _load_json(path, label):
 
 def build_final_report(manifest, lock, external_registration):
     """Build a shareable report from aggregate metadata only."""
-    va.validate_protocol(va.load_protocol())
-    refit_freeze.validate_canonical_lock(lock)
-    if manifest.get("status") != "PROMOTED_WITHOUT_RECOMPUTATION":
-        raise FinalReportError("evidence manifest is not promoted without recomputation")
-    if external_registration.get("status") != "REGISTERED_FT06_EVIDENCE":
-        raise FinalReportError("external validation registration is incomplete")
+    protocol_path = va.DEFAULT_PROTOCOL
+    va.validate_evidence_manifest(manifest, protocol_path)
+    refit_freeze.validate_canonical_lock(lock, protocol_path)
+    validate_external.validate_external_registration(
+        external_registration, lock, manifest, protocol_path)
     ft03 = manifest.get("evidence", {}).get("FT03", {})
     ft04 = manifest.get("evidence", {}).get("FT04", {})
     ft06 = manifest.get("evidence", {}).get("FT06", {})
@@ -106,8 +107,8 @@ The canonical lock records accepted FT04 model identities, predictor order hashe
         ft03_path=ft03.get("aggregate", {}).get("path", "UNKNOWN"),
         ft03_sha=ft03.get("aggregate", {}).get("sha256", "UNKNOWN"),
         ft04_status=ft04.get("status", "UNKNOWN"),
-        ft04_identity=ft04.get("identity_sha256", "UNKNOWN"),
-        ft04_serialized=ft04.get("serialized_sha256", "UNKNOWN"),
+        ft04_identity=ft04.get("lock", {}).get("identity_sha256", "UNKNOWN"),
+        ft04_serialized=ft04.get("lock", {}).get("serialized_sha256", "UNKNOWN"),
         ft06_status=ft06.get("status", "UNKNOWN"),
         ft06_disposition=ft06.get("final_disposition", "UNKNOWN"),
         ft06_path=ft06.get("aggregate", {}).get("path", "UNKNOWN"),

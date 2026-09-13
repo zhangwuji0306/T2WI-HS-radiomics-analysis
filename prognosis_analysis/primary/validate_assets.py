@@ -37,6 +37,16 @@ W07_ARTIFACT_SHA256 = (
 W07_REPEAT1_CANONICAL_SHA256 = (
     "774436340ce68cd70a2c6acd17acbb7fa484fd7f29989f12670dde519c9f376d")
 
+FT_SOURCE_REF = "refs/heads/codex/ft-validation"
+FT_SOURCE_COMMIT = "3c1eb3b702831a17f2265ba0ce42d7ce3ddf3d34"
+A_COHORT_IDENTITY_TOKEN = "A393_W06_endpoint_QC_exact_frozen_modeling_population"
+A_COHORT_IDENTITY_SHA256 = (
+    "5fd90ac407400d59f4a8ae5f1d492de99b6b0e12eb62ff9bdb33800d9884afe3")
+B_COHORT_IDENTITY_TOKEN = (
+    "B163_FT06_authorized_frozen_compatible_external_validation_cohort")
+B_COHORT_IDENTITY_SHA256 = (
+    "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583")
+
 BASE_COLUMNS = ("patient_id", "DFS_time", "DFS_event")
 CLINICAL_CONTINUOUS = ("年龄", "CEA_log", "thickness", "EID")
 CLINICAL_CATEGORICAL = OrderedDict((
@@ -225,7 +235,6 @@ MODEL_SPECS = OrderedDict((
 POPULATION_RULES = {
     "main": (),
     "W_Original_available": ("W_Original",),
-    "W_available": ("W_Original",),
     "R_low": ("R_low",),
     "R_high": ("R_high",),
     "dual_radiomics": ("R_low", "R_high"),
@@ -330,6 +339,8 @@ def validate_protocol(protocol):
         expected = MODEL_SPECS[item["id"]]
         if tuple(item.get("predictor_blocks", [])) != expected["blocks"]:
             raise PrimaryValidationError("predictor blocks mismatch for %s" % item["id"])
+        if expected["penalized"] and item.get("population") != expected["population"]:
+            raise PrimaryValidationError("population mismatch for %s" % item["id"])
         if expected["penalized"] and item.get("alpha") != ALPHA:
             raise PrimaryValidationError("Primary v2 alpha is not fixed at 1")
         if not expected["penalized"] and "alpha" in item:
@@ -357,12 +368,112 @@ def validate_protocol(protocol):
             timing.get("ft06_results_visible_at_decision") is not True or \
             timing.get("promotion_decision_after_ft06_results_available") is not True:
         raise PrimaryValidationError("post-FT transition timing is not recorded")
+    for cohort_key in ("primary_A_modeling", "FT06_authorized_B"):
+        _cohort_identity_entry(protocol, cohort_key)
     return True
 
 
 def protocol_hash(path=DEFAULT_PROTOCOL):
     load_protocol(path)
     return sha256_file(path)
+
+
+def _require_identity_value(value, expected, label):
+    if not isinstance(value, str) or not value.strip():
+        raise PrimaryValidationError("%s must be explicit" % label)
+    if value != expected:
+        raise PrimaryValidationError("%s does not match the frozen contract" % label)
+
+
+def _require_identity_hash(value, expected, label):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        raise PrimaryValidationError("%s must be a SHA-256" % label)
+    if value.lower() != str(expected).lower():
+        raise PrimaryValidationError("%s does not match the frozen contract" % label)
+
+
+def _cohort_identity_entry(protocol, cohort_key):
+    entry = protocol.get("cohort_identities", {}).get(cohort_key, {})
+    if not isinstance(entry, dict):
+        raise PrimaryValidationError("missing frozen cohort identity: %s" % cohort_key)
+    token = entry.get("identity_token")
+    digest = entry.get("identity_sha256")
+    if not isinstance(token, str) or not token or not isinstance(digest, str):
+        raise PrimaryValidationError("frozen cohort identity is incomplete: %s" % cohort_key)
+    return entry
+
+
+def validate_frame_matches_frozen_ids(frame, split_frame, label):
+    """Require an exact frame/split ID match without exposing the IDs."""
+    if not isinstance(frame, pd.DataFrame) or "patient_id" not in frame.columns:
+        raise PrimaryValidationError("%s frame lacks patient_id" % label)
+    if not isinstance(split_frame, pd.DataFrame) or "patient_id" not in split_frame.columns:
+        raise PrimaryValidationError("%s frozen identity lacks patient_id" % label)
+    frame_ids = set(frame["patient_id"].astype(str).str.strip())
+    frozen_ids = set(split_frame["patient_id"].astype(str).str.strip())
+    if frame_ids != frozen_ids:
+        raise PrimaryValidationError("%s frame ID set is not exactly the frozen cohort" % label)
+    if len(frame_ids) != len(frame):
+        raise PrimaryValidationError("%s frame contains duplicate IDs" % label)
+    return True
+
+
+def validate_a_cohort_binding(frame, split_frame, identity_token,
+                              identity_hash, evidence_manifest,
+                              protocol_path=DEFAULT_PROTOCOL):
+    """Bind a production A frame to the exact frozen A393 identity."""
+    protocol = load_protocol(protocol_path)
+    expected = _cohort_identity_entry(protocol, "primary_A_modeling")
+    _require_identity_value(identity_token, expected["identity_token"],
+                            "A cohort identity token")
+    _require_identity_hash(identity_hash, expected["identity_sha256"],
+                           "A cohort identity hash")
+    if not isinstance(evidence_manifest, dict):
+        raise PrimaryValidationError("A production run requires the evidence manifest")
+    validate_evidence_manifest(evidence_manifest, protocol_path)
+    manifest_entry = evidence_manifest.get("cohort_identities", {}).get(
+        "primary_A_modeling", {})
+    manifest_hash = manifest_entry.get("identity_sha256")
+    if manifest_entry.get("identity_token") != identity_token or \
+            not isinstance(manifest_hash, str) or \
+            manifest_hash.lower() != identity_hash.lower():
+        raise PrimaryValidationError("A cohort identity is not bound to the manifest")
+    validate_frame_matches_frozen_ids(frame, split_frame, "A production")
+    if len(frame) != int(expected.get("n", 393)):
+        raise PrimaryValidationError("A production frame is not the frozen A393 population")
+    event_count = int(pd.to_numeric(frame["DFS_event"], errors="coerce").sum())
+    if event_count != int(expected.get("DFS_events", 89)):
+        raise PrimaryValidationError("A production event count is not frozen A393")
+    return True
+
+
+def validate_b_cohort_binding(identity_token, identity_hash, evidence_manifest,
+                              external_registration,
+                              protocol_path=DEFAULT_PROTOCOL):
+    """Bind B predictors to the explicit FT06 authorized B=163 identity."""
+    protocol = load_protocol(protocol_path)
+    expected = _cohort_identity_entry(protocol, "FT06_authorized_B")
+    _require_identity_value(identity_token, expected["identity_token"],
+                            "B cohort identity token")
+    _require_identity_hash(identity_hash, expected["identity_sha256"],
+                           "B cohort identity hash")
+    manifest_entry = evidence_manifest.get("cohort_identities", {}).get(
+        "FT06_authorized_B", {}) if isinstance(evidence_manifest, dict) else {}
+    registration_entry = external_registration.get("authorized_B_cohort", {}) \
+        if isinstance(external_registration, dict) else {}
+    for label, entry in (("manifest", manifest_entry),
+                         ("external registration", registration_entry)):
+        entry_hash = entry.get("identity_sha256")
+        if entry.get("identity_token") != identity_token or \
+                not isinstance(entry_hash, str) or \
+                entry_hash.lower() != identity_hash.lower():
+            raise PrimaryValidationError("B cohort identity is not bound to %s" % label)
+    if manifest_entry.get("n") != 163 or registration_entry.get("n") != 163:
+        raise PrimaryValidationError("B identity is not the authorized FT06 B=163 cohort")
+    if manifest_entry.get("not_the_same_as_technical_screening_B107") is not True or \
+            registration_entry.get("denominator_not_technical_screening_B107") is not True:
+        raise PrimaryValidationError("FT06 B=163 and technical B=107 were not kept distinct")
+    return True
 
 
 def _reject_cohort_paths(frame, cohort):
@@ -397,9 +508,7 @@ def _numeric_flag(frame, column):
 def availability_mask(frame, block):
     """Resolve technical eligibility without converting structural absence to NA."""
     if block == "W_Original":
-        if "W_Original_available" in frame.columns:
-            return _numeric_flag(frame, "W_Original_available")
-        return _numeric_flag(frame, "W_available")
+        return _numeric_flag(frame, "W_Original_available")
     if block not in ("R_low", "R_high"):
         raise PrimaryValidationError("unknown availability block: %s" % block)
     p3b = {"%s_voxel_count" % block, "%s_state" % block,
@@ -563,7 +672,10 @@ def validate_split(split_frame, frame=None, production=False):
         raise PrimaryValidationError("validation IDs repeat within repeat 1")
     if frame is not None:
         frame_ids = set(frame["patient_id"].astype(str))
-        if not frame_ids.issubset(split_ids):
+        if production and frame_ids != split_ids:
+            raise PrimaryValidationError(
+                "production A frame must equal the frozen A393 ID set exactly")
+        if not production and not frame_ids.issubset(split_ids):
             raise PrimaryValidationError("frame contains IDs absent from frozen split")
     if production:
         if len(split_ids) != 393 or len(split) != 393 * OUTER_FOLDS:
@@ -615,32 +727,108 @@ def source_summary(path, digest, role, **extra):
 
 def validate_evidence_manifest(manifest, protocol_path=DEFAULT_PROTOCOL):
     """Validate promotion metadata without opening any external patient asset."""
-    load_protocol(protocol_path)
+    protocol = load_protocol(protocol_path)
     if not isinstance(manifest, dict) or \
             manifest.get("artifact_id") != "PRIMARY_V2_EVIDENCE_MANIFEST" or \
             manifest.get("status") != "PROMOTED_WITHOUT_RECOMPUTATION":
         raise PrimaryValidationError("evidence manifest identity/status mismatch")
-    if manifest.get("protocol_sha256") != sha256_file(protocol_path):
+    if manifest.get("protocol_id") != protocol["protocol_id"] or \
+            manifest.get("protocol_version") != protocol["protocol_version"] or \
+            manifest.get("protocol_path") != "prognosis_analysis/primary/protocol.json":
+        raise PrimaryValidationError("evidence manifest protocol identity mismatch")
+    current_protocol_hash = sha256_file(protocol_path)
+    if manifest.get("protocol_sha256") != current_protocol_hash:
         raise PrimaryValidationError("evidence manifest protocol hash mismatch")
-    if manifest.get("promotion", {}).get("recomputation") is not False or \
-            manifest.get("promotion", {}).get("patient_level_material_copied") is not False:
+    promotion = manifest.get("promotion", {})
+    timing = promotion.get("decision_timing", {})
+    if promotion.get("recomputation") is not False or \
+            promotion.get("patient_level_material_copied") is not False or \
+            timing != {
+                "ft03_results_visible_at_decision": True,
+                "ft06_results_visible_at_decision": True,
+                "promotion_decision_after_ft06_results_available": True,
+                "retrospective_prespecification_claim": False,
+            }:
         raise PrimaryValidationError("evidence promotion is not metadata-only")
-    if manifest.get("source_git", {}).get("ref") != "refs/heads/codex/ft-validation" or \
-            manifest.get("source_git", {}).get("commit") != "3c1eb3b702831a17f2265ba0ce42d7ce3ddf3d34":
+    expected_ref = protocol["evidence_registry"]["source_git_ref"]
+    expected_commit = protocol["evidence_registry"]["source_git_commit"]
+    source_git = manifest.get("source_git", {})
+    if source_git.get("ref") != expected_ref or \
+            source_git.get("commit") != expected_commit or \
+            source_git.get("source_files_are_external_bindings") is not True:
         raise PrimaryValidationError("FT source binding is not the accepted commit")
     evidence = manifest.get("evidence", {})
     for stage in ("FT03", "FT04", "FT06"):
         if stage not in evidence:
             raise PrimaryValidationError("missing promoted evidence: %s" % stage)
-    for stage in ("FT03", "FT06"):
-        entry = evidence[stage]
-        validate_asset_record(entry.get("aggregate", {}), stage + " aggregate")
-        validate_asset_record(entry.get("report", {}), stage + " report")
+    ft03_expected = protocol["evidence_registry"]["FT03"]
+    ft03 = evidence["FT03"]
+    if ft03.get("status") != ft03_expected.get("status"):
+        raise PrimaryValidationError("FT03 status is not the accepted state")
+    validate_asset_record(ft03.get("aggregate", {}), "FT03 aggregate")
+    validate_asset_record(ft03.get("report", {}), "FT03 report")
+    if ft03["aggregate"] != ft03_expected["aggregate_json"] or \
+            ft03["report"] != ft03_expected["report"]:
+        raise PrimaryValidationError("FT03 source path/hash binding mismatch")
+    if ft03.get("A_identity") != {
+        "n": 393, "DFS_events": 89, "DFS_censored": 304,
+        "validation": "single repeat-1 outer five-fold; A-only",
+        "identity_token": A_COHORT_IDENTITY_TOKEN,
+        "identity_sha256": A_COHORT_IDENTITY_SHA256,
+    }:
+        raise PrimaryValidationError("FT03 A identity is incomplete")
+
+    ft04_expected = protocol["evidence_registry"]["FT04"]
+    ft04 = evidence["FT04"]
+    if ft04.get("status") != "ACCEPTED / FROZEN":
+        raise PrimaryValidationError("FT04 status is not the accepted frozen state")
     lock = evidence["FT04"].get("lock", {})
     validate_asset_record({"path": lock.get("path"),
                            "sha256": lock.get("serialized_sha256")}, "FT04 lock")
     validate_asset_record({"path": lock.get("attestation_path"),
                            "sha256": lock.get("attestation_sha256")}, "FT04 attestation")
+    if lock.get("path") != ft04_expected["lock_path"] or \
+            lock.get("serialized_sha256") != ft04_expected["serialized_lock_sha256"] or \
+            lock.get("identity_sha256") != ft04_expected["lock_identity_sha256"] or \
+            lock.get("attestation_path") != ft04_expected["lock_attestation_path"] or \
+            lock.get("attestation_sha256") != ft04_expected["lock_attestation_sha256"]:
+        raise PrimaryValidationError("FT04 source path/hash binding mismatch")
+
+    ft06_expected = protocol["evidence_registry"]["FT06"]
+    ft06 = evidence["FT06"]
+    if ft06.get("status") != ft06_expected.get("status") or \
+            ft06.get("final_disposition") != ft06_expected.get("final_disposition"):
+        raise PrimaryValidationError("FT06 status/disposition is not accepted")
+    validate_asset_record(ft06.get("aggregate", {}), "FT06 aggregate")
+    validate_asset_record(ft06.get("report", {}), "FT06 report")
+    if ft06["aggregate"] != ft06_expected["aggregate_json"] or \
+            ft06["report"] != ft06_expected["report"]:
+        raise PrimaryValidationError("FT06 source path/hash binding mismatch")
+    expected_b = _cohort_identity_entry(protocol, "FT06_authorized_B")
+    expected_b_identity = {
+        "n": 163,
+        "DFS_events": 42,
+        "DFS_censored": 121,
+        "identity_token": expected_b["identity_token"],
+        "identity_sha256": expected_b["identity_sha256"],
+        "source_identity": "FT06 authorized frozen-compatible B validation cohort",
+        "technical_screening_B107_is_not_merged": True,
+    }
+    if ft06.get("authorized_B_identity") != expected_b_identity:
+        raise PrimaryValidationError("FT06 B identity/timing binding is incomplete")
+
+    for cohort_key, values in protocol.get("cohort_identities", {}).items():
+        actual = manifest.get("cohort_identities", {}).get(cohort_key, {})
+        for field in ("identity_token", "identity_sha256", "n"):
+            if actual.get(field) != values.get(field):
+                raise PrimaryValidationError("manifest cohort identity mismatch: %s" % cohort_key)
+        for field in ("DFS_events", "DFS_censored"):
+            if field in values and actual.get(field) != values[field]:
+                raise PrimaryValidationError("manifest cohort counts mismatch: %s" % cohort_key)
+    primary_a = manifest.get("cohort_identities", {}).get("primary_A_modeling", {})
+    if primary_a.get("not_the_same_as_technical_screening_B107") is not None:
+        raise PrimaryValidationError("A cohort identity contains an invalid B distinction")
+
     for block in ("R_low", "R_high"):
         entry = manifest.get("technical_assets", {}).get(block, {})
         validate_asset_record({"path": entry.get("candidate_freeze_path"),
@@ -657,7 +845,18 @@ def validate_evidence_manifest(manifest, protocol_path=DEFAULT_PROTOCOL):
     clinical = manifest.get("technical_assets", {}).get("clinical_schema", {})
     validate_asset_record({"path": clinical.get("path"),
                            "sha256": clinical.get("sha256")}, "clinical schema")
-    if evidence["FT06"].get("authorized_B_identity", {}).get("n") != 163 or \
-            evidence["FT06"].get("authorized_B_identity", {}).get("technical_screening_B107_is_not_merged") is not True:
-        raise PrimaryValidationError("FT06 B denominator distinction is missing")
+    isolation = manifest.get("isolation", {})
+    expected_isolation = {
+        "A_B_isolation": True,
+        "B_prediction_frozen_before_evaluation": True,
+        "B_frozen_prediction_only": True,
+        "B_tuning": False,
+        "B_refit": False,
+        "B_cutoff_optimization": False,
+        "B_habitat_refit": False,
+        "B_radiomics_candidate_reselection": False,
+        "B_to_A_feedback": False,
+    }
+    if isolation != expected_isolation:
+        raise PrimaryValidationError("evidence isolation guard is incomplete")
     return True

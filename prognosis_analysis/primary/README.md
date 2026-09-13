@@ -19,6 +19,7 @@
 - `R_low=49`，candidate hash 为 `a5f6b8e571d222ce442b87b54c7fe295ccfce3201cfc1f75c3859a00fcbc46b0`。
 - `R_high=10`，candidate hash 为 `a0bbb4b4ab475fffb725dd2c04c407273cf57c486bd00198e3d77f736e7434ce`。
 - `W_Original=107`，order hash 为 `1c07cd4e129e368dde8539d552ecb0f453d9c655fe2a5383d00a5de7b408ca1f`；不使用 Wavelet、LoG 或其他 filtered radiomics 作为主 whole-tumour comparator。
+- `W_Original` 表示固定的 107 个 whole-tumour 特征块；Primary v2 的模型 population 唯一使用 `W_Original_available`，表示该特征块在当前队列中可用。
 
 ## 固定模型与验证
 
