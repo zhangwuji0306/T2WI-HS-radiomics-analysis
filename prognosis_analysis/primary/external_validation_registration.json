@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "artifact_id": "PRIMARY_V2_EXTERNAL_VALIDATION_REGISTRATION",
+  "status": "REGISTERED_FT06_EVIDENCE",
+  "source": {
+    "ref": "refs/heads/codex/ft-validation",
+    "commit": "3c1eb3b702831a17f2265ba0ce42d7ce3ddf3d34",
+    "aggregate": {
+      "path": "prognosis_analysis/ft/FT06_B_validation.json",
+      "sha256": "0ab1af7a60e63d8d18e30e4db965757b27fefffad7df7e6ea3803f590bdb6583"
+    },
+    "report": {
+      "path": "prognosis_analysis/ft/FT06_B_validation_report.md",
+      "sha256": "8a2dbc4a233085a1442aa5c7c384926a9d3383e52d49733e546eb3aceaaccba1"
+    },
+    "immutable": true,
+    "patient_level_predictions_copied": false,
+    "patient_level_metrics_copied": false
+  },
+  "protocol_sha256": "1d29ce34b4e4cef1c2956fdcf86f525a8e28ee3161afa3e5165e5cac106fec27",
+  "model_freeze": {
+    "canonical_lock_path": "prognosis_analysis/primary/model_freeze_lock.json",
+    "canonical_lock_sha256": "57aa4ea52cbea248e32aca2512f1fc81bc8df8ae7348a55965459954195a1c67",
+    "B_prediction_was_frozen_before_B_evaluation": true,
+    "frozen_model_identity_source": "promoted FT04 lock identity"
+  },
+  "promotion_timing": {
+    "Primary_v2_promotion_decision_occurred_after_FT_B_results_were_available": true,
+    "FT03_results_visible_at_decision": true,
+    "FT06_results_visible_at_decision": true,
+    "retrospective_prespecification_claim": false
+  },
+  "authorized_B_cohort": {
+    "n": 163,
+    "DFS_events": 42,
+    "DFS_censored": 121,
+    "identity_source": "FT06 aggregate cohort object",
+    "technical_screening_reference_B_n": 107,
+    "denominator_not_technical_screening_B107": true
+  },
+  "allowed_sequence": [
+    "load frozen model",
+    "load frozen-compatible B predictors",
+    "predict",
+    "evaluate"
+  ],
+  "forbidden_actions": [
+    "B feature selection",
+    "B lambda tuning",
+    "B coefficient refit",
+    "B cutoff optimization",
+    "B habitat refit",
+    "B radiomics candidate re-selection",
+    "B to A feedback"
+  ],
+  "registered_at": "2026-09-13"
+}
