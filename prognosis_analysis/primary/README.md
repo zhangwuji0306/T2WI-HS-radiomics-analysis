@@ -50,6 +50,18 @@ load frozen model
 
 B 不得用于 feature selection、lambda tuning、coefficient refit、cutoff optimization、habitat refit、radiomics candidate re-selection 或 B→A feedback。B 的模型身份必须在 B 评价前冻结。
 
+## 统一模型比较
+
+Primary v2 的完整 paired comparison 结果统一包含 12 条比较：
+
+- Clinical-baseline comparisons：M0 vs M1、M0 vs M2、M0 vs M3L、M0 vs M3H、M0 vs M4、M0 vs M5。
+- Habitat incremental comparisons：M1 vs M2、M2 vs M3L、M2 vs M3H、M2 vs M4。
+- Secondary head-to-head comparisons：M3L vs M3H、M4 vs M5。
+
+新增的五条比较在结果中标记为 `post_v2_supplementary`；原有七条保留为 `original_prespecified`。每条比较均使用 common eligible population、相同 repeat-1 fold assignment 和配对 bootstrap resamples。`coverage` 定义为 `common_n / A393`，各指标的 bootstrap 可估计比例单独记录。
+
+统一结果由 `supplement_model_comparisons.py` 生成，患者级输入和结果保留在本地 `prognosis_analysis/output/`，不进入仓库。
+
 ## 证据与完整合同
 
 已核对的 FT03/FT04/FT06 状态及哈希、cohort 分母说明、模型定义、验证规则和 fail-closed 边界见 [protocol.json](protocol.json)。本目录不保存患者级特征、预测、原始影像、ROI、临床/病理/预后表或分析输出。
