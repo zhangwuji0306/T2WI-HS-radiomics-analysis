@@ -1,0 +1,17 @@
+{
+  "A_n": 530,
+  "B_n": 163,
+  "comparison_metrics": [
+    "harrell_c_index_pooled",
+    "uno_c_index",
+    "3_year_auc",
+    "3_year_brier",
+    "5_year_auc",
+    "5_year_brier"
+  ],
+  "elapsed_seconds": 0.381,
+  "primary_v2_unchanged": true,
+  "stage": "T4",
+  "status": "COMPLETE",
+  "target_n": 693
+}

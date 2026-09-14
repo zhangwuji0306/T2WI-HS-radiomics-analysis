@@ -1,0 +1,89 @@
+{
+  "A_n": 530,
+  "B_n": 163,
+  "T1": {
+    "A_n": 530,
+    "B_n": 163,
+    "Primary_A_reused_n": 393,
+    "elapsed_seconds": 65.651,
+    "fixed_phenotype": {
+      "H_high": 3.519630201535477,
+      "H_low": 2.1017172894786142,
+      "boundary_b": 2.810673745507046
+    },
+    "new_A_R1_processed_n": 137,
+    "new_A_R1_success_n": 137,
+    "new_A_R1_technical_failure_n": 0,
+    "new_A_extension_n": 137,
+    "new_A_map_n": 137,
+    "new_A_structural_states": {
+      "dual-habitat": 109,
+      "reused": 393,
+      "single-H-low": 28
+    },
+    "primary_assets_read_only": true,
+    "radiomics_version": "v3.0.1",
+    "stage": "T1",
+    "status": "COMPLETE",
+    "target_n": 693,
+    "threshold_free": true
+  },
+  "T2": {
+    "A_censored": 409,
+    "A_events": 121,
+    "A_n": 530,
+    "elapsed_seconds": 1.841,
+    "existing_A393_assignments_preserved": true,
+    "frame_sha256": "91137d6c72e09054f379e260816b31bb4945bd1e92a2fc57b3c8c49ee8b7d1e6",
+    "new_A_extension_n": 137,
+    "outer_folds": 5,
+    "outer_repeat": 1,
+    "seed": 12345,
+    "split_sha256": "63bf54f8399018df12e2551060658c10be874a778a1533db4607f8273b8f10e6",
+    "stage": "T2",
+    "status": "COMPLETE"
+  },
+  "T3": {
+    "A_event_n": 121,
+    "A_target_n": 530,
+    "A_validation_runs": 14,
+    "B_event_n": 42,
+    "B_feature_selection": false,
+    "B_frozen_prediction_runs": 14,
+    "B_habitat_refit": false,
+    "B_outcomes_read_after_A_freeze": true,
+    "B_refit": false,
+    "B_target_n": 163,
+    "B_to_A_feedback": false,
+    "B_tuning": false,
+    "elapsed_seconds": 7803.346,
+    "stage": "T3",
+    "status": "COMPLETE"
+  },
+  "T4": {
+    "A_n": 530,
+    "B_n": 163,
+    "comparison_metrics": [
+      "harrell_c_index_pooled",
+      "uno_c_index",
+      "3_year_auc",
+      "3_year_brier",
+      "5_year_auc",
+      "5_year_brier"
+    ],
+    "elapsed_seconds": 0.381,
+    "primary_v2_unchanged": true,
+    "stage": "T4",
+    "status": "COMPLETE",
+    "target_n": 693
+  },
+  "T4_comparison_rows": 84,
+  "output_root": "prognosis_analysis/output/sensitivity_693",
+  "primary_v2_modified": false,
+  "reviewer_model_requested": "luna",
+  "reviewer_reasoning_effort": "xhigh",
+  "status": "COMPLETE",
+  "target_n": 693,
+  "threshold_free": true,
+  "workflow": "T1->T2->T3->T4"
+}

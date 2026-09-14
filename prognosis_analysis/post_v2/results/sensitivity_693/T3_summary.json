@@ -1,0 +1,17 @@
+{
+  "A_event_n": 121,
+  "A_target_n": 530,
+  "A_validation_runs": 14,
+  "B_event_n": 42,
+  "B_feature_selection": false,
+  "B_frozen_prediction_runs": 14,
+  "B_habitat_refit": false,
+  "B_outcomes_read_after_A_freeze": true,
+  "B_refit": false,
+  "B_target_n": 163,
+  "B_to_A_feedback": false,
+  "B_tuning": false,
+  "elapsed_seconds": 7803.346,
+  "stage": "T3",
+  "status": "COMPLETE"
+}

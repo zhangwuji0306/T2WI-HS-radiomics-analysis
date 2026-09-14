@@ -1,0 +1,27 @@
+{
+  "A_n": 530,
+  "B_n": 163,
+  "Primary_A_reused_n": 393,
+  "elapsed_seconds": 65.651,
+  "fixed_phenotype": {
+    "H_high": 3.519630201535477,
+    "H_low": 2.1017172894786142,
+    "boundary_b": 2.810673745507046
+  },
+  "new_A_R1_processed_n": 137,
+  "new_A_R1_success_n": 137,
+  "new_A_R1_technical_failure_n": 0,
+  "new_A_extension_n": 137,
+  "new_A_map_n": 137,
+  "new_A_structural_states": {
+    "dual-habitat": 109,
+    "reused": 393,
+    "single-H-low": 28
+  },
+  "primary_assets_read_only": true,
+  "radiomics_version": "v3.0.1",
+  "stage": "T1",
+  "status": "COMPLETE",
+  "target_n": 693,
+  "threshold_free": true
+}

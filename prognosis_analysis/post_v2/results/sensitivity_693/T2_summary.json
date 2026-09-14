@@ -1,0 +1,15 @@
+{
+  "A_censored": 409,
+  "A_events": 121,
+  "A_n": 530,
+  "elapsed_seconds": 1.841,
+  "existing_A393_assignments_preserved": true,
+  "frame_sha256": "91137d6c72e09054f379e260816b31bb4945bd1e92a2fc57b3c8c49ee8b7d1e6",
+  "new_A_extension_n": 137,
+  "outer_folds": 5,
+  "outer_repeat": 1,
+  "seed": 12345,
+  "split_sha256": "63bf54f8399018df12e2551060658c10be874a778a1533db4607f8273b8f10e6",
+  "stage": "T2",
+  "status": "COMPLETE"
+}
