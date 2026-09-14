@@ -105,6 +105,50 @@ RUNS = (
     {"run_id": "M5_dual", "model_id": "M5", "population": "dual_radiomics"},
 )
 
+COMPARISON_DEFINITIONS = (
+    {"comparison_id": "M0_vs_M3L", "left_model": "M0",
+     "right_model": "M3L", "population": "R_low",
+     "group": "primary_clinical_value"},
+    {"comparison_id": "M0_vs_M3H", "left_model": "M0",
+     "right_model": "M3H", "population": "R_high",
+     "group": "primary_clinical_value"},
+    {"comparison_id": "M0_vs_M1", "left_model": "M0",
+     "right_model": "M1", "population": "main",
+     "group": "primary_clinical_value_supporting"},
+    {"comparison_id": "M0_vs_M2", "left_model": "M0",
+     "right_model": "M2", "population": "main",
+     "group": "primary_clinical_value_supporting"},
+    {"comparison_id": "M0_vs_M4", "left_model": "M0",
+     "right_model": "M4", "population": "dual_radiomics",
+     "group": "primary_clinical_value_supporting"},
+    {"comparison_id": "M0_vs_M5", "left_model": "M0",
+     "right_model": "M5", "population": "W_Original_available",
+     "group": "primary_clinical_value_supporting"},
+    {"comparison_id": "M2_vs_M3L", "left_model": "M2",
+     "right_model": "M3L", "population": "R_low",
+     "group": "habitat_radiomics_incremental"},
+    {"comparison_id": "M2_vs_M3H", "left_model": "M2",
+     "right_model": "M3H", "population": "R_high",
+     "group": "habitat_radiomics_incremental"},
+    {"comparison_id": "M1_vs_M2", "left_model": "M1",
+     "right_model": "M2", "population": "main",
+     "group": "habitat_radiomics_incremental_supporting"},
+    {"comparison_id": "M2_vs_M4", "left_model": "M2",
+     "right_model": "M4", "population": "dual_radiomics",
+     "group": "habitat_radiomics_incremental_supporting"},
+    {"comparison_id": "M3L_vs_M3H", "left_model": "M3L",
+     "right_model": "M3H", "population": "dual_radiomics",
+     "group": "secondary_head_to_head"},
+    {"comparison_id": "M4_vs_M5", "left_model": "M4",
+     "right_model": "M5", "population": "dual_radiomics",
+     "group": "secondary_head_to_head"},
+)
+
+COMPARISON_METRICS = (
+    "harrell_c_index_pooled", "uno_c_index", "3_year_auc",
+    "3_year_brier", "5_year_auc", "5_year_brier",
+)
+
 
 def _ensure_dirs():
     for path in (OUTPUT_ROOT, CACHE_ROOT, MAP_ROOT):
@@ -884,6 +928,318 @@ def run_t3(a_frame, split, cohort):
     return validation_rows, b_rows, summary
 
 
+def _normalise_prediction_frame(frame, require_fold):
+    frame = frame.copy()
+    frame["patient_id"] = frame["patient_id"].astype(str).str.strip()
+    if require_fold:
+        frame["fold"] = pd.to_numeric(frame["fold"], errors="raise").astype(int)
+    for column in ("risk_score", "survival_probability_36",
+                   "survival_probability_60"):
+        frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
+    if frame["patient_id"].duplicated().any():
+        raise RuntimeError("prediction identifiers are not unique")
+    return frame
+
+
+def _a_comparison_prediction(a_frame, split, model_id, population, cache):
+    key = (model_id, population)
+    if key in cache:
+        return cache[key]
+    for run in RUNS:
+        if run["model_id"] == model_id and run["population"] == population:
+            path = os.path.join(OUTPUT_ROOT, "T3_A_validation_%s.csv" % run["run_id"])
+            if not os.path.exists(path):
+                raise RuntimeError("missing A validation output: %s" % path)
+            prediction = _normalise_prediction_frame(
+                _read_csv(path, dtype={"patient_id": str}), require_fold=True)
+            cache[key] = (prediction, run["run_id"], population)
+            return cache[key]
+    # The comparison-only M0 fits are required by the common-population rule.
+    record = _fit_outer_detailed(a_frame, split, model_id, population)
+    cache[key] = (
+        record["predictions"], "%s_common_%s" % (model_id, population), population)
+    return cache[key]
+
+
+def _b_frozen_source(model_id, population):
+    for run in RUNS:
+        if run["model_id"] == model_id and run["population"] == population:
+            return run
+    # M0 does not need radiomics, so its expanded-A main freeze is valid for
+    # the common B subset used by comparisons against habitat models.
+    if model_id == "M0":
+        for run in RUNS:
+            if run["model_id"] == "M0" and run["population"] == "main":
+                return run
+    raise RuntimeError("no frozen B source for %s/%s" % (model_id, population))
+
+
+def _b_comparison_prediction(model_id, population, cache):
+    source = _b_frozen_source(model_id, population)
+    run_id = source["run_id"]
+    if run_id not in cache:
+        path = os.path.join(OUTPUT_ROOT, "T3_B_frozen_prediction_%s.csv" % run_id)
+        if not os.path.exists(path):
+            raise RuntimeError("missing B frozen prediction output: %s" % path)
+        cache[run_id] = _normalise_prediction_frame(
+            _read_csv(path, dtype={"patient_id": str}), require_fold=False)
+    return cache[run_id], run_id, source["population"]
+
+
+def _weighted_metric_summary(metric_rows, pooled_predictions):
+    summary = {}
+    for metric in ("uno_c_index", "3_year_auc", "3_year_brier",
+                   "5_year_auc", "5_year_brier"):
+        values = [(row[metric], row["n_validation"])
+                  for row in metric_rows
+                  if row.get(metric) is not None and
+                  np.isfinite(float(row[metric]))]
+        summary[metric] = (float(sum(value * n for value, n in values) /
+                           sum(n for _value, n in values)) if values else None)
+    engine = canonical._engine()
+    summary["harrell_c_index_pooled"] = float(engine.harrell_c_index(
+        pooled_predictions["DFS_time"].to_numpy(dtype=float),
+        pooled_predictions["DFS_event"].to_numpy(dtype=int),
+        pooled_predictions["risk_score"].to_numpy(dtype=float)))
+    return summary
+
+
+def _a_common_metric_summary(prediction, a_frame, split, population, common_ids):
+    common_ids = set(str(value) for value in common_ids)
+    prediction = prediction[prediction["patient_id"].isin(common_ids)].copy()
+    metric_rows = []
+    engine = canonical._engine()
+    for fold in range(1, 6):
+        train, valid = canonical._fold_rows(a_frame, split, fold, population)
+        valid = valid[valid["patient_id"].astype(str).isin(common_ids)].copy()
+        fold_prediction = prediction[prediction["fold"].eq(fold)].copy()
+        fold_prediction = fold_prediction.sort_values(
+            "patient_id", kind="mergesort").reset_index(drop=True)
+        valid = valid.sort_values("patient_id", kind="mergesort").reset_index(drop=True)
+        if set(fold_prediction["patient_id"]) != set(valid["patient_id"].astype(str)):
+            raise RuntimeError("common A validation coverage mismatch for %s" % population)
+        metrics = engine.evaluate_metrics(
+            train["DFS_time"].to_numpy(dtype=float),
+            train["DFS_event"].to_numpy(dtype=int),
+            valid["DFS_time"].to_numpy(dtype=float),
+            valid["DFS_event"].to_numpy(dtype=int),
+            fold_prediction["risk_score"].to_numpy(dtype=float),
+            {"3_year": fold_prediction["survival_probability_36"].to_numpy(dtype=float),
+             "5_year": fold_prediction["survival_probability_60"].to_numpy(dtype=float)})
+        metric_rows.append({})
+        for key, value in metrics.items():
+            if key.endswith("_reason"):
+                continue
+            metric_rows[-1][key] = (
+                None if value is None or not np.isfinite(float(value))
+                else float(value))
+        metric_rows[-1]["n_validation"] = int(len(valid))
+    pooled = prediction.sort_values("patient_id", kind="mergesort").reset_index(drop=True)
+    return _weighted_metric_summary(metric_rows, pooled)
+
+
+def _b_common_metric_summary(prediction, b_eval, a_frame, train_population, common_ids):
+    common_ids = set(str(value) for value in common_ids)
+    selected = prediction[prediction["patient_id"].isin(common_ids)].copy()
+    selected = selected.sort_values("patient_id", kind="mergesort").reset_index(drop=True)
+    outcomes = b_eval[["patient_id", "DFS_time", "DFS_event"]].copy()
+    outcomes["patient_id"] = outcomes["patient_id"].astype(str)
+    selected = selected.merge(outcomes, on="patient_id", how="left", validate="one_to_one")
+    if selected[["DFS_time", "DFS_event"]].isna().any().any():
+        raise RuntimeError("common B outcome coverage mismatch")
+    train = a_frame.loc[va.eligibility_mask(a_frame, train_population)].copy()
+    engine = canonical._engine()
+    metrics = engine.evaluate_metrics(
+        train["DFS_time"].to_numpy(dtype=float),
+        train["DFS_event"].to_numpy(dtype=int),
+        selected["DFS_time"].to_numpy(dtype=float),
+        selected["DFS_event"].to_numpy(dtype=int),
+        selected["risk_score"].to_numpy(dtype=float),
+        {"3_year": selected["survival_probability_36"].to_numpy(dtype=float),
+         "5_year": selected["survival_probability_60"].to_numpy(dtype=float)})
+    summary = {}
+    for key in COMPARISON_METRICS:
+        raw_key = "harrell_c_index" if key == "harrell_c_index_pooled" else key
+        value = metrics.get(raw_key)
+        summary[key] = None if value is None or not np.isfinite(float(value)) else float(value)
+    return summary
+
+
+def _run_common_population_comparisons(a_frame, split, cohort):
+    a_cache = {}
+    b_cache = {}
+    b_predictors = _build_b_predictors(cohort)
+    b_outcomes = _load_b_outcomes(b_predictors["patient_id"].astype(str))
+    b_eval = b_predictors.merge(b_outcomes, on="patient_id", how="left",
+                                validate="one_to_one")
+    va.validate_predictor_frame(b_eval, model_ids=list(va.MODEL_SPECS),
+                                cohort="B", require_outcome=True)
+    metric_rows = []
+    coverage_rows = []
+    for definition in COMPARISON_DEFINITIONS:
+        comparison_id = definition["comparison_id"]
+        population = definition["population"]
+        left_a, left_a_source, left_a_population = _a_comparison_prediction(
+            a_frame, split, definition["left_model"], population, a_cache)
+        right_a, right_a_source, right_a_population = _a_comparison_prediction(
+            a_frame, split, definition["right_model"], population, a_cache)
+        a_expected = set(a_frame.loc[
+            va.eligibility_mask(a_frame, population), "patient_id"].astype(str))
+        left_a_ids = set(left_a["patient_id"])
+        right_a_ids = set(right_a["patient_id"])
+        if left_a_ids != a_expected or right_a_ids != a_expected:
+            raise RuntimeError("common A population mismatch for %s" % comparison_id)
+        left_folds = dict(zip(left_a["patient_id"], left_a["fold"].astype(int)))
+        right_folds = dict(zip(right_a["patient_id"], right_a["fold"].astype(int)))
+        if left_folds != right_folds:
+            raise RuntimeError("common A fold assignments differ for %s" % comparison_id)
+        a_left_metrics = _a_common_metric_summary(
+            left_a, a_frame, split, population, a_expected)
+        a_right_metrics = _a_common_metric_summary(
+            right_a, a_frame, split, population, a_expected)
+        for metric in COMPARISON_METRICS:
+            left_value = a_left_metrics.get(metric)
+            right_value = a_right_metrics.get(metric)
+            metric_rows.append({
+                "analysis_side": "A", "comparison_id": comparison_id,
+                "comparison_group": definition["group"],
+                "left_model": definition["left_model"],
+                "right_model": definition["right_model"],
+                "common_population": population,
+                "common_n": len(a_expected),
+                "common_event_n": int(a_frame.loc[
+                    a_frame["patient_id"].isin(a_expected), "DFS_event"].sum()),
+                "metric": metric, "left_estimate": left_value,
+                "right_estimate": right_value,
+                "delta_right_minus_left": (None if left_value is None or right_value is None
+                                            else right_value - left_value),
+                "left_source_run": left_a_source, "right_source_run": right_a_source,
+                "left_training_population": left_a_population,
+                "right_training_population": right_a_population,
+                "fold_assignments_identical": True,
+                "common_population_rule": True,
+            })
+        coverage_rows.append({
+            "analysis_side": "A", "comparison_id": comparison_id,
+            "comparison_group": definition["group"],
+            "left_model": definition["left_model"], "right_model": definition["right_model"],
+            "common_population": population, "left_eligible_n": len(left_a_ids),
+            "right_eligible_n": len(right_a_ids), "common_eligible_n": len(a_expected),
+            "total_target_n": 530, "coverage_percent": 100.0 * len(a_expected) / 530.0,
+            "common_event_n": int(a_frame.loc[
+                a_frame["patient_id"].isin(a_expected), "DFS_event"].sum()),
+            "target_event_n": int(a_frame["DFS_event"].sum()),
+            "event_coverage_percent": 100.0 * float(a_frame.loc[
+                a_frame["patient_id"].isin(a_expected), "DFS_event"].sum()) /
+            float(a_frame["DFS_event"].sum()),
+            "fold_assignments_identical": True,
+            "common_population_rule": True,
+        })
+
+        left_b, left_b_source, left_b_population = _b_comparison_prediction(
+            definition["left_model"], population, b_cache)
+        right_b, right_b_source, right_b_population = _b_comparison_prediction(
+            definition["right_model"], population, b_cache)
+        b_expected = set(b_eval.loc[
+            va.eligibility_mask(b_eval, population), "patient_id"].astype(str))
+        left_b_ids = set(left_b["patient_id"])
+        right_b_ids = set(right_b["patient_id"])
+        common_b = left_b_ids & right_b_ids
+        if common_b != b_expected:
+            raise RuntimeError("common B population mismatch for %s" % comparison_id)
+        b_left_metrics = _b_common_metric_summary(
+            left_b, b_eval, a_frame, left_b_population, common_b)
+        b_right_metrics = _b_common_metric_summary(
+            right_b, b_eval, a_frame, right_b_population, common_b)
+        for metric in COMPARISON_METRICS:
+            left_value = b_left_metrics.get(metric)
+            right_value = b_right_metrics.get(metric)
+            metric_rows.append({
+                "analysis_side": "B", "comparison_id": comparison_id,
+                "comparison_group": definition["group"],
+                "left_model": definition["left_model"],
+                "right_model": definition["right_model"],
+                "common_population": population,
+                "common_n": len(common_b),
+                "common_event_n": int(b_eval.loc[
+                    b_eval["patient_id"].isin(common_b), "DFS_event"].sum()),
+                "metric": metric, "left_estimate": left_value,
+                "right_estimate": right_value,
+                "delta_right_minus_left": (None if left_value is None or right_value is None
+                                            else right_value - left_value),
+                "left_source_run": left_b_source, "right_source_run": right_b_source,
+                "left_training_population": left_b_population,
+                "right_training_population": right_b_population,
+                "fold_assignments_identical": "not_applicable_external",
+                "common_population_rule": True,
+            })
+        coverage_rows.append({
+            "analysis_side": "B", "comparison_id": comparison_id,
+            "comparison_group": definition["group"],
+            "left_model": definition["left_model"], "right_model": definition["right_model"],
+            "common_population": population, "left_eligible_n": len(left_b_ids),
+            "right_eligible_n": len(right_b_ids), "common_eligible_n": len(common_b),
+            "total_target_n": 163, "coverage_percent": 100.0 * len(common_b) / 163.0,
+            "common_event_n": int(b_eval.loc[
+                b_eval["patient_id"].isin(common_b), "DFS_event"].sum()),
+            "target_event_n": 42,
+            "event_coverage_percent": 100.0 * float(b_eval.loc[
+                b_eval["patient_id"].isin(common_b), "DFS_event"].sum()) / 42.0,
+            "fold_assignments_identical": "not_applicable_external",
+            "common_population_rule": True,
+        })
+    comparison = pd.DataFrame(metric_rows)
+    coverage = pd.DataFrame(coverage_rows)
+    _write_csv(comparison, os.path.join(
+        OUTPUT_ROOT, "T4_common_population_comparisons.csv"))
+    _write_csv(coverage, os.path.join(
+        OUTPUT_ROOT, "T4_common_population_eligibility.csv"))
+
+    lines = [
+        "# T4 模型比较框架：共同可分析人群",
+        "",
+        "按任务书第十、十一节完成12组预设模型比较；每组均在共同可分析人群中计算。",
+        "A侧对比较所需的模型在人群限定后重新进行5-fold validation；B侧保持A冻结模型，仅在共同B人群中进行外部评价。",
+        "",
+    ]
+    for side in ("A", "B"):
+        lines += ["## %s侧" % side, ""]
+        side_frame = comparison[comparison["analysis_side"].eq(side)]
+        for definition in COMPARISON_DEFINITIONS:
+            current = side_frame[side_frame["comparison_id"].eq(
+                definition["comparison_id"])]
+            if current.empty:
+                continue
+            first = current.iloc[0]
+            parts = []
+            for metric in COMPARISON_METRICS:
+                row = current[current["metric"].eq(metric)].iloc[0]
+                left_value = row["left_estimate"]
+                right_value = row["right_estimate"]
+                delta = row["delta_right_minus_left"]
+                parts.append("%s %.4f→%.4f (Δ%+.4f)" % (
+                    metric, float(left_value), float(right_value), float(delta)))
+            lines.append("- %s [%s, n=%d, events=%d]: %s" % (
+                first["comparison_id"], first["common_population"],
+                int(first["common_n"]), int(first["common_event_n"]),
+                "; ".join(parts)))
+        lines.append("")
+    lines += [
+        "## 解释规则",
+        "",
+        "Harrell C、Uno C和AUC的正Δ表示右侧模型数值更高；Brier的负Δ表示右侧模型数值更优。",
+        "共同人群的样本数、事件数和覆盖度详见 `T4_common_population_eligibility.csv`；逐指标结果详见 `T4_common_population_comparisons.csv`。",
+        "",
+    ]
+    with open(os.path.join(OUTPUT_ROOT, "T4_model_comparison_summary.md.tmp"),
+              "w", encoding="utf-8", newline="\n") as handle:
+        handle.write("\n".join(lines) + "\n")
+    os.replace(os.path.join(OUTPUT_ROOT, "T4_model_comparison_summary.md.tmp"),
+               os.path.join(OUTPUT_ROOT, "T4_model_comparison_summary.md"))
+    return {"metric_rows": len(comparison), "coverage_rows": len(coverage),
+            "comparison_groups": len(COMPARISON_DEFINITIONS)}
+
+
 def _primary_metric(path, model_id, metric):
     with open(path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -893,7 +1249,7 @@ def _primary_metric(path, model_id, metric):
     return None if value is None else float(value)
 
 
-def run_t4(cohort):
+def run_t4(cohort, a_frame, split):
     started = time.perf_counter()
     a = _read_csv(os.path.join(OUTPUT_ROOT, "T3_A_validation_metrics.csv"))
     b = _read_csv(os.path.join(OUTPUT_ROOT, "T3_B_validation_metrics.csv"))
@@ -933,6 +1289,7 @@ def run_t4(cohort):
     comparison = pd.DataFrame(rows)
     _write_csv(comparison, os.path.join(
         OUTPUT_ROOT, "T4_primary_vs_sensitivity_comparison.csv"))
+    common_summary = _run_common_population_comparisons(a_frame, split, cohort)
 
     coverage_rows = []
     for frame, side, total, event_total in ((a, "A", 530, int(_read_csv(
@@ -971,10 +1328,16 @@ def run_t4(cohort):
                         float(value["delta_sensitivity_minus_primary"])))
             lines.append("- " + "; ".join(text))
         lines.append("")
-    lines += ["## 覆盖度", "", "详见 `T4_coverage.csv`；每个模型均同时报告 eligible_n、总目标数、覆盖率、事件数和事件覆盖率。", ""]
+    lines += ["## 覆盖度", "", "详见 `T4_coverage.csv`；每个模型均同时报告 eligible_n、总目标数、覆盖率、事件数和事件覆盖率。", "",
+              "## 共同人群模型比较", "",
+              "已完成任务书第十节规定的12组模型比较；每组均使用共同可分析人群。详见 `T4_model_comparison_summary.md`、`T4_common_population_comparisons.csv` 和 `T4_common_population_eligibility.csv`。", ""]
     _write_json({
         "stage": "T4", "status": "COMPLETE", "target_n": 693,
         "A_n": 530, "B_n": 163, "comparison_metrics": metrics,
+        "common_population_comparison_groups": common_summary["comparison_groups"],
+        "common_population_comparison_metric_rows": common_summary["metric_rows"],
+        "common_population_comparison_coverage_rows": common_summary["coverage_rows"],
+        "common_population_rule": True,
         "primary_v2_unchanged": True,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }, os.path.join(OUTPUT_ROOT, "T4_summary.json"))
@@ -990,7 +1353,10 @@ def run_finalize():
     required = ["T1_summary.json", "T2_summary.json", "T3_summary.json",
                 "T4_summary.json", "T3_model_freeze.json",
                 "T3_A_validation_metrics.csv", "T3_B_validation_metrics.csv",
-                "T4_primary_vs_sensitivity_comparison.csv", "T4_coverage.csv"]
+                "T4_primary_vs_sensitivity_comparison.csv", "T4_coverage.csv",
+                "T4_common_population_comparisons.csv",
+                "T4_common_population_eligibility.csv",
+                "T4_model_comparison_summary.md"]
     missing = [name for name in required
                if not os.path.exists(os.path.join(OUTPUT_ROOT, name))]
     if missing:
@@ -1005,6 +1371,10 @@ def run_finalize():
         t4 = json.load(handle)
     comparison = _read_csv(os.path.join(
         OUTPUT_ROOT, "T4_primary_vs_sensitivity_comparison.csv"))
+    common_comparison = _read_csv(os.path.join(
+        OUTPUT_ROOT, "T4_common_population_comparisons.csv"))
+    common_coverage = _read_csv(os.path.join(
+        OUTPUT_ROOT, "T4_common_population_eligibility.csv"))
     final = {
         "workflow": "T1->T2->T3->T4", "status": "COMPLETE",
         "target_n": 693, "A_n": 530, "B_n": 163,
@@ -1013,6 +1383,9 @@ def run_finalize():
         "reviewer_reasoning_effort": "xhigh",
         "T1": t1, "T2": t2, "T3": t3, "T4": t4,
         "T4_comparison_rows": int(len(comparison)),
+        "T4_common_comparison_groups": int(common_coverage["comparison_id"].nunique()),
+        "T4_common_comparison_metric_rows": int(len(common_comparison)),
+        "T4_common_comparison_coverage_rows": int(len(common_coverage)),
         "output_root": os.path.relpath(OUTPUT_ROOT, PROJECT_ROOT).replace(os.sep, "/"),
     }
     _write_json(final, os.path.join(OUTPUT_ROOT,
@@ -1027,7 +1400,7 @@ def run_all():
     a_frame, split, t2 = run_t2()
     cohort, _primary = _cohort_ids()
     _a, _b, t3 = run_t3(a_frame, split, cohort)
-    comparison = run_t4(cohort)
+    comparison = run_t4(cohort, a_frame, split)
     final = {
         "workflow": "T1->T2->T3->T4", "status": "COMPLETE",
         "target_n": 693, "A_n": 530, "B_n": 163,
@@ -1035,6 +1408,9 @@ def run_all():
         "reviewer_model_requested": "luna", "reviewer_reasoning_effort": "xhigh",
         "T1": t1, "T2": t2, "T3": t3,
         "T4_comparison_rows": int(len(comparison)),
+        "T4_common_comparison_groups": len(COMPARISON_DEFINITIONS),
+        "T4_common_comparison_metric_rows": len(COMPARISON_DEFINITIONS) * 2 * len(COMPARISON_METRICS),
+        "T4_common_comparison_coverage_rows": len(COMPARISON_DEFINITIONS) * 2,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     _write_json(final, os.path.join(OUTPUT_ROOT, "sensitivity_693_workflow_summary.json"))
@@ -1042,20 +1418,41 @@ def run_all():
     return 0
 
 
+def run_compare():
+    """Rebuild only the in-memory A frame and rerun the complete T4 comparison."""
+    _ensure_dirs()
+    cohort, _primary = _cohort_ids()
+    a_ids = set(cohort.loc[cohort["split"].eq("A"), "影像号"])
+    a_frame = _build_frame(a_ids, "A", include_outcome=True)
+    va.validate_predictor_frame(a_frame, model_ids=list(va.MODEL_SPECS),
+                               cohort="A", require_outcome=True)
+    split = _make_extended_split(a_frame)
+    comparison = run_t4(cohort, a_frame, split)
+    final = run_finalize()
+    print("T4 comparison complete: groups=%d metric_rows=%d output=%s" % (
+        final["T4_common_comparison_groups"],
+        final["T4_common_comparison_metric_rows"], OUTPUT_ROOT), flush=True)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="T1-T4 threshold-free 693-case DFS sensitivity workflow")
     parser.add_argument("--all", action="store_true", help="run T1 through T4 serially")
+    parser.add_argument("--compare", action="store_true",
+                        help="rerun T4 model comparisons from completed T1-T3 outputs")
     parser.add_argument("--finalize", action="store_true",
                         help="write the final index from completed T1--T4 outputs")
     args = parser.parse_args(argv)
-    if args.all and args.finalize:
-        parser.error("choose only one of --all or --finalize")
+    if sum(bool(value) for value in (args.all, args.compare, args.finalize)) > 1:
+        parser.error("choose only one of --all, --compare or --finalize")
     if args.finalize:
         run_finalize()
         return 0
     if args.all:
         return run_all()
-    parser.error("use --all or --finalize")
+    if args.compare:
+        return run_compare()
+    parser.error("use --all, --compare or --finalize")
 
 
 if __name__ == "__main__":

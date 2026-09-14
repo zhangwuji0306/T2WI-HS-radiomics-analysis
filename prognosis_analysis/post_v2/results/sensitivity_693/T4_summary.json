@@ -1,6 +1,10 @@
 {
   "A_n": 530,
   "B_n": 163,
+  "common_population_comparison_coverage_rows": 24,
+  "common_population_comparison_groups": 12,
+  "common_population_comparison_metric_rows": 144,
+  "common_population_rule": true,
   "comparison_metrics": [
     "harrell_c_index_pooled",
     "uno_c_index",
@@ -9,7 +13,7 @@
     "5_year_auc",
     "5_year_brier"
   ],
-  "elapsed_seconds": 0.381,
+  "elapsed_seconds": 35.282,
   "primary_v2_unchanged": true,
   "stage": "T4",
   "status": "COMPLETE",

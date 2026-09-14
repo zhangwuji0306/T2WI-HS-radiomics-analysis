@@ -28,3 +28,7 @@
 
 详见 `T4_coverage.csv`；每个模型均同时报告 eligible_n、总目标数、覆盖率、事件数和事件覆盖率。
 
+## 共同人群模型比较
+
+已完成任务书第十节规定的12组模型比较；每组均使用共同可分析人群。详见 `T4_model_comparison_summary.md`、`T4_common_population_comparisons.csv` 和 `T4_common_population_eligibility.csv`。
+
