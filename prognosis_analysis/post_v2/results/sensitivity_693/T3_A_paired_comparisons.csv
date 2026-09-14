@@ -1,0 +1,8 @@
+comparison_id,left_run,right_run,population,common_n,fold_assignments_identical
+M0_vs_M1,M0,M1,main,530,True
+M0_vs_M2,M0,M2,main,530,True
+M2_vs_M3L,M2_R_low,M3L,R_low,528,True
+M2_vs_M3H,M2_R_high,M3H,R_high,443,True
+M2_vs_M4,M2_dual,M4,dual_radiomics,441,True
+M3L_vs_M3H,M3L_dual,M3H_dual,dual_radiomics,441,True
+M4_vs_M5,M4,M5_dual,dual_radiomics,441,True
