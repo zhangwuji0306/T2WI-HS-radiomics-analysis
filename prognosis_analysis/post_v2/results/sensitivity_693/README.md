@@ -14,6 +14,6 @@
 - `T3_model_freeze.json`：全A冻结模型的非患者级元数据。
 - `T4_coverage.csv`：模型覆盖度和事件覆盖度。
 - `T4_primary_vs_sensitivity_comparison.csv`：Primary v2与693例敏感性分析的模型效能比较。
-- `T4_common_population_comparisons.csv`、`T4_common_population_eligibility.csv`：按任务书第十、十一节完成的12组共同可分析人群模型比较及其覆盖度。
-- `T4_model_comparison_summary.md`：12组模型比较的A/B侧效能差异摘要。
+- `T4_common_population_comparisons.csv`、`T4_common_population_eligibility.csv`：按任务书第十、十一节完成的12组共同可分析人群模型比较及其覆盖度；逐指标Δ包含200次患者级配对bootstrap的percentile 95% CI及可估计重抽样数。
+- `T4_model_comparison_summary.md`：12组模型比较的A/B侧效能差异摘要，含逐指标95% CI。
 - `T4_summary.md`、`sensitivity_693_workflow_summary.json`：结果解读和完整工作流摘要。

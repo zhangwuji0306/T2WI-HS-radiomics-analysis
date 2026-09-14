@@ -149,6 +149,12 @@ COMPARISON_METRICS = (
     "3_year_brier", "5_year_auc", "5_year_brier",
 )
 
+BOOTSTRAP_N = 200
+BOOTSTRAP_SEEDS = {
+    definition["comparison_id"]: 20261000 + index
+    for index, definition in enumerate(COMPARISON_DEFINITIONS)
+}
+
 
 def _ensure_dirs():
     for path in (OUTPUT_ROOT, CACHE_ROOT, MAP_ROOT):
@@ -1065,6 +1071,256 @@ def _b_common_metric_summary(prediction, b_eval, a_frame, train_population, comm
     return summary
 
 
+def _fast_harrell_c_index(time, event, risk):
+    event_rows = np.asarray(event, dtype=int) == 1
+    comparable = event_rows[:, None] & (time[None, :] > time[:, None])
+    denominator = float(np.sum(comparable))
+    if denominator == 0.0:
+        return float("nan")
+    score = ((risk[:, None] > risk[None, :]).astype(float) +
+             0.5 * (risk[:, None] == risk[None, :]).astype(float))
+    return float(np.sum(score * comparable) / denominator)
+
+
+def _censor_survival_vectorized(train_time, train_event, query, left):
+    query = np.asarray(query, dtype=float)
+    censor_event = 1 - np.asarray(train_event, dtype=int)
+    censor_times = np.unique(np.asarray(train_time, dtype=float)[censor_event == 1])
+    if censor_times.size == 0:
+        return np.ones(query.shape[0], dtype=float)
+    sorted_train_time = np.sort(np.asarray(train_time, dtype=float))
+    at_risk = len(sorted_train_time) - np.searchsorted(
+        sorted_train_time, censor_times, side="left")
+    deaths = np.asarray([
+        np.sum((np.asarray(train_time, dtype=float) == current) &
+               (censor_event == 1)) for current in censor_times], dtype=float)
+    survival_steps = np.cumprod(1.0 - deaths / at_risk.astype(float))
+    side = "left" if left else "right"
+    indices = np.searchsorted(censor_times, query, side=side) - 1
+    result = np.ones(query.shape[0], dtype=float)
+    valid = indices >= 0
+    result[valid] = survival_steps[indices[valid]]
+    return result
+
+
+def _fast_uno_c_index(train_time, train_event,
+                      validation_time, validation_event, risk):
+    event_indices = np.where(np.asarray(validation_event, dtype=int) == 1)[0]
+    if event_indices.size == 0:
+        return float("nan")
+    censor_survival = _censor_survival_vectorized(
+        train_time, train_event, validation_time[event_indices], left=True)
+    keep = censor_survival > 1e-12
+    event_indices = event_indices[keep]
+    weights = 1.0 / (censor_survival[keep] * censor_survival[keep])
+    if event_indices.size == 0:
+        return float("nan")
+    comparable = validation_time[None, :] > validation_time[event_indices, None]
+    denominator = float(np.sum(weights[:, None] * comparable))
+    if denominator == 0.0:
+        return float("nan")
+    event_risk = risk[event_indices, None]
+    later_risk = risk[None, :]
+    score = ((event_risk > later_risk).astype(float) +
+             0.5 * (event_risk == later_risk).astype(float))
+    return float(np.sum(weights[:, None] * comparable * score) / denominator)
+
+
+def _fast_time_metrics(train_time, train_event, validation_time,
+                       validation_event, risk, survival, horizon):
+    observed = np.zeros(len(validation_time), dtype=float)
+    weights = np.zeros(len(validation_time), dtype=float)
+    cases = (validation_time <= horizon) & (validation_event == 1)
+    controls = validation_time > horizon
+    if np.any(cases):
+        censor_survival = _censor_survival_vectorized(
+            train_time, train_event, validation_time[cases], left=True)
+        weights[cases] = np.where(censor_survival > 1e-12,
+                                  1.0 / censor_survival, 0.0)
+    if np.any(controls):
+        censor_survival = _censor_survival_vectorized(
+            train_time, train_event, np.asarray([horizon]), left=False)[0]
+        observed[controls] = 1.0
+        if censor_survival > 1e-12:
+            weights[controls] = 1.0 / censor_survival
+    positive = weights > 0
+    if not np.any(positive):
+        return float("nan"), float("nan")
+    predicted_survival = np.asarray(survival, dtype=float)
+    residual = observed - predicted_survival
+    brier = float(np.sum(weights * residual * residual) / np.sum(weights))
+    cases = positive & (observed == 0)
+    controls = positive & (observed == 1)
+    if not np.any(cases) or not np.any(controls):
+        return float("nan"), brier
+    predicted_risk = 1.0 - predicted_survival
+    case_risk = predicted_risk[cases, None]
+    control_risk = predicted_risk[controls, None].T
+    pair_weights = weights[cases, None] * weights[controls, None].T
+    score = ((case_risk > control_risk).astype(float) +
+             0.5 * (case_risk == control_risk).astype(float))
+    auc = float(np.sum(pair_weights * score) / np.sum(pair_weights))
+    return auc, brier
+
+
+def _fast_fold_metrics(train_time, train_event, validation,
+                       risk, survival_36, survival_60):
+    validation_time = validation["DFS_time"].to_numpy(dtype=float)
+    validation_event = validation["DFS_event"].to_numpy(dtype=int)
+    result = {
+        "uno_c_index": _fast_uno_c_index(
+            train_time, train_event, validation_time,
+            validation_event, np.asarray(risk, dtype=float)),
+    }
+    result["3_year_auc"], result["3_year_brier"] = _fast_time_metrics(
+        train_time, train_event, validation_time, validation_event,
+        np.asarray(risk, dtype=float), survival_36, 36.0)
+    result["5_year_auc"], result["5_year_brier"] = _fast_time_metrics(
+        train_time, train_event, validation_time, validation_event,
+        np.asarray(risk, dtype=float), survival_60, 60.0)
+    return result
+
+
+def _a_pair_point_metrics(pair, training_references):
+    time = pair["DFS_time"].to_numpy(dtype=float)
+    event = pair["DFS_event"].to_numpy(dtype=int)
+    result = {
+        "harrell_c_index_pooled_left": _fast_harrell_c_index(
+            time, event, pair["left_risk"].to_numpy(dtype=float)),
+        "harrell_c_index_pooled_right": _fast_harrell_c_index(
+            time, event, pair["right_risk"].to_numpy(dtype=float)),
+    }
+    fold_values = {"left": {metric: [] for metric in COMPARISON_METRICS
+                             if metric != "harrell_c_index_pooled"},
+                   "right": {metric: [] for metric in COMPARISON_METRICS
+                              if metric != "harrell_c_index_pooled"}}
+    fold_weights = []
+    for fold in range(1, 6):
+        validation = pair[pair["fold"].eq(fold)].copy()
+        if validation.empty:
+            continue
+        train_time, train_event = training_references[fold]
+        left = _fast_fold_metrics(
+            train_time, train_event, validation,
+            validation["left_risk"].to_numpy(dtype=float),
+            validation["left_survival_probability_36"].to_numpy(dtype=float),
+            validation["left_survival_probability_60"].to_numpy(dtype=float))
+        right = _fast_fold_metrics(
+            train_time, train_event, validation,
+            validation["right_risk"].to_numpy(dtype=float),
+            validation["right_survival_probability_36"].to_numpy(dtype=float),
+            validation["right_survival_probability_60"].to_numpy(dtype=float))
+        fold_weights.append(float(len(validation)))
+        for metric in fold_values["left"]:
+            fold_values["left"][metric].append(left[metric])
+            fold_values["right"][metric].append(right[metric])
+    weights = np.asarray(fold_weights, dtype=float)
+    for metric in fold_values["left"]:
+        for side in ("left", "right"):
+            values = np.asarray(fold_values[side][metric], dtype=float)
+            result["%s_%s" % (metric, side)] = (
+                float(np.average(values, weights=weights))
+                if len(values) == len(weights) and len(values) and
+                np.isfinite(values).all() else float("nan"))
+    return result
+
+
+def _make_pair_frame(left, right, outcomes, with_fold):
+    columns = ["patient_id", "risk_score", "survival_probability_36",
+               "survival_probability_60"]
+    if with_fold:
+        columns.insert(1, "fold")
+    left = left.loc[:, columns].rename(columns={
+        "fold": "left_fold", "risk_score": "left_risk",
+        "survival_probability_36": "left_survival_probability_36",
+        "survival_probability_60": "left_survival_probability_60"})
+    right = right.loc[:, columns].rename(columns={
+        "fold": "right_fold", "risk_score": "right_risk",
+        "survival_probability_36": "right_survival_probability_36",
+        "survival_probability_60": "right_survival_probability_60"})
+    pair = left.merge(right, on="patient_id", how="inner", validate="one_to_one")
+    if pair.empty:
+        raise RuntimeError("model pair has no common eligible cases")
+    if with_fold:
+        if not np.array_equal(pair["left_fold"].to_numpy(dtype=int),
+                              pair["right_fold"].to_numpy(dtype=int)):
+            raise RuntimeError("paired model fold assignments differ")
+        pair["fold"] = pair["left_fold"].astype(int)
+        pair = pair.drop(columns=["left_fold", "right_fold"])
+    pair = pair.merge(outcomes, on="patient_id", how="inner",
+                      validate="one_to_one")
+    if len(pair) != len(left):
+        raise RuntimeError("paired model outcomes are incomplete")
+    return pair.sort_values("patient_id", kind="mergesort").reset_index(drop=True)
+
+
+def _comparison_ci(values, estimate):
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    return {
+        "lower": (None if not len(finite) else float(np.percentile(finite, 2.5))),
+        "upper": (None if not len(finite) else float(np.percentile(finite, 97.5))),
+        "n_estimable": int(len(finite)), "coverage": float(len(finite) / BOOTSTRAP_N),
+        "method": "percentile", "bootstrap_n": BOOTSTRAP_N,
+    }
+
+
+def _bootstrap_a_deltas(pair, training_references, seed):
+    rng = np.random.RandomState(int(seed))
+    index_matrix = rng.randint(0, len(pair), size=(BOOTSTRAP_N, len(pair)))
+    values = {metric: [] for metric in COMPARISON_METRICS}
+    for indices in index_matrix:
+        sample = pair.iloc[indices].reset_index(drop=True)
+        point = _a_pair_point_metrics(sample, training_references)
+        for metric in COMPARISON_METRICS:
+            delta = point["%s_right" % metric] - point["%s_left" % metric]
+            if np.isfinite(delta):
+                values[metric].append(delta)
+    return values
+
+
+def _b_pair_point_metrics(pair, left_training, right_training):
+    engine = canonical._engine()
+    def evaluate(risk, survival_36, survival_60, training):
+        metrics = engine.evaluate_metrics(
+            training[0], training[1],
+            pair["DFS_time"].to_numpy(dtype=float),
+            pair["DFS_event"].to_numpy(dtype=int),
+            pair[risk].to_numpy(dtype=float),
+            {"3_year": pair[survival_36].to_numpy(dtype=float),
+             "5_year": pair[survival_60].to_numpy(dtype=float)})
+        output = {}
+        for metric in COMPARISON_METRICS:
+            raw = "harrell_c_index" if metric == "harrell_c_index_pooled" else metric
+            value = metrics.get(raw)
+            output[metric] = (None if value is None or not np.isfinite(float(value))
+                              else float(value))
+        return output
+    return {
+        "left": evaluate("left_risk", "left_survival_probability_36",
+                          "left_survival_probability_60", left_training),
+        "right": evaluate("right_risk", "right_survival_probability_36",
+                           "right_survival_probability_60", right_training),
+    }
+
+
+def _bootstrap_b_deltas(pair, left_training, right_training, seed):
+    rng = np.random.RandomState(int(seed))
+    index_matrix = rng.randint(0, len(pair), size=(BOOTSTRAP_N, len(pair)))
+    values = {metric: [] for metric in COMPARISON_METRICS}
+    for indices in index_matrix:
+        sample = pair.iloc[indices].reset_index(drop=True)
+        point = _b_pair_point_metrics(sample, left_training, right_training)
+        for metric in COMPARISON_METRICS:
+            left_value = point["left"][metric]
+            right_value = point["right"][metric]
+            if left_value is not None and right_value is not None:
+                delta = right_value - left_value
+                if np.isfinite(delta):
+                    values[metric].append(delta)
+    return values
+
+
 def _run_common_population_comparisons(a_frame, split, cohort):
     a_cache = {}
     b_cache = {}
@@ -1093,13 +1349,26 @@ def _run_common_population_comparisons(a_frame, split, cohort):
         right_folds = dict(zip(right_a["patient_id"], right_a["fold"].astype(int)))
         if left_folds != right_folds:
             raise RuntimeError("common A fold assignments differ for %s" % comparison_id)
-        a_left_metrics = _a_common_metric_summary(
-            left_a, a_frame, split, population, a_expected)
-        a_right_metrics = _a_common_metric_summary(
-            right_a, a_frame, split, population, a_expected)
+        a_outcomes = a_frame.loc[
+            a_frame["patient_id"].astype(str).isin(a_expected),
+            ["patient_id", "DFS_time", "DFS_event"]].copy()
+        a_outcomes["patient_id"] = a_outcomes["patient_id"].astype(str)
+        a_pair = _make_pair_frame(left_a, right_a, a_outcomes, with_fold=True)
+        a_training_references = {}
+        for fold in range(1, 6):
+            train, _valid = canonical._fold_rows(a_frame, split, fold, population)
+            a_training_references[fold] = (
+                train["DFS_time"].to_numpy(dtype=float),
+                train["DFS_event"].to_numpy(dtype=int))
+        a_point = _a_pair_point_metrics(a_pair, a_training_references)
+        a_bootstrap = _bootstrap_a_deltas(
+            a_pair, a_training_references, BOOTSTRAP_SEEDS[comparison_id])
         for metric in COMPARISON_METRICS:
-            left_value = a_left_metrics.get(metric)
-            right_value = a_right_metrics.get(metric)
+            left_value = a_point["%s_left" % metric]
+            right_value = a_point["%s_right" % metric]
+            ci = _comparison_ci(
+                a_bootstrap[metric], right_value - left_value
+                if np.isfinite(left_value) and np.isfinite(right_value) else None)
             metric_rows.append({
                 "analysis_side": "A", "comparison_id": comparison_id,
                 "comparison_group": definition["group"],
@@ -1113,6 +1382,14 @@ def _run_common_population_comparisons(a_frame, split, cohort):
                 "right_estimate": right_value,
                 "delta_right_minus_left": (None if left_value is None or right_value is None
                                             else right_value - left_value),
+                "delta_95ci_lower": ci["lower"],
+                "delta_95ci_upper": ci["upper"],
+                "confidence_level": 0.95,
+                "delta_95ci_method": ci["method"],
+                "bootstrap_n": ci["bootstrap_n"],
+                "bootstrap_n_estimable": ci["n_estimable"],
+                "bootstrap_coverage": ci["coverage"],
+                "bootstrap_seed": BOOTSTRAP_SEEDS[comparison_id],
                 "left_source_run": left_a_source, "right_source_run": right_a_source,
                 "left_training_population": left_a_population,
                 "right_training_population": right_a_population,
@@ -1147,13 +1424,33 @@ def _run_common_population_comparisons(a_frame, split, cohort):
         common_b = left_b_ids & right_b_ids
         if common_b != b_expected:
             raise RuntimeError("common B population mismatch for %s" % comparison_id)
-        b_left_metrics = _b_common_metric_summary(
-            left_b, b_eval, a_frame, left_b_population, common_b)
-        b_right_metrics = _b_common_metric_summary(
-            right_b, b_eval, a_frame, right_b_population, common_b)
+        b_outcomes = b_eval.loc[
+            b_eval["patient_id"].astype(str).isin(common_b),
+            ["patient_id", "DFS_time", "DFS_event"]].copy()
+        b_outcomes["patient_id"] = b_outcomes["patient_id"].astype(str)
+        left_b_common = left_b[left_b["patient_id"].isin(common_b)].copy()
+        right_b_common = right_b[right_b["patient_id"].isin(common_b)].copy()
+        b_pair = _make_pair_frame(
+            left_b_common, right_b_common, b_outcomes, with_fold=False)
+        left_training = a_frame.loc[
+            va.eligibility_mask(a_frame, left_b_population),
+            ["DFS_time", "DFS_event"]]
+        right_training = a_frame.loc[
+            va.eligibility_mask(a_frame, right_b_population),
+            ["DFS_time", "DFS_event"]]
+        left_training = (left_training["DFS_time"].to_numpy(dtype=float),
+                         left_training["DFS_event"].to_numpy(dtype=int))
+        right_training = (right_training["DFS_time"].to_numpy(dtype=float),
+                          right_training["DFS_event"].to_numpy(dtype=int))
+        b_point = _b_pair_point_metrics(b_pair, left_training, right_training)
+        b_bootstrap = _bootstrap_b_deltas(
+            b_pair, left_training, right_training, BOOTSTRAP_SEEDS[comparison_id])
         for metric in COMPARISON_METRICS:
-            left_value = b_left_metrics.get(metric)
-            right_value = b_right_metrics.get(metric)
+            left_value = b_point["left"][metric]
+            right_value = b_point["right"][metric]
+            ci = _comparison_ci(
+                b_bootstrap[metric], right_value - left_value
+                if left_value is not None and right_value is not None else None)
             metric_rows.append({
                 "analysis_side": "B", "comparison_id": comparison_id,
                 "comparison_group": definition["group"],
@@ -1167,6 +1464,14 @@ def _run_common_population_comparisons(a_frame, split, cohort):
                 "right_estimate": right_value,
                 "delta_right_minus_left": (None if left_value is None or right_value is None
                                             else right_value - left_value),
+                "delta_95ci_lower": ci["lower"],
+                "delta_95ci_upper": ci["upper"],
+                "confidence_level": 0.95,
+                "delta_95ci_method": ci["method"],
+                "bootstrap_n": ci["bootstrap_n"],
+                "bootstrap_n_estimable": ci["n_estimable"],
+                "bootstrap_coverage": ci["coverage"],
+                "bootstrap_seed": BOOTSTRAP_SEEDS[comparison_id],
                 "left_source_run": left_b_source, "right_source_run": right_b_source,
                 "left_training_population": left_b_population,
                 "right_training_population": right_b_population,
@@ -1200,6 +1505,7 @@ def _run_common_population_comparisons(a_frame, split, cohort):
         "",
         "按任务书第十、十一节完成12组预设模型比较；每组均在共同可分析人群中计算。",
         "A侧对比较所需的模型在人群限定后重新进行5-fold validation；B侧保持A冻结模型，仅在共同B人群中进行外部评价。",
+        "每个比较的Δ均使用同一共同人群内的患者级配对bootstrap（200次重抽样）计算percentile 95%置信区间。",
         "",
     ]
     for side in ("A", "B"):
@@ -1217,8 +1523,11 @@ def _run_common_population_comparisons(a_frame, split, cohort):
                 left_value = row["left_estimate"]
                 right_value = row["right_estimate"]
                 delta = row["delta_right_minus_left"]
-                parts.append("%s %.4f→%.4f (Δ%+.4f)" % (
-                    metric, float(left_value), float(right_value), float(delta)))
+                ci_lower = row["delta_95ci_lower"]
+                ci_upper = row["delta_95ci_upper"]
+                parts.append("%s %.4f→%.4f (Δ%+.4f, 95%% CI [%+.4f, %+.4f])" % (
+                    metric, float(left_value), float(right_value), float(delta),
+                    float(ci_lower), float(ci_upper)))
             lines.append("- %s [%s, n=%d, events=%d]: %s" % (
                 first["comparison_id"], first["common_population"],
                 int(first["common_n"]), int(first["common_event_n"]),
@@ -1330,13 +1639,16 @@ def run_t4(cohort, a_frame, split):
         lines.append("")
     lines += ["## 覆盖度", "", "详见 `T4_coverage.csv`；每个模型均同时报告 eligible_n、总目标数、覆盖率、事件数和事件覆盖率。", "",
               "## 共同人群模型比较", "",
-              "已完成任务书第十节规定的12组模型比较；每组均使用共同可分析人群。详见 `T4_model_comparison_summary.md`、`T4_common_population_comparisons.csv` 和 `T4_common_population_eligibility.csv`。", ""]
+              "已完成任务书第十节规定的12组模型比较；每组均使用共同可分析人群。逐指标Δ均附带患者级配对bootstrap（200次重抽样）的percentile 95%置信区间。详见 `T4_model_comparison_summary.md`、`T4_common_population_comparisons.csv` 和 `T4_common_population_eligibility.csv`。", ""]
     _write_json({
         "stage": "T4", "status": "COMPLETE", "target_n": 693,
         "A_n": 530, "B_n": 163, "comparison_metrics": metrics,
         "common_population_comparison_groups": common_summary["comparison_groups"],
         "common_population_comparison_metric_rows": common_summary["metric_rows"],
         "common_population_comparison_coverage_rows": common_summary["coverage_rows"],
+        "common_population_bootstrap_n": BOOTSTRAP_N,
+        "common_population_ci_level": 0.95,
+        "common_population_ci_method": "paired_patient_percentile",
         "common_population_rule": True,
         "primary_v2_unchanged": True,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
@@ -1386,6 +1698,9 @@ def run_finalize():
         "T4_common_comparison_groups": int(common_coverage["comparison_id"].nunique()),
         "T4_common_comparison_metric_rows": int(len(common_comparison)),
         "T4_common_comparison_coverage_rows": int(len(common_coverage)),
+        "T4_common_population_bootstrap_n": t4.get("common_population_bootstrap_n"),
+        "T4_common_population_ci_level": t4.get("common_population_ci_level"),
+        "T4_common_population_ci_method": t4.get("common_population_ci_method"),
         "output_root": os.path.relpath(OUTPUT_ROOT, PROJECT_ROOT).replace(os.sep, "/"),
     }
     _write_json(final, os.path.join(OUTPUT_ROOT,
@@ -1411,6 +1726,9 @@ def run_all():
         "T4_common_comparison_groups": len(COMPARISON_DEFINITIONS),
         "T4_common_comparison_metric_rows": len(COMPARISON_DEFINITIONS) * 2 * len(COMPARISON_METRICS),
         "T4_common_comparison_coverage_rows": len(COMPARISON_DEFINITIONS) * 2,
+        "T4_common_population_bootstrap_n": BOOTSTRAP_N,
+        "T4_common_population_ci_level": 0.95,
+        "T4_common_population_ci_method": "paired_patient_percentile",
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
     _write_json(final, os.path.join(OUTPUT_ROOT, "sensitivity_693_workflow_summary.json"))
